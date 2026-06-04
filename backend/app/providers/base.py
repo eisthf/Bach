@@ -1,0 +1,53 @@
+"""데이터 제공자 / 브로커 추상 인터페이스.
+
+mock 과 kiwoom(live) 구현이 동일한 계약을 따르게 한다.
+"""
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from typing import AsyncIterator, Callable, List
+
+from ..models import Bar, OrderResult, Tick
+
+
+# 지원 분봉 간격(분)
+VALID_INTERVALS = (3, 5, 10, 30, 60)
+
+
+class DataProvider(ABC):
+    """시세/봉 데이터 소스."""
+
+    @abstractmethod
+    def get_bars(self, code: str, interval: int, lookback_extra: int = 60) -> List[Bar]:
+        """당일 봉 + 이전 ``lookback_extra``개 봉(SMA 계산용)을 시간순으로 반환.
+
+        interval: 분 단위(3/5/10/30/60).
+        """
+
+    @abstractmethod
+    async def stream_ticks(self, code: str) -> AsyncIterator[Tick]:
+        """해당 종목의 실시간 틱을 비동기로 yield."""
+
+    @abstractmethod
+    def last_tick(self, code: str) -> Tick | None:
+        """가장 최근 틱(없으면 None). 주문 체결가 산정 등에 사용."""
+
+
+class Broker(ABC):
+    """주문 실행 + 포지션 관리."""
+
+    @abstractmethod
+    def buy(self, code: str, amount_krw: int) -> OrderResult:
+        """금액 기준 매수(현재가로 수량 환산)."""
+
+    @abstractmethod
+    def sell(self, code: str, qty: int) -> OrderResult:
+        """수량 기준 매도."""
+
+    @abstractmethod
+    def position(self, code: str):
+        """해당 종목 포지션(models.Position) 반환."""
+
+    @abstractmethod
+    def all_positions(self) -> list:
+        """전체 포지션 목록."""

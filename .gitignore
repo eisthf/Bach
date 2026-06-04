@@ -1,0 +1,16 @@
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+backend/.env
+*.egg-info/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Playwright (개발용 스모크 테스트)
+test-results/
+
+# 로그
+*.log
