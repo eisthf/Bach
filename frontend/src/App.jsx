@@ -7,10 +7,14 @@ import AccountSummary from './components/AccountSummary'
 import LogPanel from './components/LogPanel'
 
 function Dashboard() {
-  const { stocks, order, hidden, actions } = useStore()
+  const { stocks, order, hidden, compact, actions } = useStore()
   // 추가된 순서대로(위→아래) 배치. 숨김 종목은 패널에서 제외(목록엔 유지).
   const visibleCodes = order.filter((c) => stocks[c])
   const list = visibleCodes.filter((c) => !hidden.has(c)).map((c) => stocks[c])
+  // 수동매매 종목 일괄 컴팩트 토글
+  const manualCodes = visibleCodes.filter((c) => stocks[c].state === 'MANUAL_TRADING')
+  const allManualCompact =
+    manualCodes.length > 0 && manualCodes.every((c) => compact.has(c))
   const [importing, setImporting] = React.useState(false)
   const [importMsg, setImportMsg] = React.useState('')
   const doImportHeld = async () => {
@@ -49,6 +53,15 @@ function Dashboard() {
           {importing ? '가져오는 중…' : '보유 종목 가져오기'}
         </button>
         {importMsg && <span className="import-msg">{importMsg}</span>}
+        {manualCodes.length > 0 && (
+          <button
+            className="import-held-btn"
+            onClick={() => actions.setCompactFor(manualCodes, !allManualCompact)}
+            title="수동매매 종목을 일괄로 컴팩트/펼치기"
+          >
+            {allManualCompact ? '수동매매 펼치기' : '수동매매 컴팩트'}
+          </button>
+        )}
       </div>
 
       {visibleCodes.length > 0 && (

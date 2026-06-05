@@ -126,11 +126,27 @@ input:focus { outline: none; border-color: var(--accent); }
 .panel-id { display: flex; flex-direction: column; min-width: 110px; }
 .panel-code { font-weight: 700; font-size: 16px; }
 .panel-name { color: var(--muted); font-size: 12px; }
+.panel-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.layout-btn {
+  border: 1px solid var(--border); background: #fff; color: var(--muted);
+  border-radius: 6px; padding: 4px 10px; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.layout-btn:hover { color: var(--accent); border-color: var(--accent); }
 .remove-btn {
-  margin-left: auto; border: none; background: transparent;
-  color: var(--muted); font-size: 16px; line-height: 1;
+  border: none; background: transparent;
+  color: var(--muted); font-size: 16px; line-height: 1; cursor: pointer;
 }
 .remove-btn:hover { color: var(--up); }
+
+/* 컴팩트: 차트(좌) + 매매(우) 나란히, 자동매매설정 숨김 */
+.compact-body {
+  display: grid; grid-template-columns: 1fr 320px; gap: 14px; margin-top: 8px;
+  align-items: start;
+}
+.compact-chart { min-width: 0; }
+@media (max-width: 900px) {
+  .compact-body { grid-template-columns: 1fr; }
+}
 
 /* Ticker */
 .ticker { display: flex; gap: 18px; }

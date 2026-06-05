@@ -8,7 +8,7 @@ import { createChart, CrosshairMode } from 'lightweight-charts'
 import { api } from '../api'
 import { sma, MA_LINES } from '../indicators'
 
-export default function Chart({ code, interval, tick }) {
+export default function Chart({ code, interval, tick, height = 360 }) {
   const containerRef = useRef(null)
   const chartRef = useRef(null)
   const candleRef = useRef(null)
@@ -126,5 +126,5 @@ export default function Chart({ code, interval, tick }) {
     })
   }, [tick])
 
-  return <div ref={containerRef} style={{ width: '100%', height: 360 }} />
+  return <div ref={containerRef} style={{ width: '100%', height }} />
 }

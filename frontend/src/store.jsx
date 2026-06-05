@@ -20,6 +20,11 @@ export function StoreProvider({ children }) {
     try { return new Set(JSON.parse(localStorage.getItem('bach.hidden') || '[]')) }
     catch { return new Set() }
   })
+  // 컴팩트 모드 종목코드 집합(차트+매매만, 자동매매설정 숨김). 브라우저에 기억.
+  const [compact, setCompact] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('bach.compact') || '[]')) }
+    catch { return new Set() }
+  })
   const [logs, setLogs] = useState([])
   const [connected, setConnected] = useState(false)
   const wsRef = useRef(null)
@@ -96,12 +101,35 @@ export function StoreProvider({ children }) {
         localStorage.setItem('bach.hidden', JSON.stringify([...n]))
         return n
       })
+      setCompact((prev) => {
+        if (!prev.has(code)) return prev
+        const n = new Set(prev)
+        n.delete(code)
+        localStorage.setItem('bach.compact', JSON.stringify([...n]))
+        return n
+      })
     },
     toggleVisible: (code) => {
       setHidden((prev) => {
         const n = new Set(prev)
         n.has(code) ? n.delete(code) : n.add(code)
         localStorage.setItem('bach.hidden', JSON.stringify([...n]))
+        return n
+      })
+    },
+    toggleCompact: (code) => {
+      setCompact((prev) => {
+        const n = new Set(prev)
+        n.has(code) ? n.delete(code) : n.add(code)
+        localStorage.setItem('bach.compact', JSON.stringify([...n]))
+        return n
+      })
+    },
+    setCompactFor: (codes, value) => {
+      setCompact((prev) => {
+        const n = new Set(prev)
+        codes.forEach((c) => (value ? n.add(c) : n.delete(c)))
+        localStorage.setItem('bach.compact', JSON.stringify([...n]))
         return n
       })
     },
@@ -121,6 +149,6 @@ export function StoreProvider({ children }) {
     marketReset: () => api.marketReset(),
   }
 
-  const value = { stocks, order, hidden, ticks, phase, marketAuto, logs, connected, actions }
+  const value = { stocks, order, hidden, compact, ticks, phase, marketAuto, logs, connected, actions }
   return <StoreCtx.Provider value={value}>{children}</StoreCtx.Provider>
 }
