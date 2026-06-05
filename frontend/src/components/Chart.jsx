@@ -20,8 +20,10 @@ export default function Chart({ code, interval, tick }) {
   useEffect(() => {
     const el = containerRef.current
     const chart = createChart(el, {
-      width: el.clientWidth,
-      height: 360,
+      // autoSize: 내장 ResizeObserver로 컨테이너 크기에 맞춰 자동 사이징.
+      // 카드가 추가된 직후(컨테이너 측정 전) 생성돼도 레이아웃이 잡히면
+      // 자동으로 리페인트되어 '캔들이 안 보이는' 문제를 막는다.
+      autoSize: true,
       layout: { background: { color: '#ffffff' }, textColor: '#333' },
       grid: {
         vertLines: { color: '#f0f0f0' },
@@ -53,11 +55,11 @@ export default function Chart({ code, interval, tick }) {
     candleRef.current = candle
     maRefs.current = maSeries
 
-    const onResize = () => chart.applyOptions({ width: el.clientWidth })
-    window.addEventListener('resize', onResize)
     return () => {
-      window.removeEventListener('resize', onResize)
       chart.remove()
+      chartRef.current = null
+      candleRef.current = null
+      maRefs.current = []
     }
   }, [])
 
@@ -65,7 +67,7 @@ export default function Chart({ code, interval, tick }) {
   useEffect(() => {
     let cancelled = false
     api.getBars(code, interval).then((data) => {
-      if (cancelled) return
+      if (cancelled || !candleRef.current || !chartRef.current) return
       const bars = data.bars
       barsRef.current = bars
       dayStartRef.current = data.day_start_index
@@ -73,16 +75,29 @@ export default function Chart({ code, interval, tick }) {
       MA_LINES.forEach((m, i) => {
         maRefs.current[i].setData(sma(bars, m.period))
       })
-      // 당일 구간으로 시야 이동(이전 60봉은 SMA 계산용이라 살짝만 보이게)
-      const ts = chartRef.current.timeScale()
-      if (bars.length > data.day_start_index) {
-        ts.setVisibleRange({
-          from: bars[Math.max(0, data.day_start_index - 5)].time,
-          to: bars[bars.length - 1].time,
-        })
-      } else {
-        ts.fitContent()
+      // 시야 이동은 컨테이너가 실제 너비를 가진 뒤에 적용한다.
+      // autoSize의 ResizeObserver는 비동기라, 카드가 막 추가돼 너비가 0인
+      // 상태에서 setVisibleRange를 호출하면 빈 범위가 '고정'되어 캔들이
+      // 안 보인다(간헐적 실패의 원인). 너비가 생길 때까지 프레임마다 재시도.
+      let tries = 0
+      const applyView = () => {
+        if (cancelled || !chartRef.current || !containerRef.current) return
+        if (containerRef.current.clientWidth === 0 && tries++ < 120) {
+          requestAnimationFrame(applyView)
+          return
+        }
+        const ts = chartRef.current.timeScale()
+        // 당일 구간으로 시야 이동(이전 60봉은 SMA 계산용이라 살짝만 보이게)
+        if (bars.length > data.day_start_index) {
+          ts.setVisibleRange({
+            from: bars[Math.max(0, data.day_start_index - 5)].time,
+            to: bars[bars.length - 1].time,
+          })
+        } else {
+          ts.fitContent()
+        }
       }
+      requestAnimationFrame(applyView)
     })
     return () => {
       cancelled = true
@@ -111,5 +126,5 @@ export default function Chart({ code, interval, tick }) {
     })
   }, [tick])
 
-  return <div ref={containerRef} style={{ width: '100%' }} />
+  return <div ref={containerRef} style={{ width: '100%', height: 360 }} />
 }

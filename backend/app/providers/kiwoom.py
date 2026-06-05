@@ -48,10 +48,18 @@ class KiwoomDataProvider(DataProvider):
 
     # -- 봉 --------------------------------------------------------------
     def get_bars(self, code: str, interval: int, lookback_extra: int = 60) -> List[Bar]:
-        rows = kw.fetch_min_bars(
-            self.token, code, interval, mock=self._mock,
-            today=_today(), lookback_extra=lookback_extra,
-        )
+        # rate-limit 등으로 빈 응답이 오면 짧게 쉬고 1회 재시도(빈 차트 방지).
+        rows: List[dict] = []
+        for attempt in range(2):
+            rows = kw.fetch_min_bars(
+                self.token, code, interval, mock=self._mock,
+                today=_today(), lookback_extra=lookback_extra,
+            )
+            if rows:
+                break
+            if attempt == 0:
+                logger.warning("[%s] 분봉 빈 응답 → 재시도", code)
+                time.sleep(0.3)
         today = _today()
         bars: List[Bar] = []
         for r in rows:

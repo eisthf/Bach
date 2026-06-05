@@ -26,12 +26,62 @@ from __future__ import annotations
 
 import calendar
 import logging
+import threading
+import time as _time
 from datetime import datetime
 from typing import Dict, List, Optional
 
 import requests
 
 logger = logging.getLogger("bach.kiwoom")
+
+# ---------------------------------------------------------------------------
+# REST 호출 게이트 (함정: 동시/연속 호출 시 키움이 HTTP 429로 rate-limit)
+# 종목 여러 개를 한꺼번에 추가하면 ka10080가 동시에 날아가 일부가 429 → 빈 봉.
+# 전역 슬롯 예약으로 호출을 MIN_REST_INTERVAL 간격으로 직렬화하고, 429가 보이면
+# 전역 쿨다운을 늘려 모든 호출자가 함께 백오프하도록 한다.
+# ---------------------------------------------------------------------------
+_rest_lock = threading.Lock()
+_next_allowed = 0.0           # 다음 호출이 허용되는 monotonic 시각
+MIN_REST_INTERVAL = 0.35      # 초당 ~3건
+
+
+def _reserve_slot() -> None:
+    """전역 직렬화: 자기 슬롯 시각을 예약하고(락은 짧게) 그 시각까지 대기."""
+    global _next_allowed
+    with _rest_lock:
+        now = _time.monotonic()
+        start = max(now, _next_allowed)
+        _next_allowed = start + MIN_REST_INTERVAL
+        wait = start - now
+    if wait > 0:
+        _time.sleep(wait)
+
+
+def _penalize(seconds: float) -> None:
+    """429 등으로 전역 쿨다운을 늘린다(이후 모든 호출자가 함께 백오프)."""
+    global _next_allowed
+    with _rest_lock:
+        _next_allowed = max(_next_allowed, _time.monotonic() + seconds)
+
+
+def _post(url: str, headers: dict, body: dict, timeout: float,
+          retries: int = 5) -> Optional[requests.Response]:
+    """게이트를 거친 POST. 429면 백오프 후 재시도. 최종 응답(또는 None) 반환."""
+    resp: Optional[requests.Response] = None
+    for attempt in range(retries):
+        _reserve_slot()
+        try:
+            resp = requests.post(url, headers=headers, json=body, timeout=timeout)
+        except requests.RequestException as e:  # 네트워크 오류도 잠깐 백오프 후 재시도
+            logger.warning("REST 연결 오류(%s/%s): %s", attempt + 1, retries, e)
+            _penalize(0.4 * (attempt + 1))
+            continue
+        if resp.status_code == 429:
+            _penalize(0.5 * (attempt + 1))
+            continue
+        return resp
+    return resp
 
 # ---------------------------------------------------------------------------
 # 호스트 (mock=모의투자, live=실전)
@@ -136,12 +186,15 @@ def fetch_min_bars(
         if cont_yn == "Y" and next_key:
             hdr["cont-yn"] = "Y"
             hdr["next-key"] = next_key
+        resp = _post(url, hdr, body, timeout=15)
+        if resp is None or resp.status_code != 200:
+            sc = resp.status_code if resp is not None else "—"
+            logger.warning("[%s] 분봉 조회 실패(HTTP %s)", code, sc)
+            break
         try:
-            resp = requests.post(url, headers=hdr, json=body, timeout=15)
-            resp.raise_for_status()
             data = resp.json()
         except Exception as e:  # noqa: BLE001
-            logger.warning("[%s] 분봉 조회 오류: %s", code, e)
+            logger.warning("[%s] 분봉 파싱 오류: %s", code, e)
             break
         if data.get("return_code") != 0:
             logger.warning("[%s] 분봉 API 오류: %s", code, data.get("return_msg"))
@@ -193,12 +246,15 @@ def fetch_prev_close(token: str, code: str, mock: bool = False,
         "api-id": "ka10081",
     }
     body = {"stk_cd": code, "base_dt": today, "upd_stkpc_tp": "1"}
+    resp = _post(url, headers, body, timeout=15)
+    if resp is None or resp.status_code != 200:
+        sc = resp.status_code if resp is not None else "—"
+        logger.warning("[%s] 일봉 조회 실패(HTTP %s)", code, sc)
+        return None
     try:
-        resp = requests.post(url, headers=headers, json=body, timeout=15)
-        resp.raise_for_status()
         data = resp.json()
     except Exception as e:  # noqa: BLE001
-        logger.warning("[%s] 일봉 조회 오류: %s", code, e)
+        logger.warning("[%s] 일봉 파싱 오류: %s", code, e)
         return None
     if data.get("return_code") != 0:
         logger.warning("[%s] 일봉 API 오류: %s", code, data.get("return_msg"))
@@ -245,12 +301,15 @@ def place_order(
         "trde_tp": order_type,
         "cond_uv": "",
     }
+    resp = _post(url, headers, body, timeout=10, retries=3)
+    if resp is None or resp.status_code != 200:
+        sc = resp.status_code if resp is not None else "—"
+        logger.error("[%s] %s 주문 실패(HTTP %s)", code, side, sc)
+        return None
     try:
-        resp = requests.post(url, headers=headers, json=body, timeout=10)
-        resp.raise_for_status()
         data = resp.json()
     except Exception as e:  # noqa: BLE001
-        logger.error("[%s] %s 주문 오류: %s", code, side, e)
+        logger.error("[%s] %s 주문 파싱 오류: %s", code, side, e)
         return None
     if data.get("return_code") != 0:
         logger.error("[%s] %s 주문 실패: %s", code, side, data.get("return_msg"))
@@ -276,12 +335,15 @@ def fetch_positions(token: str, mock: bool = False) -> Dict[str, dict]:
         "api-id": "kt00018",
     }
     body = {"qry_tp": "1", "dmst_stex_tp": "KRX"}
+    resp = _post(url, headers, body, timeout=10)
+    if resp is None or resp.status_code != 200:
+        sc = resp.status_code if resp is not None else "—"
+        logger.error("계좌 잔고 조회 실패(HTTP %s)", sc)
+        return {}
     try:
-        resp = requests.post(url, headers=headers, json=body, timeout=10)
-        resp.raise_for_status()
         data = resp.json()
     except Exception as e:  # noqa: BLE001
-        logger.error("계좌 잔고 조회 오류: %s", e)
+        logger.error("계좌 잔고 파싱 오류: %s", e)
         return {}
     if data.get("return_code") != 0:
         logger.error("계좌 잔고 조회 실패: %s", data.get("return_msg"))
