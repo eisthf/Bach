@@ -63,8 +63,15 @@ input:focus { outline: none; border-color: var(--accent); }
 .phase-closed { background: #fdecec; color: var(--up); }
 
 /* Stock input */
-.toolbar-row { padding: 14px 20px 0; }
+.toolbar-row { padding: 14px 20px 0; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .stock-input { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.import-held-btn {
+  background: #fff; color: var(--accent); border: 1px solid var(--accent);
+  border-radius: 6px; padding: 8px 14px; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.import-held-btn:hover:not(:disabled) { background: #eef1fd; }
+.import-held-btn:disabled { opacity: 0.6; cursor: default; }
+.import-msg { color: var(--muted, #888); font-size: 12px; }
 .code-input { width: 200px; }
 .name-input { width: 160px; }
 .add-btn {

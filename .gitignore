@@ -3,6 +3,7 @@ backend/.venv/
 __pycache__/
 *.pyc
 backend/.env
+backend/state.json
 *.egg-info/
 
 # Node

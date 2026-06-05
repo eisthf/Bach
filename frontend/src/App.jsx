@@ -6,9 +6,23 @@ import MarketControls from './components/MarketControls'
 import LogPanel from './components/LogPanel'
 
 function Dashboard() {
-  const { stocks, order } = useStore()
+  const { stocks, order, actions } = useStore()
   // 추가된 순서대로(위→아래) 배치. 객체 키 순서가 아니라 명시적 order 사용.
   const list = order.map((c) => stocks[c]).filter(Boolean)
+  const [importing, setImporting] = React.useState(false)
+  const [importMsg, setImportMsg] = React.useState('')
+  const doImportHeld = async () => {
+    setImporting(true)
+    setImportMsg('')
+    try {
+      const added = await actions.importHeld()
+      setImportMsg(added.length ? `${added.length}개 추가됨` : '추가할 보유 종목 없음')
+    } catch (e) {
+      setImportMsg(String(e.message || e))
+    } finally {
+      setImporting(false)
+    }
+  }
   return (
     <div className="app">
       <header className="app-header">
@@ -22,6 +36,15 @@ function Dashboard() {
 
       <div className="toolbar-row">
         <StockInput />
+        <button
+          className="import-held-btn"
+          onClick={doImportHeld}
+          disabled={importing}
+          title="증권사 계좌의 보유 종목 중 화면에 없는 것을 가져옵니다"
+        >
+          {importing ? '가져오는 중…' : '보유 종목 가져오기'}
+        </button>
+        {importMsg && <span className="import-msg">{importMsg}</span>}
       </div>
 
       <main className="main-grid">

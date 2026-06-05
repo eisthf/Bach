@@ -57,6 +57,13 @@ async def add_stock(payload: dict):
     return hub.status_of(stock.code).model_dump()
 
 
+@app.post("/api/stocks/import-held")
+async def import_held():
+    """계좌 보유 종목 중 화면에 없는 것을 가져와 추가."""
+    added = await hub.import_held()
+    return {"added": added}
+
+
 @app.delete("/api/stocks/{code}")
 def remove_stock(code: str):
     hub.remove_stock(code)
@@ -182,7 +189,8 @@ def market_reset():
 
 @app.on_event("startup")
 async def _on_startup():
-    hub.start_clock()  # live 모드면 실시간 KST 장 시계 가동
+    await hub.restore()  # 저장된 종목 + 계좌 보유 종목 복원
+    hub.start_clock()    # live 모드면 실시간 KST 장 시계 가동
 
 
 # ---------------------------------------------------------------------------

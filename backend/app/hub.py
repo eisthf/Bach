@@ -7,8 +7,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, List, Optional, Set
+
+logger = logging.getLogger("bach.hub")
 
 from .market_clock import MarketClock
 from .models import (
@@ -45,6 +50,12 @@ class Hub:
         self._clients: Set[asyncio.Queue] = set()
         self._lock = asyncio.Lock()
         self._clock_task: Optional[asyncio.Task] = None
+        # 종목/설정 영속화 파일(backend/state.json). cwd와 무관하게 절대경로.
+        self._state_path = Path(
+            os.getenv("BACH_STATE")
+            or (Path(__file__).resolve().parent.parent / "state.json")
+        )
+        self._restoring = False  # 복원 중엔 저장 억제
         # 주문체결(00) 이벤트 → 포지션 즉시 갱신(폴링 대신 이벤트 기반).
         if hasattr(self.data, "on_order_fill"):
             self.data.on_order_fill = self._on_order_fill
@@ -83,6 +94,7 @@ class Hub:
         )
         self.stocks[code] = stock
         stock.task = asyncio.create_task(self._tick_loop(stock))
+        self._persist()
         self._log(f"[{code}] 종목 추가됨")
         self.broadcast_status(code)
         # 추가 즉시 시세 표시: provider가 시드한 초기 틱이 있으면 브로드캐스트
@@ -96,10 +108,96 @@ class Hub:
         stock = self.stocks.pop(code, None)
         if stock and stock.task:
             stock.task.cancel()
+        self._persist()
         self._log(f"[{code}] 종목 제거됨")
 
     def get(self, code: str) -> Optional[Stock]:
         return self.stocks.get(code)
+
+    # -- 영속화 (종목 + 자동매매 설정) ------------------------------------
+    def _persist(self) -> None:
+        """종목 목록과 설정을 디스크(JSON)에 저장. 복원 중에는 억제."""
+        if self._restoring:
+            return
+        data = {
+            "stocks": [
+                {"code": s.code, "name": s.name, "config": s.config.model_dump()}
+                for s in self.stocks.values()
+            ]
+        }
+        try:
+            self._state_path.write_text(
+                json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("상태 저장 실패(%s): %s", self._state_path, e)
+
+    def _load_state(self) -> Dict[str, dict]:
+        """저장된 상태를 {code: {name, config}} 로 로드. 없으면 빈 dict."""
+        try:
+            raw = json.loads(self._state_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {}
+        except Exception as e:  # noqa: BLE001
+            logger.warning("상태 로드 실패(%s): %s", self._state_path, e)
+            return {}
+        out: Dict[str, dict] = {}
+        for s in raw.get("stocks", []) or []:
+            code = str(s.get("code", "")).strip()
+            if code:
+                out[code] = {"name": s.get("name") or "", "config": s.get("config")}
+        return out
+
+    async def restore(self) -> None:
+        """startup 시 1회: 마지막으로 화면에 표시됐던 종목 목록(JSON)을 복원.
+
+        계좌 보유 종목은 자동 병합하지 않는다(사용자가 '보유 종목 가져오기'로
+        명시적으로 가져온다 → import_held).
+        """
+        saved = self._load_state()
+        if not saved:
+            return
+        self._restoring = True
+        try:
+            for code, entry in saved.items():
+                name = entry.get("name") or ""
+                if not name:
+                    try:
+                        name = await asyncio.to_thread(self.data.stock_name, code) or ""
+                    except Exception:  # noqa: BLE001
+                        name = ""
+                stock = self.add_stock(code, name)
+                cfg = entry.get("config")
+                if cfg:
+                    try:
+                        stock.config = AutoConfig(**cfg)
+                    except Exception:  # noqa: BLE001
+                        pass
+        finally:
+            self._restoring = False
+        self._log(f"종목 복원: {len(saved)}개")
+
+    async def import_held(self) -> List[str]:
+        """계좌(kt00018) 보유 종목 중 화면에 없는 것을 가져와 추가. 추가 코드 반환."""
+        try:
+            positions = await asyncio.to_thread(self.broker.all_positions)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("보유 종목 조회 실패: %s", e)
+            return []
+        added: List[str] = []
+        for p in positions:
+            if p.quantity <= 0 or p.code in self.stocks:
+                continue
+            name = ""
+            try:
+                name = await asyncio.to_thread(self.data.stock_name, p.code) or ""
+            except Exception:  # noqa: BLE001
+                name = ""
+            self.add_stock(p.code, name)
+            added.append(p.code)
+        if added:
+            self._log(f"보유 종목 가져오기: {len(added)}개 추가 ({', '.join(added)})")
+        return added
 
     # -- 상태 직렬화 -------------------------------------------------------
     def status_of(self, code: str) -> Optional[StockStatus]:
@@ -204,6 +302,7 @@ class Hub:
         stock = self.stocks.get(code)
         if stock:
             stock.config = config
+            self._persist()
             self.broadcast_status(code)
 
     # -- 장 이벤트 ---------------------------------------------------------

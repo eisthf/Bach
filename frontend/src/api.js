@@ -17,6 +17,7 @@ export const api = {
   addStock: (code, name) =>
     req('/api/stocks', { method: 'POST', body: JSON.stringify({ code, name }) }),
   removeStock: (code) => req(`/api/stocks/${code}`, { method: 'DELETE' }),
+  importHeld: () => req('/api/stocks/import-held', { method: 'POST' }),
 
   getBars: (code, interval, lookbackExtra = 60) =>
     req(`/api/bars?code=${code}&interval=${interval}&lookback_extra=${lookbackExtra}`),

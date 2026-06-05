@@ -85,6 +85,11 @@ export function StoreProvider({ children }) {
       })
       setOrder((prev) => prev.filter((c) => c !== code))
     },
+    importHeld: async () => {
+      // 추가된 종목은 백엔드 status 브로드캐스트로 store에 반영됨. 개수만 반환.
+      const r = await api.importHeld()
+      return r.added || []
+    },
     push: (code) => api.push(code),
     buy: (code, amount) => api.buy(code, amount),
     sell: (code, qty) => api.sell(code, qty),
