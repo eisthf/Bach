@@ -43,7 +43,7 @@ export default function AutoConfigForm({ stock }) {
 
   return (
     <div className={`auto-form ${locked ? 'locked' : ''}`}>
-      <div className="panel-title">자동매매 설정 (상한가 따라잡기)</div>
+      <div className="panel-title">자동매매 설정</div>
       <div className="auto-grid">
         {FIELDS.map((f) => (
           <label key={f.key} className="field">

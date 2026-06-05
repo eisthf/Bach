@@ -32,7 +32,7 @@ function Dashboard() {
         <div className="brand">
           <span className="brand-mark">♪</span>
           <span className="brand-name">Bach</span>
-          <span className="brand-sub">주식 거래</span>
+          <span className="brand-sub">trading system</span>
         </div>
         <AccountSummary />
         <MarketControls />
