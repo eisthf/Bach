@@ -8,7 +8,7 @@ const fmt = (n) => Number(n || 0).toLocaleString('ko-KR')
 export default function ManualTradePanel({ stock, tick }) {
   const { actions } = useStore()
   const [amount, setAmount] = useState(500000)
-  const [qty, setQty] = useState(10)
+  const [qty, setQty] = useState(0)  // 기본 0 — '전량' 버튼으로 보유수량 채움
   const [msg, setMsg] = useState('')
 
   const enabled = stock.state === 'MANUAL_TRADING'
@@ -68,7 +68,11 @@ export default function ManualTradePanel({ stock, tick }) {
         >
           전량
         </button>
-        <button className="sell-btn" disabled={!enabled} onClick={doSell}>
+        <button
+          className="sell-btn"
+          disabled={!enabled || pos.quantity <= 0 || Number(qty) <= 0}
+          onClick={doSell}
+        >
           매도
         </button>
       </div>
