@@ -82,6 +82,11 @@ class Hub:
         stock.task = asyncio.create_task(self._tick_loop(stock))
         self._log(f"[{code}] 종목 추가됨")
         self.broadcast_status(code)
+        # 추가 즉시 시세 표시: provider가 시드한 초기 틱이 있으면 브로드캐스트
+        # (실시간 0B 첫 틱이 늦은 비유동 종목도 헤더가 '-'로 남지 않게)
+        lt = self.data.last_tick(code)
+        if lt is not None:
+            self.broadcast({"type": "tick", "tick": lt.model_dump()})
         return stock
 
     def remove_stock(self, code: str) -> None:

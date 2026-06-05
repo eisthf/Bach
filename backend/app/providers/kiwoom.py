@@ -46,6 +46,12 @@ class KiwoomDataProvider(DataProvider):
         self._prev_close: Dict[str, float] = {}  # 전일 종가(X) 캐시
         self._prev_close_day: Dict[str, str] = {}
         self._name: Dict[str, str] = {}          # 종목명 캐시
+        # 실시간 0B: 키움은 앱키당 WebSocket 1개만 허용 → 단일 연결로 전 종목을
+        # 멀티플렉싱한다(종목마다 연결하면 서로 LOGIN으로 밀어내 끊김 반복).
+        self._queues: Dict[str, "asyncio.Queue[Tick]"] = {}  # code -> 소비 큐
+        self._subscribed: set[str] = set()       # 구독 중인 종목코드
+        self._ws = None                           # 활성 websocket(없으면 None)
+        self._ws_task: Optional[asyncio.Task] = None
 
     # -- 봉 --------------------------------------------------------------
     def get_bars(self, code: str, interval: int, lookback_extra: int = 60) -> List[Bar]:
@@ -91,10 +97,24 @@ class KiwoomDataProvider(DataProvider):
         return lt.open if lt and lt.open else None
 
     def stock_name(self, code: str) -> Optional[str]:
+        # 종목 추가 시 1회: 종목명 + 초기 시세(현재가/시고저)를 ka10007로 시드.
+        # 거래가 드문 종목은 첫 0B 틱까지 시간이 걸려 헤더가 '-'로 보이는데,
+        # 이 시드로 추가 즉시 값이 표시되고 이후 실시간 틱이 갱신한다.
         if code not in self._name:
-            name = kw.fetch_stock_name(self.token, code, mock=self._mock)
-            if name:
-                self._name[code] = name
+            q = kw.fetch_quote(self.token, code, mock=self._mock)
+            if q:
+                if q.get("name"):
+                    self._name[code] = q["name"]
+                price = q.get("price") or 0.0
+                if price > 0 and code not in self._last:
+                    op = q.get("open") or price
+                    self._last[code] = Tick(
+                        code=code, price=price,
+                        high=q.get("high") or price, low=q.get("low") or price,
+                        open=op, volume=0.0, time=int(time.time()),
+                    )
+                    if op:
+                        self._day_open.setdefault(code, op)
         return self._name.get(code)
 
     # -- 틱 --------------------------------------------------------------
@@ -102,7 +122,43 @@ class KiwoomDataProvider(DataProvider):
         return self._last.get(code)
 
     async def stream_ticks(self, code: str) -> AsyncIterator[Tick]:
-        """키움 WebSocket 0B 실시간 체결 브리지. PING echo로 연결 유지."""
+        """종목별 틱 스트림. 내부적으로 단일 공유 WS에서 0B를 라우팅한다."""
+        q: "asyncio.Queue[Tick]" = asyncio.Queue(maxsize=1000)
+        self._queues[code] = q
+        self._subscribed.add(code)
+        self._ensure_ws()
+        await self._register()  # 연결돼 있으면 전체 구독을 즉시 REG
+        try:
+            while True:
+                yield await q.get()
+        finally:
+            self._queues.pop(code, None)
+            self._subscribed.discard(code)
+
+    # -- 단일 공유 WebSocket 관리 -----------------------------------------
+    def _ensure_ws(self) -> None:
+        if self._ws_task is None or self._ws_task.done():
+            self._ws_task = asyncio.create_task(self._run_ws())
+
+    async def _register(self) -> None:
+        """연결돼 있으면 현재 구독 중인 전체 종목을 한 REG로 등록.
+
+        refresh '1'이 grp_no를 갱신(치환)할 수 있으므로, 증분이 아니라 항상
+        전체 집합을 보낸다(일부만 보내면 나머지 구독이 풀릴 수 있음).
+        """
+        ws = self._ws
+        if ws is None or not self._subscribed:
+            return
+        try:
+            await ws.send(json.dumps({
+                "trnm": "REG", "grp_no": "1", "refresh": "1",
+                "data": [{"item": list(self._subscribed), "type": ["0B"]}],
+            }))
+        except Exception:  # noqa: BLE001
+            pass  # 다음 재연결 시 일괄 등록됨
+
+    async def _run_ws(self) -> None:
+        """앱키당 1개만 허용되는 실시간 소켓. 전 종목을 한 연결로 멀티플렉싱."""
         import websockets  # 지연 import (mock 모드 무의존)
 
         uri = kw.ws_url(self._mock)
@@ -111,47 +167,49 @@ class KiwoomDataProvider(DataProvider):
             try:
                 async with websockets.connect(uri, ping_interval=None) as ws:
                     await ws.send(json.dumps({"trnm": "LOGIN", "token": self.token}))
-                    registered = False
-                    backoff = 1.0
                     async for raw in ws:
                         msg = json.loads(raw)
                         trnm = msg.get("trnm")
                         if trnm == "LOGIN":
                             if msg.get("return_code") != 0:
-                                logger.error("[%s] WS 로그인 실패: %s", code,
-                                             msg.get("return_msg"))
+                                logger.error("WS 로그인 실패: %s", msg.get("return_msg"))
                                 break
-                            await ws.send(json.dumps({
-                                "trnm": "REG", "grp_no": "1", "refresh": "1",
-                                "data": [{"item": [code], "type": ["0B"]}],
-                            }))
-                            registered = True
+                            backoff = 1.0
+                            self._ws = ws
+                            # 현재 구독 중인 전 종목을 한 번에 등록
+                            if self._subscribed:
+                                await ws.send(json.dumps({
+                                    "trnm": "REG", "grp_no": "1", "refresh": "1",
+                                    "data": [{"item": list(self._subscribed),
+                                              "type": ["0B"]}],
+                                }))
+                                logger.info("WS 0B 등록: %s", ", ".join(self._subscribed))
                         elif trnm == "PING":
-                            await ws.send(raw)  # 그대로 echo (keepalive)
+                            await ws.send(raw)  # echo (keepalive)
                         elif trnm == "REAL":
-                            for tick in self._parse_real(code, msg):
-                                yield tick
-                        # REG 응답 등 기타는 무시
-                        if not registered:
-                            continue
+                            self._dispatch_real(msg)
             except asyncio.CancelledError:
+                self._ws = None
                 raise
             except Exception as e:  # noqa: BLE001
-                logger.warning("[%s] WS 재연결 (%.0fs 후): %s", code, backoff, e)
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, 30.0)
+                logger.warning("WS 재연결 (%.0fs 후): %s", backoff, e)
+            self._ws = None
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 30.0)
 
-    def _parse_real(self, code: str, msg: dict) -> List[Tick]:
-        out: List[Tick] = []
+    def _dispatch_real(self, msg: dict) -> None:
+        """REAL 메시지의 0B 틱을 종목별 큐로 라우팅."""
         for d in msg.get("data", []):
-            if d.get("type") != "0B" or d.get("item") not in (code, "", None):
+            if d.get("type") != "0B":
+                continue
+            code = d.get("item") or ""
+            if code not in self._queues:
                 continue
             v = d.get("values", {})
             price = kw.parse_price(v.get(F_PRICE))
             if price <= 0:
                 continue
-            open_ = kw.parse_price(v.get(F_OPEN)) or (
-                self._day_open.get(code) or price)
+            open_ = kw.parse_price(v.get(F_OPEN)) or (self._day_open.get(code) or price)
             if code not in self._day_open and open_:
                 self._day_open[code] = open_
             tick = Tick(
@@ -164,8 +222,12 @@ class KiwoomDataProvider(DataProvider):
                 time=int(time.time()),
             )
             self._last[code] = tick
-            out.append(tick)
-        return out
+            q = self._queues.get(code)
+            if q is not None:
+                try:
+                    q.put_nowait(tick)
+                except asyncio.QueueFull:
+                    pass  # 소비가 느리면 최신 틱 일부 드롭(허용)
 
 
 class KiwoomBroker(Broker):

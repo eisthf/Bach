@@ -153,8 +153,11 @@ def get_access_token(appkey: str, secretkey: str, mock: bool = False) -> str:
 # ---------------------------------------------------------------------------
 # 종목명 (ka10007 시세표성정보)
 # ---------------------------------------------------------------------------
-def fetch_stock_name(token: str, code: str, mock: bool = False) -> Optional[str]:
-    """종목명(stk_nm) 조회. 실패 시 None."""
+def fetch_quote(token: str, code: str, mock: bool = False) -> Optional[dict]:
+    """ka10007로 종목명+현재가/시고저를 한 번에 조회. 실패 시 None.
+
+    반환: {name, price, open, high, low}. 가격은 부호/패딩 처리된 절댓값.
+    """
     url = f"{rest_host(mock)}/api/dostk/mrkcond"
     headers = {
         "Content-Type": "application/json;charset=UTF-8",
@@ -170,8 +173,19 @@ def fetch_stock_name(token: str, code: str, mock: bool = False) -> Optional[str]
         return None
     if data.get("return_code") != 0:
         return None
-    name = (data.get("stk_nm") or "").strip()
-    return name or None
+    return {
+        "name": (data.get("stk_nm") or "").strip() or None,
+        "price": parse_price(data.get("cur_prc")),
+        "open": parse_price(data.get("open_pric")),
+        "high": parse_price(data.get("high_pric")),
+        "low": parse_price(data.get("low_pric")),
+    }
+
+
+def fetch_stock_name(token: str, code: str, mock: bool = False) -> Optional[str]:
+    """종목명만 필요할 때의 얇은 래퍼."""
+    q = fetch_quote(token, code, mock=mock)
+    return q.get("name") if q else None
 
 
 # ---------------------------------------------------------------------------

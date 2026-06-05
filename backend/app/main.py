@@ -45,12 +45,14 @@ async def add_stock(payload: dict):
     name = (payload.get("name") or "").strip()
     if not code:
         raise HTTPException(400, "code 필요")
-    # 이름 미입력 시 제공자(키움 ka10007)에서 종목명 자동 조회(블로킹 → 스레드).
+    # 제공자(키움 ka10007)에서 종목명+초기 시세를 시드(블로킹 → 스레드).
+    # 이름 미입력이면 조회한 종목명을 사용한다.
+    try:
+        looked = await asyncio.to_thread(hub.data.stock_name, code)
+    except Exception:
+        looked = None
     if not name:
-        try:
-            name = await asyncio.to_thread(hub.data.stock_name, code) or ""
-        except Exception:
-            name = ""
+        name = looked or ""
     stock = hub.add_stock(code, name)
     return hub.status_of(stock.code).model_dump()
 
@@ -198,6 +200,10 @@ async def ws(websocket: WebSocket):
         st = hub.status_of(code)
         if st:
             await websocket.send_json({"type": "status", "status": st.model_dump()})
+        # 마지막(또는 시드) 틱도 함께 보내 재접속/새로고침 시 헤더가 '-'로 남지 않게
+        lt = hub.data.last_tick(code)
+        if lt is not None:
+            await websocket.send_json({"type": "tick", "tick": lt.model_dump()})
     try:
         while True:
             msg = await q.get()
