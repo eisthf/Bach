@@ -41,6 +41,10 @@ class DataProvider(ABC):
         """당일 시가(Z). 제공 못 하면 None → 호출측이 봉/틱으로 추정."""
         return None
 
+    def stock_name(self, code: str) -> str | None:
+        """종목명. 제공 못 하면 None → 호출측이 코드로 대체."""
+        return None
+
 
 class Broker(ABC):
     """주문 실행 + 포지션 관리."""

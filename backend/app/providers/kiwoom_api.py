@@ -151,6 +151,30 @@ def get_access_token(appkey: str, secretkey: str, mock: bool = False) -> str:
 
 
 # ---------------------------------------------------------------------------
+# 종목명 (ka10007 시세표성정보)
+# ---------------------------------------------------------------------------
+def fetch_stock_name(token: str, code: str, mock: bool = False) -> Optional[str]:
+    """종목명(stk_nm) 조회. 실패 시 None."""
+    url = f"{rest_host(mock)}/api/dostk/mrkcond"
+    headers = {
+        "Content-Type": "application/json;charset=UTF-8",
+        "authorization": f"Bearer {token}",
+        "api-id": "ka10007",
+    }
+    resp = _post(url, headers, {"stk_cd": code}, timeout=10, retries=3)
+    if resp is None or resp.status_code != 200:
+        return None
+    try:
+        data = resp.json()
+    except Exception:  # noqa: BLE001
+        return None
+    if data.get("return_code") != 0:
+        return None
+    name = (data.get("stk_nm") or "").strip()
+    return name or None
+
+
+# ---------------------------------------------------------------------------
 # 분봉 차트 (ka10080)
 # ---------------------------------------------------------------------------
 def fetch_min_bars(

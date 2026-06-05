@@ -45,6 +45,12 @@ async def add_stock(payload: dict):
     name = (payload.get("name") or "").strip()
     if not code:
         raise HTTPException(400, "code 필요")
+    # 이름 미입력 시 제공자(키움 ka10007)에서 종목명 자동 조회(블로킹 → 스레드).
+    if not name:
+        try:
+            name = await asyncio.to_thread(hub.data.stock_name, code) or ""
+        except Exception:
+            name = ""
     stock = hub.add_stock(code, name)
     return hub.status_of(stock.code).model_dump()
 

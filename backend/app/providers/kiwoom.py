@@ -45,6 +45,7 @@ class KiwoomDataProvider(DataProvider):
         self._day_open: Dict[str, float] = {}    # 당일 시가(Z) 캐시
         self._prev_close: Dict[str, float] = {}  # 전일 종가(X) 캐시
         self._prev_close_day: Dict[str, str] = {}
+        self._name: Dict[str, str] = {}          # 종목명 캐시
 
     # -- 봉 --------------------------------------------------------------
     def get_bars(self, code: str, interval: int, lookback_extra: int = 60) -> List[Bar]:
@@ -88,6 +89,13 @@ class KiwoomDataProvider(DataProvider):
             return self._day_open[code]
         lt = self._last.get(code)
         return lt.open if lt and lt.open else None
+
+    def stock_name(self, code: str) -> Optional[str]:
+        if code not in self._name:
+            name = kw.fetch_stock_name(self.token, code, mock=self._mock)
+            if name:
+                self._name[code] = name
+        return self._name.get(code)
 
     # -- 틱 --------------------------------------------------------------
     def last_tick(self, code: str) -> Optional[Tick]:
