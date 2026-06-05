@@ -8,6 +8,9 @@ export const useStore = () => useContext(StoreCtx)
 export function StoreProvider({ children }) {
   // code -> StockStatus({code,name,state,config,position})
   const [stocks, setStocks] = useState({})
+  // 추가된 순서(코드 배열). 객체 키 순서는 숫자형 키가 먼저 정렬되어
+  // 추가 순서가 깨지므로, 명시적 순서 배열로 위→아래 배치를 보장한다.
+  const [order, setOrder] = useState([])
   // code -> latest tick({code,price,high,low,open,...})
   const [ticks, setTicks] = useState({})
   const [phase, setPhase] = useState('PRE_OPEN')
@@ -22,6 +25,7 @@ export function StoreProvider({ children }) {
       const map = {}
       list.forEach((s) => (map[s.code] = s))
       setStocks(map)
+      setOrder(list.map((s) => s.code))
     })
     api.market().then((m) => {
       setPhase(m.phase)
@@ -49,6 +53,7 @@ export function StoreProvider({ children }) {
         } else if (msg.type === 'status') {
           const s = msg.status
           setStocks((prev) => ({ ...prev, [s.code]: s }))
+          setOrder((prev) => (prev.includes(s.code) ? prev : [...prev, s.code]))
         } else if (msg.type === 'market') {
           setPhase(msg.phase)
           if (msg.auto !== undefined) setMarketAuto(!!msg.auto)
@@ -69,6 +74,7 @@ export function StoreProvider({ children }) {
     addStock: async (code, name) => {
       const s = await api.addStock(code, name)
       setStocks((prev) => ({ ...prev, [s.code]: s }))
+      setOrder((prev) => (prev.includes(s.code) ? prev : [...prev, s.code]))
     },
     removeStock: async (code) => {
       await api.removeStock(code)
@@ -77,6 +83,7 @@ export function StoreProvider({ children }) {
         delete n[code]
         return n
       })
+      setOrder((prev) => prev.filter((c) => c !== code))
     },
     push: (code) => api.push(code),
     buy: (code, amount) => api.buy(code, amount),
@@ -89,6 +96,6 @@ export function StoreProvider({ children }) {
     marketReset: () => api.marketReset(),
   }
 
-  const value = { stocks, ticks, phase, marketAuto, logs, connected, actions }
+  const value = { stocks, order, ticks, phase, marketAuto, logs, connected, actions }
   return <StoreCtx.Provider value={value}>{children}</StoreCtx.Provider>
 }

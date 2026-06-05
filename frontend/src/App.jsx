@@ -6,8 +6,9 @@ import MarketControls from './components/MarketControls'
 import LogPanel from './components/LogPanel'
 
 function Dashboard() {
-  const { stocks } = useStore()
-  const list = Object.values(stocks)
+  const { stocks, order } = useStore()
+  // 추가된 순서대로(위→아래) 배치. 객체 키 순서가 아니라 명시적 order 사용.
+  const list = order.map((c) => stocks[c]).filter(Boolean)
   return (
     <div className="app">
       <header className="app-header">
