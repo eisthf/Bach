@@ -360,6 +360,58 @@ def place_order(
 # ---------------------------------------------------------------------------
 # 계좌 잔고 (kt00018) — 보유 포지션
 # ---------------------------------------------------------------------------
+def fetch_account_summary(token: str, mock: bool = False) -> Optional[dict]:
+    """계좌 요약: 예수금/주문가능금액(kt00001) + 평가금액/손익/총자산(kt00018).
+
+    반환: {deposit, orderable, stock_eval, eval_pnl, purchase, total_asset} 또는 None.
+    """
+    host = rest_host(mock)
+    base = {
+        "Content-Type": "application/json;charset=UTF-8",
+        "authorization": f"Bearer {token}",
+    }
+    out: dict = {}
+
+    # 예수금/주문가능금액 (kt00001)
+    r = _post(f"{host}/api/dostk/acnt", {**base, "api-id": "kt00001"},
+              {"qry_tp": "2"}, timeout=10)
+    if r is not None and r.status_code == 200:
+        try:
+            d = r.json()
+            if d.get("return_code") == 0:
+                out["deposit"] = parse_price(d.get("entr"))         # 예수금
+                out["orderable"] = parse_price(d.get("ord_alow_amt"))  # 주문가능금액
+        except Exception:  # noqa: BLE001
+            pass
+
+    # 평가금액/손익/총자산 (kt00018)
+    r = _post(f"{host}/api/dostk/acnt", {**base, "api-id": "kt00018"},
+              {"qry_tp": "1", "dmst_stex_tp": "KRX"}, timeout=10)
+    if r is not None and r.status_code == 200:
+        try:
+            d = r.json()
+            if d.get("return_code") == 0:
+                out["stock_eval"] = parse_price(d.get("tot_evlt_amt"))   # 주식평가금액
+                out["eval_pnl"] = _signed(d.get("tot_evlt_pl"))         # 총평가손익(부호)
+                out["purchase"] = parse_price(d.get("tot_pur_amt"))     # 총매입금액
+                out["total_asset"] = parse_price(d.get("prsm_dpst_aset_amt"))  # 추정예탁자산
+        except Exception:  # noqa: BLE001
+            pass
+
+    return out or None
+
+
+def _signed(val) -> float:
+    """부호 보존 파싱(평가손익 등 음수 의미 있는 값)."""
+    s = str(val).strip().replace(",", "")
+    if not s or s in ("nan", "None"):
+        return 0.0
+    try:
+        return float(s.replace("+", ""))
+    except ValueError:
+        return 0.0
+
+
 def fetch_positions(token: str, mock: bool = False) -> Dict[str, dict]:
     """보유 종목 dict 반환.
 

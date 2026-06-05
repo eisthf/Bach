@@ -41,6 +41,14 @@ input:focus { outline: none; border-color: var(--accent); }
   position: sticky; top: 0; z-index: 10;
 }
 .brand { display: flex; align-items: baseline; gap: 8px; }
+.account-summary { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+.acc-cell { display: flex; flex-direction: column; line-height: 1.25; }
+.acc-label { font-size: 11px; color: var(--muted); }
+.acc-val { font-size: 15px; font-weight: 600; color: #222; }
+.acc-val.strong { font-size: 16px; color: var(--accent); }
+.acc-pnl { font-size: 12px; font-weight: 600; }
+.acc-pnl.up { color: var(--up); }
+.acc-pnl.down { color: var(--down); }
 .brand-mark { font-size: 22px; color: var(--accent); }
 .brand-name { font-size: 20px; font-weight: 700; }
 .brand-sub { color: var(--muted); font-size: 13px; }

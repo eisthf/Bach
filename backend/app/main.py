@@ -121,6 +121,12 @@ def positions():
     return [p.model_dump() for p in hub.broker.all_positions()]
 
 
+@app.get("/api/account")
+async def account():
+    """계좌 요약(예수금/주문가능금액/평가금액 등). 미지원(mock) 시 null."""
+    return await asyncio.to_thread(hub.broker.account_summary)
+
+
 # ---------------------------------------------------------------------------
 # 자동매매 설정
 # ---------------------------------------------------------------------------

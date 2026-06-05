@@ -3,6 +3,7 @@ import { StoreProvider, useStore } from './store'
 import StockInput from './components/StockInput'
 import StockPanel from './components/StockPanel'
 import MarketControls from './components/MarketControls'
+import AccountSummary from './components/AccountSummary'
 import LogPanel from './components/LogPanel'
 
 function Dashboard() {
@@ -31,6 +32,7 @@ function Dashboard() {
           <span className="brand-name">Bach</span>
           <span className="brand-sub">주식 거래</span>
         </div>
+        <AccountSummary />
         <MarketControls />
       </header>
 

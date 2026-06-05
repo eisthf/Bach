@@ -27,6 +27,7 @@ export const api = {
   sell: (code, qty) =>
     req('/api/orders/sell', { method: 'POST', body: JSON.stringify({ code, qty }) }),
   positions: () => req('/api/positions'),
+  account: () => req('/api/account'),
 
   getConfig: (code) => req(`/api/config/${code}`),
   putConfig: (code, config) =>

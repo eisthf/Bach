@@ -296,6 +296,9 @@ class KiwoomBroker(Broker):
     def invalidate(self) -> None:
         self._pos_ts = 0.0
 
+    def account_summary(self) -> Optional[dict]:
+        return kw.fetch_account_summary(self._data.token, mock=self._mock)
+
     def _positions(self, force: bool = False) -> Dict[str, dict]:
         now = time.time()
         if force or now - self._pos_ts > self._POS_TTL:

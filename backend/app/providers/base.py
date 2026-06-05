@@ -67,3 +67,7 @@ class Broker(ABC):
 
     def invalidate(self) -> None:
         """포지션 캐시 무효화(다음 조회 시 강제 갱신). 캐시 없으면 no-op."""
+
+    def account_summary(self) -> dict | None:
+        """계좌 요약(예수금/주문가능금액/평가금액 등). 제공 못 하면 None."""
+        return None
