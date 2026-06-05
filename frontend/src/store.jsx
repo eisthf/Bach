@@ -15,6 +15,11 @@ export function StoreProvider({ children }) {
   const [ticks, setTicks] = useState({})
   const [phase, setPhase] = useState('PRE_OPEN')
   const [marketAuto, setMarketAuto] = useState(false)
+  // 숨긴 종목코드 집합(목록엔 유지, 패널만 숨김). 브라우저에 기억(localStorage).
+  const [hidden, setHidden] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('bach.hidden') || '[]')) }
+    catch { return new Set() }
+  })
   const [logs, setLogs] = useState([])
   const [connected, setConnected] = useState(false)
   const wsRef = useRef(null)
@@ -84,6 +89,21 @@ export function StoreProvider({ children }) {
         return n
       })
       setOrder((prev) => prev.filter((c) => c !== code))
+      setHidden((prev) => {
+        if (!prev.has(code)) return prev
+        const n = new Set(prev)
+        n.delete(code)
+        localStorage.setItem('bach.hidden', JSON.stringify([...n]))
+        return n
+      })
+    },
+    toggleVisible: (code) => {
+      setHidden((prev) => {
+        const n = new Set(prev)
+        n.has(code) ? n.delete(code) : n.add(code)
+        localStorage.setItem('bach.hidden', JSON.stringify([...n]))
+        return n
+      })
     },
     importHeld: async () => {
       // 추가된 종목은 백엔드 status 브로드캐스트로 store에 반영됨. 개수만 반환.
@@ -101,6 +121,6 @@ export function StoreProvider({ children }) {
     marketReset: () => api.marketReset(),
   }
 
-  const value = { stocks, order, ticks, phase, marketAuto, logs, connected, actions }
+  const value = { stocks, order, hidden, ticks, phase, marketAuto, logs, connected, actions }
   return <StoreCtx.Provider value={value}>{children}</StoreCtx.Provider>
 }

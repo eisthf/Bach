@@ -7,9 +7,10 @@ import AccountSummary from './components/AccountSummary'
 import LogPanel from './components/LogPanel'
 
 function Dashboard() {
-  const { stocks, order, actions } = useStore()
-  // 추가된 순서대로(위→아래) 배치. 객체 키 순서가 아니라 명시적 order 사용.
-  const list = order.map((c) => stocks[c]).filter(Boolean)
+  const { stocks, order, hidden, actions } = useStore()
+  // 추가된 순서대로(위→아래) 배치. 숨김 종목은 패널에서 제외(목록엔 유지).
+  const visibleCodes = order.filter((c) => stocks[c])
+  const list = visibleCodes.filter((c) => !hidden.has(c)).map((c) => stocks[c])
   const [importing, setImporting] = React.useState(false)
   const [importMsg, setImportMsg] = React.useState('')
   const doImportHeld = async () => {
@@ -49,11 +50,32 @@ function Dashboard() {
         {importMsg && <span className="import-msg">{importMsg}</span>}
       </div>
 
+      {visibleCodes.length > 0 && (
+        <div className="chip-bar">
+          {visibleCodes.map((c) => {
+            const s = stocks[c]
+            const off = hidden.has(c)
+            return (
+              <button
+                key={c}
+                className={`stock-chip ${off ? 'off' : 'on'}`}
+                onClick={() => actions.toggleVisible(c)}
+                title={off ? '클릭하면 차트 표시' : '클릭하면 차트 숨김'}
+              >
+                {s.name || c}
+              </button>
+            )
+          })}
+        </div>
+      )}
+
       <main className="main-grid">
         <section className="panels-col">
           {list.length === 0 && (
             <div className="empty-state">
-              종목코드를 추가하면 차트와 매매 패널이 나타납니다. (예: 005930)
+              {visibleCodes.length === 0
+                ? '종목코드를 추가하면 차트와 매매 패널이 나타납니다. (예: 005930)'
+                : '모든 종목이 숨김 상태입니다. 위 칩을 눌러 차트를 다시 표시하세요.'}
             </div>
           )}
           {list.map((s) => (

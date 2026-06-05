@@ -80,6 +80,17 @@ input:focus { outline: none; border-color: var(--accent); }
 .import-held-btn:hover:not(:disabled) { background: #eef1fd; }
 .import-held-btn:disabled { opacity: 0.6; cursor: default; }
 .import-msg { color: var(--muted, #888); font-size: 12px; }
+
+/* 종목 표시/숨김 토글 칩 바 */
+.chip-bar { padding: 10px 20px 0; display: flex; gap: 8px; flex-wrap: wrap; }
+.stock-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  border-radius: 999px; padding: 5px 12px; font-size: 13px; font-weight: 600;
+  cursor: pointer; border: 1px solid var(--accent); transition: opacity .15s;
+}
+.stock-chip.on { background: var(--accent); color: #fff; }
+.stock-chip.off { background: #f0f0f0; color: var(--muted, #999); border-color: var(--border); }
+.stock-chip:hover { filter: brightness(0.97); }
 .code-input { width: 200px; }
 .name-input { width: 160px; }
 .add-btn {
