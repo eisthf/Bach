@@ -189,6 +189,14 @@ input:focus { outline: none; border-color: var(--accent); }
   border: 1px solid var(--border); border-radius: 8px; padding: 12px; background: #fcfcfd;
 }
 .manual-panel.disabled, .auto-form.locked { opacity: 0.65; }
+
+/* 미체결 주문 */
+.pending-orders { margin-top: 10px; border-top: 1px dashed var(--border); padding-top: 8px; }
+.pending-title { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+.pending-row { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 2px 0; }
+.pending-side { font-weight: 700; }
+.pending-detail { color: var(--text); }
+.pending-status { margin-left: auto; color: var(--muted); font-size: 11px; }
 .position-row { display: flex; gap: 12px; font-size: 12px; color: var(--muted); margin-bottom: 10px; flex-wrap: wrap; }
 .trade-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .trade-row label { width: 88px; font-size: 12px; color: var(--muted); }

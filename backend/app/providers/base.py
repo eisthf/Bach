@@ -71,3 +71,7 @@ class Broker(ABC):
     def account_summary(self) -> dict | None:
         """계좌 요약(예수금/주문가능금액/평가금액 등). 제공 못 하면 None."""
         return None
+
+    def unfilled_orders(self) -> dict:
+        """종목코드별 미체결 주문 목록 {code: [order, ...]}. 제공 못 하면 {}."""
+        return {}

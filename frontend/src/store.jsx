@@ -13,6 +13,8 @@ export function StoreProvider({ children }) {
   const [order, setOrder] = useState([])
   // code -> latest tick({code,price,high,low,open,...})
   const [ticks, setTicks] = useState({})
+  // code -> 미체결 주문 목록 [{side,qty,unfilled,price,order_type,status,...}]
+  const [orders, setOrders] = useState({})
   const [phase, setPhase] = useState('PRE_OPEN')
   const [marketAuto, setMarketAuto] = useState(false)
   // 숨긴 종목코드 집합(목록엔 유지, 패널만 숨김). 브라우저에 기억(localStorage).
@@ -64,6 +66,8 @@ export function StoreProvider({ children }) {
           const s = msg.status
           setStocks((prev) => ({ ...prev, [s.code]: s }))
           setOrder((prev) => (prev.includes(s.code) ? prev : [...prev, s.code]))
+        } else if (msg.type === 'orders') {
+          setOrders(msg.orders || {})
         } else if (msg.type === 'market') {
           setPhase(msg.phase)
           if (msg.auto !== undefined) setMarketAuto(!!msg.auto)
@@ -149,6 +153,6 @@ export function StoreProvider({ children }) {
     marketReset: () => api.marketReset(),
   }
 
-  const value = { stocks, order, hidden, compact, ticks, phase, marketAuto, logs, connected, actions }
+  const value = { stocks, order, hidden, compact, ticks, orders, phase, marketAuto, logs, connected, actions }
   return <StoreCtx.Provider value={value}>{children}</StoreCtx.Provider>
 }

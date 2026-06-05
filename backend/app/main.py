@@ -103,6 +103,7 @@ async def buy(req: BuyOrderReq):
         hub._log(f"[{req.code}] 수동 매수: {res.message}")
         hub.broadcast_status(req.code)
         # 체결 반영은 실시간 주문체결(00) 이벤트가 담당(폴링 제거)
+        await hub.refresh_orders()  # 미체결 즉시 갱신
     return res
 
 
@@ -113,6 +114,7 @@ async def sell(req: SellOrderReq):
         hub._log(f"[{req.code}] 수동 매도: {res.message}")
         hub.broadcast_status(req.code)
         # 체결 반영은 실시간 주문체결(00) 이벤트가 담당(폴링 제거)
+        await hub.refresh_orders()  # 미체결 즉시 갱신
     return res
 
 
@@ -218,6 +220,8 @@ async def ws(websocket: WebSocket):
         lt = hub.data.last_tick(code)
         if lt is not None:
             await websocket.send_json({"type": "tick", "tick": lt.model_dump()})
+    # 미체결 주문도 곧 한 번 갱신해 새 클라이언트에 표시(블로킹 → 백그라운드)
+    asyncio.create_task(hub.refresh_orders())
     try:
         while True:
             msg = await q.get()

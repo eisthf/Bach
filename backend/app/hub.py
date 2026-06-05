@@ -50,6 +50,7 @@ class Hub:
         self._clients: Set[asyncio.Queue] = set()
         self._lock = asyncio.Lock()
         self._clock_task: Optional[asyncio.Task] = None
+        self._orders_task: Optional[asyncio.Task] = None
         # 종목/설정 영속화 파일(backend/state.json). cwd와 무관하게 절대경로.
         self._state_path = Path(
             os.getenv("BACH_STATE")
@@ -160,12 +161,14 @@ class Hub:
         self._restoring = True
         try:
             for code, entry in saved.items():
-                name = entry.get("name") or ""
-                if not name:
-                    try:
-                        name = await asyncio.to_thread(self.data.stock_name, code) or ""
-                    except Exception:  # noqa: BLE001
-                        name = ""
+                # 이름이 JSON에 있어도 stock_name()을 호출한다(부수효과: ka10007로
+                # 초기 시세 시드 → 거래 드문 종목도 현재가가 '-'로 남지 않음).
+                fetched = None
+                try:
+                    fetched = await asyncio.to_thread(self.data.stock_name, code)
+                except Exception:  # noqa: BLE001
+                    pass
+                name = entry.get("name") or fetched or ""
                 stock = self.add_stock(code, name)
                 cfg = entry.get("config")
                 if cfg:
@@ -234,6 +237,7 @@ class Hub:
             f"{fill.get('price', 0):,.0f} (미체결 {fill.get('unfilled')})"
         )
         asyncio.create_task(self._refresh_status(code))
+        asyncio.create_task(self.refresh_orders())  # 미체결 수량 변화 반영
 
     async def _refresh_status(self, code: str) -> None:
         await asyncio.to_thread(self.broker.position, code)  # 블로킹 조회 오프로드
@@ -243,6 +247,29 @@ class Hub:
         await asyncio.to_thread(self.broker.all_positions)   # 1회 강제 조회로 캐시 채움
         for code in list(self.stocks.keys()):
             self.broadcast_status(code)
+        await self.refresh_orders()  # 체결 시 미체결 수량도 바뀌므로 함께 갱신
+
+    # -- 미체결 주문 ------------------------------------------------------
+    async def refresh_orders(self) -> None:
+        """계좌 미체결 주문(ka10075)을 조회해 종목별로 브로드캐스트."""
+        try:
+            orders = await asyncio.to_thread(self.broker.unfilled_orders)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("미체결 조회 실패: %s", e)
+            return
+        self.broadcast({"type": "orders", "orders": orders})
+
+    async def _orders_loop(self) -> None:
+        """주기적으로 미체결 주문을 브로드캐스트(체결/취소/외부주문 반영)."""
+        while True:
+            try:
+                await asyncio.sleep(5)
+                if self.stocks:
+                    await self.refresh_orders()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:  # noqa: BLE001
+                logger.warning("미체결 루프 오류: %s", e)
 
     # -- 틱 루프 (종목별) --------------------------------------------------
     async def _tick_loop(self, stock: Stock) -> None:
@@ -346,10 +373,13 @@ class Hub:
 
     # -- 실시간 KST 자동 시계 (live 모드) ----------------------------------
     def start_clock(self) -> None:
-        """live 모드에서 실제 시각으로 장 단계를 감시하는 루프를 1회 기동."""
-        if not self.live or self._clock_task is not None:
+        """live 모드에서 장 시계 + 미체결 주문 폴링 루프를 1회 기동."""
+        if not self.live:
             return
-        self._clock_task = asyncio.create_task(self._auto_clock_loop())
+        if self._clock_task is None:
+            self._clock_task = asyncio.create_task(self._auto_clock_loop())
+        if self._orders_task is None:
+            self._orders_task = asyncio.create_task(self._orders_loop())
 
     async def _auto_clock_loop(self) -> None:
         """KST 시각으로 phase 경계를 감지해 MARKET-OPEN/CLOSE를 자동 발생."""

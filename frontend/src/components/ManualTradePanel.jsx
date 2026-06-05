@@ -6,15 +6,17 @@ const fmt = (n) => Number(n || 0).toLocaleString('ko-KR')
 // 수동매매: 매수 금액(원)·매도 수량(주) 입력 + 버튼.
 // MANUAL_TRADING 상태에서만 활성.
 export default function ManualTradePanel({ stock, tick }) {
-  const { actions } = useStore()
+  const { actions, orders } = useStore()
   const [amount, setAmount] = useState(500000)
   const [qty, setQty] = useState(0)  // 기본 0 — '전량' 버튼으로 보유수량 채움
   const [msg, setMsg] = useState('')
+  const pending = orders[stock.code] || []
 
   const enabled = stock.state === 'MANUAL_TRADING'
   const pos = stock.position
   const price = tick?.price
-  const estShares = price ? Math.floor(amount / price) : 0
+  // 현재가가 없으면 주식수를 계산할 수 없음 → null(표시는 '—'주)
+  const estShares = price ? Math.floor(amount / price) : null
 
   const doBuy = async () => {
     const r = await actions.buy(stock.code, Number(amount))
@@ -45,7 +47,7 @@ export default function ManualTradePanel({ stock, tick }) {
           disabled={!enabled}
           onChange={(e) => setAmount(e.target.value)}
         />
-        <span className="hint">≈ {fmt(estShares)}주</span>
+        <span className="hint">≈ {estShares == null ? '—' : fmt(estShares)}주</span>
         <button className="buy-btn" disabled={!enabled} onClick={doBuy}>
           매수
         </button>
@@ -77,6 +79,24 @@ export default function ManualTradePanel({ stock, tick }) {
         </button>
       </div>
 
+      {pending.length > 0 && (
+        <div className="pending-orders">
+          <div className="pending-title">미체결</div>
+          {pending.map((o, i) => (
+            <div key={o.order_no || i} className="pending-row">
+              <span className={`pending-side ${o.side === 'sell' ? 'down' : 'up'}`}>
+                {o.side === 'sell' ? '매도' : '매수'}
+              </span>
+              <span className="pending-detail">
+                미체결 {fmt(o.unfilled)} / 주문 {fmt(o.qty)}주 {o.order_type || ''}
+                {o.price > 0 ? ` @ ${fmt(o.price)}` : ''}
+                {o.filled > 0 ? ` · 체결 ${fmt(o.filled)}` : ''}
+              </span>
+              <span className="pending-status">{o.status}</span>
+            </div>
+          ))}
+        </div>
+      )}
       {msg && <div className="trade-msg">{msg}</div>}
       {!enabled && <div className="lock-note">자동매매/모니터 상태에서는 잠금</div>}
     </div>

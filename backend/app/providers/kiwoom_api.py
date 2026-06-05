@@ -401,6 +401,44 @@ def fetch_account_summary(token: str, mock: bool = False) -> Optional[dict]:
     return out or None
 
 
+def fetch_unfilled(token: str, mock: bool = False) -> List[dict]:
+    """계좌 미체결 주문(ka10075)을 한 번에 조회. 주문 dict 리스트 반환."""
+    url = f"{rest_host(mock)}/api/dostk/acnt"
+    headers = {
+        "Content-Type": "application/json;charset=UTF-8",
+        "authorization": f"Bearer {token}",
+        "api-id": "ka10075",
+    }
+    body = {"all_stk_tp": "0", "trde_tp": "0", "stk_cd": "", "stex_tp": "0"}
+    resp = _post(url, headers, body, timeout=10)
+    if resp is None or resp.status_code != 200:
+        return []
+    try:
+        data = resp.json()
+    except Exception:  # noqa: BLE001
+        return []
+    if data.get("return_code") != 0:
+        return []
+    out: List[dict] = []
+    for o in data.get("oso", []) or []:
+        code = str(o.get("stk_cd", "")).lstrip("A").strip()
+        if not code:
+            continue
+        io = str(o.get("io_tp_nm", ""))
+        out.append({
+            "code": code,
+            "side": "sell" if "매도" in io else "buy",
+            "order_type": str(o.get("trde_tp", "")).strip(),  # 시장가/지정가 등
+            "qty": parse_int(o.get("ord_qty")),
+            "unfilled": parse_int(o.get("oso_qty")),
+            "filled": parse_int(o.get("cntr_qty")),
+            "price": parse_price(o.get("ord_pric")),
+            "order_no": str(o.get("ord_no", "")).strip(),
+            "status": str(o.get("ord_stt", "")).strip(),  # 접수/확인 등
+        })
+    return out
+
+
 def _signed(val) -> float:
     """부호 보존 파싱(평가손익 등 음수 의미 있는 값)."""
     s = str(val).strip().replace(",", "")

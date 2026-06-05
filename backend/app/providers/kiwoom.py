@@ -299,6 +299,12 @@ class KiwoomBroker(Broker):
     def account_summary(self) -> Optional[dict]:
         return kw.fetch_account_summary(self._data.token, mock=self._mock)
 
+    def unfilled_orders(self) -> dict:
+        grouped: Dict[str, list] = {}
+        for o in kw.fetch_unfilled(self._data.token, mock=self._mock):
+            grouped.setdefault(o["code"], []).append(o)
+        return grouped
+
     def _positions(self, force: bool = False) -> Dict[str, dict]:
         now = time.time()
         if force or now - self._pos_ts > self._POS_TTL:
