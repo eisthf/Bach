@@ -65,12 +65,13 @@ AUTO_TRADING --> MANUAL_TRADING : PUSH | POSITION-FLAT(보유수량→0)
 PROVIDER=kiwoom
 APPKEY=...
 SECRETKEY=...
-KIWOOM_MOCK=true          # 모의투자 서버
-KIWOOM_PATH=/home/rblue/work/kiwoom
+KIWOOM_MOCK=true          # true=모의투자(mockapi) / false=실전(api)
 ```
-`app/providers/kiwoom.py`가 kiwoom 프로젝트의 `get_access_token`,
-`place_buy_order`/`place_sell_order`, 분봉(ka10080), 실시간 틱(WebSocket `0B`)을
-재사용한다. 자격증명/네트워크가 준비된 환경에서 검증 필요.
+`app/providers/kiwoom_api.py`가 키움 REST/WebSocket을 **self-contained**로 구현한다
+(외부 kiwoom 프로젝트 의존 없음). 토큰(au10001), 분봉(ka10080), 일봉(ka10081),
+주문(kt10000/kt10001), 잔고(kt00018), 실시간 체결(WebSocket `0B`)을 직접 호출한다.
+`app/providers/kiwoom.py`가 이를 DataProvider/Broker 계약에 맞춘다. 포지션은 계좌
+잔고(kt00018)를 단일 진실원으로 삼는다. 자격증명/네트워크 준비 환경에서 검증 필요.
 
 ## 구조
 

@@ -130,3 +130,4 @@ class StockStatus(BaseModel):
 
 class MarketStatus(BaseModel):
     phase: MarketPhase
+    auto: bool = False   # True=실시간 KST 시계 자동(live), False=수동 토글(mock)

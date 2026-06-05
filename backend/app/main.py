@@ -81,20 +81,23 @@ def get_bars(
 # 주문 / 포지션
 # ---------------------------------------------------------------------------
 @app.post("/api/orders/buy", response_model=OrderResult)
-def buy(req: BuyOrderReq):
-    res = hub.broker.buy(req.code, req.amount_krw)
+async def buy(req: BuyOrderReq):
+    # 블로킹 REST 주문은 스레드로 오프로드(이벤트 루프 차단 방지)
+    res = await asyncio.to_thread(hub.broker.buy, req.code, req.amount_krw)
     if res.ok:
         hub._log(f"[{req.code}] 수동 매수: {res.message}")
         hub.broadcast_status(req.code)
+        hub.schedule_order_refresh(req.code)  # 체결 반영 폴링
     return res
 
 
 @app.post("/api/orders/sell", response_model=OrderResult)
-def sell(req: SellOrderReq):
-    res = hub.broker.sell(req.code, req.qty)
+async def sell(req: SellOrderReq):
+    res = await asyncio.to_thread(hub.broker.sell, req.code, req.qty)
     if res.ok:
         hub._log(f"[{req.code}] 수동 매도: {res.message}")
         hub.broadcast_status(req.code)
+        hub.schedule_order_refresh(req.code)  # 체결 반영 폴링
     return res
 
 
@@ -139,25 +142,39 @@ def push(code: str):
 # ---------------------------------------------------------------------------
 @app.get("/api/market")
 def market_status():
-    return {"phase": hub.clock.phase.value}
+    return {"phase": hub.clock.phase.value, "auto": hub.clock.auto}
+
+
+def _reject_if_auto():
+    # live(자동 시계) 모드에선 수동 장 제어를 막는다(실제 KST 시각이 진실원).
+    if hub.clock.auto:
+        raise HTTPException(status_code=409, detail="자동 장 시계(live) 모드: 수동 제어 불가")
 
 
 @app.post("/api/market/open")
 def market_open():
+    _reject_if_auto()
     hub.market_open()
-    return {"phase": hub.clock.phase.value}
+    return {"phase": hub.clock.phase.value, "auto": hub.clock.auto}
 
 
 @app.post("/api/market/close")
 def market_close():
+    _reject_if_auto()
     hub.market_close()
-    return {"phase": hub.clock.phase.value}
+    return {"phase": hub.clock.phase.value, "auto": hub.clock.auto}
 
 
 @app.post("/api/market/reset")
 def market_reset():
+    _reject_if_auto()
     hub.market_reset()
-    return {"phase": hub.clock.phase.value}
+    return {"phase": hub.clock.phase.value, "auto": hub.clock.auto}
+
+
+@app.on_event("startup")
+async def _on_startup():
+    hub.start_clock()  # live 모드면 실시간 KST 장 시계 가동
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +185,9 @@ async def ws(websocket: WebSocket):
     await websocket.accept()
     q = hub.subscribe()
     # 접속 직후 현재 스냅샷 전송
-    await websocket.send_json({"type": "market", "phase": hub.clock.phase.value})
+    await websocket.send_json({
+        "type": "market", "phase": hub.clock.phase.value, "auto": hub.clock.auto,
+    })
     for code in hub.stocks:
         st = hub.status_of(code)
         if st:

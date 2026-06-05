@@ -11,6 +11,7 @@ export function StoreProvider({ children }) {
   // code -> latest tick({code,price,high,low,open,...})
   const [ticks, setTicks] = useState({})
   const [phase, setPhase] = useState('PRE_OPEN')
+  const [marketAuto, setMarketAuto] = useState(false)
   const [logs, setLogs] = useState([])
   const [connected, setConnected] = useState(false)
   const wsRef = useRef(null)
@@ -22,7 +23,10 @@ export function StoreProvider({ children }) {
       list.forEach((s) => (map[s.code] = s))
       setStocks(map)
     })
-    api.market().then((m) => setPhase(m.phase))
+    api.market().then((m) => {
+      setPhase(m.phase)
+      setMarketAuto(!!m.auto)
+    })
   }, [])
 
   // WebSocket 구독 (자동 재연결)
@@ -47,6 +51,7 @@ export function StoreProvider({ children }) {
           setStocks((prev) => ({ ...prev, [s.code]: s }))
         } else if (msg.type === 'market') {
           setPhase(msg.phase)
+          if (msg.auto !== undefined) setMarketAuto(!!msg.auto)
         } else if (msg.type === 'log') {
           setLogs((prev) => [...prev.slice(-200), { t: Date.now(), text: msg.text }])
         }
@@ -84,6 +89,6 @@ export function StoreProvider({ children }) {
     marketReset: () => api.marketReset(),
   }
 
-  const value = { stocks, ticks, phase, logs, connected, actions }
+  const value = { stocks, ticks, phase, marketAuto, logs, connected, actions }
   return <StoreCtx.Provider value={value}>{children}</StoreCtx.Provider>
 }

@@ -140,6 +140,15 @@ class MockDataProvider(DataProvider):
         self._session_low[code] = last_close
         return bars
 
+    # -- X/Z (자동매매 엔진 셋업용) ---------------------------------------
+    def prev_close(self, code: str) -> float | None:
+        self._ensure_base(code)
+        return self._prev_close.get(code)
+
+    def day_open(self, code: str) -> float | None:
+        self._ensure_base(code)
+        return self._open_price.get(code)
+
     # -- 틱 시뮬 -----------------------------------------------------------
     def last_tick(self, code: str) -> Tick | None:
         return self._last_tick.get(code)

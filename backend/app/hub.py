@@ -36,11 +36,15 @@ class Stock:
 
 class Hub:
     def __init__(self) -> None:
-        self.clock = MarketClock()
+        import os
+        self.live = (os.getenv("PROVIDER", "mock").strip().lower() == "kiwoom")
+        # live: 실제 KST 시계 자동 / mock: 수동 토글
+        self.clock = MarketClock(auto=self.live)
         self.data, self.broker = build_provider()
         self.stocks: Dict[str, Stock] = {}
         self._clients: Set[asyncio.Queue] = set()
         self._lock = asyncio.Lock()
+        self._clock_task: Optional[asyncio.Task] = None
 
     # -- WebSocket pub/sub -------------------------------------------------
     def subscribe(self) -> asyncio.Queue:
@@ -107,6 +111,33 @@ class Hub:
         st = self.status_of(code)
         if st:
             self.broadcast({"type": "status", "status": st.model_dump()})
+
+    def schedule_order_refresh(self, code: str, attempts: int = 6,
+                               delay: float = 1.2) -> None:
+        """주문 후 계좌 잔고 반영을 폴링해 재브로드캐스트.
+
+        시장가 체결은 비동기라 주문 직후 계좌(kt00018)에 즉시 반영되지 않는다.
+        몇 초간 강제 재조회하며 보유수량이 바뀌면 '체결 반영'을 로그/브로드캐스트한다.
+        """
+        async def _poll() -> None:
+            prev_qty: Optional[int] = None
+            for _ in range(attempts):
+                await asyncio.sleep(delay)
+                self.broker.invalidate()  # 캐시 무효화 → 강제 재조회
+                st = self.status_of(code)
+                if st is None:
+                    return
+                self.broadcast({"type": "status", "status": st.model_dump()})
+                qty = st.position.quantity
+                if prev_qty is not None and qty != prev_qty:
+                    self._log(f"[{code}] 체결 반영: 보유 {qty}주")
+                    return  # 변화 감지 완료
+                prev_qty = qty
+
+        try:
+            asyncio.create_task(_poll())
+        except RuntimeError:
+            pass  # 실행 중인 루프 없음(테스트 등) — 무시
 
     # -- 틱 루프 (종목별) --------------------------------------------------
     async def _tick_loop(self, stock: Stock) -> None:
@@ -201,19 +232,57 @@ class Hub:
         self.broadcast_market()
 
     def broadcast_market(self) -> None:
-        self.broadcast({"type": "market", "phase": self.clock.phase.value})
+        self.broadcast({
+            "type": "market",
+            "phase": self.clock.phase.value,
+            "auto": self.clock.auto,
+        })
+
+    # -- 실시간 KST 자동 시계 (live 모드) ----------------------------------
+    def start_clock(self) -> None:
+        """live 모드에서 실제 시각으로 장 단계를 감시하는 루프를 1회 기동."""
+        if not self.live or self._clock_task is not None:
+            return
+        self._clock_task = asyncio.create_task(self._auto_clock_loop())
+
+    async def _auto_clock_loop(self) -> None:
+        """KST 시각으로 phase 경계를 감지해 MARKET-OPEN/CLOSE를 자동 발생."""
+        last = self.clock.phase
+        self._log(f"🕘 실시간 장 시계 시작 (현재 단계: {last.value})")
+        self.broadcast_market()
+        while True:
+            try:
+                await asyncio.sleep(5)
+                cur = self.clock.phase
+                if cur == last:
+                    continue
+                if last == MarketPhase.PRE_OPEN and cur == MarketPhase.OPEN:
+                    self.market_open()        # MONITOR→AUTO, 엔진 시작
+                elif last == MarketPhase.OPEN and cur == MarketPhase.CLOSED:
+                    self.market_close()       # 전 종목 수동 복귀
+                else:
+                    # CLOSED→PRE_OPEN(자정 등) 등은 단계 갱신만
+                    self.broadcast_market()
+                last = cur
+            except asyncio.CancelledError:
+                break
+            except Exception as e:  # noqa: BLE001
+                self._log(f"⚠️ 장 시계 오류: {e}")
 
     def _start_auto(self, stock: Stock) -> None:
         """MONITOR → AUTO_TRADING 진입 시 ULC 엔진 셋업."""
-        # 봉을 가져와 X(전일 종가)·Z(당일 시가) 확보
+        # 봉을 미리 한 번 당겨 provider 캐시(X/Z) 채움
         bars = self.data.get_bars(stock.code, 3)
-        # 이전 60봉 다음이 당일 첫 봉. mock 기준: prev_close=X, 당일 시가=Z
-        prev_close = bars[-(390 // 3) - 1].close if len(bars) > (390 // 3) else bars[0].close
-        day_open = bars[-(390 // 3)].open if len(bars) > (390 // 3) else bars[-1].open
-        # mock provider는 last_tick.open 에 Z를 둔다. 우선 그것을 신뢰.
-        lt = self.data.last_tick(stock.code)
-        z = lt.open if lt else day_open
-        x = prev_close
+        # X(전일 종가)·Z(당일 시가): provider가 직접 제공하면 신뢰(실거래 정확).
+        # 없으면 봉/틱에서 추정(mock 호환).
+        x = self.data.prev_close(stock.code)
+        z = self.data.day_open(stock.code)
+        if x is None:
+            x = bars[-(390 // 3) - 1].close if len(bars) > (390 // 3) else bars[0].close
+        if z is None:
+            lt = self.data.last_tick(stock.code)
+            z = lt.open if lt else (
+                bars[-(390 // 3)].open if len(bars) > (390 // 3) else bars[-1].open)
         eng = UlcEngine(
             code=stock.code,
             config=stock.config,
