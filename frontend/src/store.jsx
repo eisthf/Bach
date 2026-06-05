@@ -74,7 +74,6 @@ export function StoreProvider({ children }) {
       })
     },
     push: (code) => api.push(code),
-    liquidate: (code) => api.liquidate(code),
     buy: (code, amount) => api.buy(code, amount),
     sell: (code, qty) => api.sell(code, qty),
     putConfig: async (code, config) => {

@@ -134,14 +134,6 @@ def push(code: str):
     return {"code": code, "state": state.value}
 
 
-@app.post("/api/state/{code}/liquidate")
-def liquidate(code: str):
-    state = hub.liquidate(code)
-    if state is None:
-        raise HTTPException(404, "종목 없음")
-    return {"code": code, "state": state.value}
-
-
 # ---------------------------------------------------------------------------
 # 장 이벤트 (mock 제어)
 # ---------------------------------------------------------------------------

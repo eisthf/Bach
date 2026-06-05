@@ -36,8 +36,13 @@ Vite가 `/api`·`/ws`를 백엔드(8000)로 프록시한다.
 3. 우상단 **장 시작** 전(장전)에는 상태버튼 PUSH로 `수동매매 ↔ 모니터` 토글.
 4. **장 시작** 누르면 `모니터` 종목이 `자동매매`로 진입 → 상한가 따라잡기 엔진이
    틱에 반응해 분할매수/익절/손절 실행(로그 패널에 표시).
-5. 자동매매 중 **PUSH** 또는 **청산(LIQUIDATE)** → `수동매매`로 전환(장중 종착).
+5. 자동매매 중엔 **PUSH**로 직접 인수하면 `수동매매`로 전환(장중 종착, 엔진 정리).
+   별도 청산 버튼은 없다 — 청산은 매매의 *결과*이지 버튼이 아니다. 엔진이 전량
+   매도해 보유수량이 0이 되면 자동으로 `수동매매`로 복귀하고, 사람이 직접 청산하려면
+   PUSH로 인수한 뒤 수동매매에서 매도한다.
 6. `수동매매`에서 매수금액(원)/매도수량(주) 입력 후 매수/매도.
+7. **장 종료** 누르면 하루 사이클 종료 → 모든 종목이 `수동매매`로 복귀하고
+   장 단계가 `장전`으로 리셋(엔진 정리). 다시 PUSH로 `모니터` 진입 가능.
 
 ## 상태머신
 
@@ -46,8 +51,11 @@ Vite가 `/api`·`/ws`를 백엔드(8000)로 프록시한다.
 MANUAL_TRADING --> MONITOR : PUSH (장전에만)
 MONITOR --> MANUAL_TRADING : PUSH
 MONITOR --> AUTO_TRADING : MARKET-OPEN
-AUTO_TRADING --> MANUAL_TRADING : PUSH | LIQUIDATE
+AUTO_TRADING --> MANUAL_TRADING : PUSH | POSITION-FLAT(보유수량→0)
+(MONITOR|AUTO_TRADING) --> MANUAL_TRADING : MARKET-CLOSE
 (장중 MANUAL_TRADING은 종착 — 나가는 전이 없음)
+(POSITION-FLAT은 엔진 전량매도의 결과로 발생하는 이벤트 — 청산 버튼 없음)
+(MARKET-CLOSE 시 장 단계도 장전(PRE_OPEN)으로 리셋 → 초기 상태 복귀)
 ```
 
 ## 실거래(키움) 모드

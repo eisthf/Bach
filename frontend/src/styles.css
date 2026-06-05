@@ -134,11 +134,6 @@ input:focus { outline: none; border-color: var(--accent); }
 .state-manual_trading { border-color: var(--accent); color: var(--accent); }
 .state-monitor { border-color: var(--amber); color: var(--amber); }
 .state-auto_trading { border-color: var(--green); color: var(--green); }
-.liquidate-btn {
-  border: 1px solid var(--up); color: var(--up); background: #fff;
-  border-radius: 6px; padding: 8px 10px; font-size: 12px; font-weight: 600;
-}
-.liquidate-btn:hover { background: #fdecec; }
 
 /* Panels (manual + auto) */
 .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 12px; }

@@ -143,9 +143,9 @@ class Hub:
         from .strategy.ulc import Phase
 
         if eng.phase == Phase.DONE and stock.machine.state == TradeState.AUTO_TRADING:
-            stock.machine.liquidate()
+            stock.machine.on_position_flat()
             stock.engine = None
-            self._log(f"[{stock.code}] 자동매매 청산 완료 → MANUAL_TRADING")
+            self._log(f"[{stock.code}] 자동매매 청산 완료(보유수량 0) → MANUAL_TRADING")
             self.broadcast_status(stock.code)
 
     # -- 상태 전이 이벤트 --------------------------------------------------
@@ -154,21 +154,11 @@ class Hub:
         if not stock:
             return None
         new_state = stock.machine.push()
+        # AUTO_TRADING을 사람이 인수(PUSH)하면 자동매매 엔진을 정리한다.
+        # 이후 매도는 수동매매 패널에서 사람이 직접 한다.
+        if new_state == TradeState.MANUAL_TRADING:
+            stock.engine = None
         self._log(f"[{code}] PUSH → {new_state.value}")
-        self.broadcast_status(code)
-        return new_state
-
-    def liquidate(self, code: str) -> Optional[TradeState]:
-        stock = self.stocks.get(code)
-        if not stock:
-            return None
-        # 보유분 전량 매도 후 전이
-        pos = self.broker.position(code)
-        if pos.quantity > 0:
-            res = self.broker.sell(code, pos.quantity)
-            self._log(f"[{code}] LIQUIDATE: {res.filled_qty}주 매도 @ {res.price:,.0f}")
-        new_state = stock.machine.liquidate()
-        stock.engine = None
         self.broadcast_status(code)
         return new_state
 
@@ -191,10 +181,13 @@ class Hub:
         self.broadcast_market()
 
     def market_close(self) -> None:
-        self.clock.close()
-        self._log("📉 장 종료 (MARKET-CLOSE)")
+        # 장 종료 = 하루 거래 사이클의 끝. 다음 거래일 장전(PRE_OPEN) +
+        # 수동매매 초기 상태로 리셋하여 다시 MONITOR 진입이 가능하게 한다.
+        self.clock.reset()
+        self._log("📉 장 종료 (MARKET-CLOSE) → 장전·수동매매 초기 상태로 리셋")
         for stock in self.stocks.values():
             stock.machine.on_market_close()
+            stock.engine = None
             self.broadcast_status(stock.code)
         self.broadcast_market()
 

@@ -32,10 +32,23 @@ stateDiagram-v2
     MONITOR --> AUTO_TRADING : MARKET-OPEN
 
     AUTO_TRADING --> MANUAL_TRADING : PUSH
-    AUTO_TRADING --> MANUAL_TRADING : LIQUIDATE
+    AUTO_TRADING --> MANUAL_TRADING : POSITION-FLAT(보유수량→0)
+
+    MONITOR --> MANUAL_TRADING : MARKET-CLOSE
+    AUTO_TRADING --> MANUAL_TRADING : MARKET-CLOSE
 
     note right of MANUAL_TRADING
-        장중에는 다른 상태로 천이 불가
+        장중에는 다른 상태로 천이 불가.
+
+        청산(POSITION-FLAT)은 버튼이 아니라 매매의 결과다.
+        자동매매 엔진이 전량매도하여 보유수량이 (>0에서) 0이 되는 순간
+        AUTO_TRADING → MANUAL_TRADING으로 전이한다. 사람이 직접 청산하려면
+        PUSH로 인수한 뒤 수동매매에서 매도한다.
+
+        장 종료(MARKET-CLOSE)는 하루 거래 사이클의 끝으로,
+        모든 종목을 MANUAL_TRADING으로 되돌리고
+        장 단계를 장전(PRE_OPEN)으로 리셋한다.
+        → 다음 거래일을 위해 다시 MONITOR 진입이 가능한 초기 상태가 된다.
     end note
 ```
 

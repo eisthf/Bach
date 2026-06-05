@@ -32,7 +32,6 @@ export const api = {
     req(`/api/config/${code}`, { method: 'PUT', body: JSON.stringify(config) }),
 
   push: (code) => req(`/api/state/${code}/push`, { method: 'POST' }),
-  liquidate: (code) => req(`/api/state/${code}/liquidate`, { method: 'POST' }),
 
   market: () => req('/api/market'),
   marketOpen: () => req('/api/market/open', { method: 'POST' }),

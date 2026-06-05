@@ -16,7 +16,6 @@ export default function StateButton({ stock }) {
 
   // PUSH가 의미 있는 전이를 만드는지 (백엔드 가드와 동일 규칙)
   const canPush = state === 'MANUAL_TRADING' ? isPreOpen : true
-  const isAuto = state === 'AUTO_TRADING'
 
   const nextHint =
     state === 'MANUAL_TRADING'
@@ -38,15 +37,6 @@ export default function StateButton({ stock }) {
         <span className="state-name">{LABELS[state]}</span>
         <span className="state-sub">{nextHint}</span>
       </button>
-      {isAuto && (
-        <button
-          className="liquidate-btn"
-          onClick={() => actions.liquidate(stock.code)}
-          title="전량 청산 후 수동매매로"
-        >
-          청산(LIQUIDATE)
-        </button>
-      )}
     </div>
   )
 }
