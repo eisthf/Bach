@@ -27,6 +27,7 @@ function Dashboard() {
   }
   return (
     <div className="app">
+      <div className="app-top">
       <header className="app-header">
         <div className="brand">
           <span className="brand-mark">♪</span>
@@ -68,6 +69,7 @@ function Dashboard() {
           })}
         </div>
       )}
+      </div>
 
       <main className="main-grid">
         <section className="panels-col">

@@ -34,11 +34,16 @@ input {
 input:focus { outline: none; border-color: var(--accent); }
 
 /* Header */
+/* 상단(헤더+종목입력+칩) 고정: 스크롤해도 항상 보이게 */
+.app-top {
+  position: sticky; top: 0; z-index: 20;
+  background: var(--bg); padding-bottom: 10px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+}
 .app-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 12px 20px; background: var(--card);
   border-bottom: 1px solid var(--border);
-  position: sticky; top: 0; z-index: 10;
 }
 .brand { display: flex; align-items: baseline; gap: 8px; }
 .account-summary { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
