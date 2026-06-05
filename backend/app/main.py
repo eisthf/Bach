@@ -95,7 +95,7 @@ async def buy(req: BuyOrderReq):
     if res.ok:
         hub._log(f"[{req.code}] 수동 매수: {res.message}")
         hub.broadcast_status(req.code)
-        hub.schedule_order_refresh(req.code)  # 체결 반영 폴링
+        # 체결 반영은 실시간 주문체결(00) 이벤트가 담당(폴링 제거)
     return res
 
 
@@ -105,7 +105,7 @@ async def sell(req: SellOrderReq):
     if res.ok:
         hub._log(f"[{req.code}] 수동 매도: {res.message}")
         hub.broadcast_status(req.code)
-        hub.schedule_order_refresh(req.code)  # 체결 반영 폴링
+        # 체결 반영은 실시간 주문체결(00) 이벤트가 담당(폴링 제거)
     return res
 
 

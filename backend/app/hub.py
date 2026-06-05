@@ -45,6 +45,9 @@ class Hub:
         self._clients: Set[asyncio.Queue] = set()
         self._lock = asyncio.Lock()
         self._clock_task: Optional[asyncio.Task] = None
+        # 주문체결(00) 이벤트 → 포지션 즉시 갱신(폴링 대신 이벤트 기반).
+        if hasattr(self.data, "on_order_fill"):
+            self.data.on_order_fill = self._on_order_fill
 
     # -- WebSocket pub/sub -------------------------------------------------
     def subscribe(self) -> asyncio.Queue:
@@ -117,32 +120,31 @@ class Hub:
         if st:
             self.broadcast({"type": "status", "status": st.model_dump()})
 
-    def schedule_order_refresh(self, code: str, attempts: int = 6,
-                               delay: float = 1.2) -> None:
-        """주문 후 계좌 잔고 반영을 폴링해 재브로드캐스트.
+    # -- 주문체결(00) 이벤트 기반 포지션 갱신 -----------------------------
+    def _on_order_fill(self, fill: Optional[dict]) -> None:
+        """실시간 주문체결 콜백. fill=None이면 전체 갱신(재접속 보정)."""
+        self.broker.invalidate()  # 계좌 캐시 무효화 → 다음 조회 시 강제 재조회
+        if fill is None:
+            asyncio.create_task(self._refresh_all_positions())
+            return
+        code = fill.get("code")
+        if not code or code not in self.stocks:
+            return
+        side = "매수" if fill.get("side") == "buy" else "매도"
+        self._log(
+            f"[{code}] 체결: {side} {fill.get('qty')}주 @ "
+            f"{fill.get('price', 0):,.0f} (미체결 {fill.get('unfilled')})"
+        )
+        asyncio.create_task(self._refresh_status(code))
 
-        시장가 체결은 비동기라 주문 직후 계좌(kt00018)에 즉시 반영되지 않는다.
-        몇 초간 강제 재조회하며 보유수량이 바뀌면 '체결 반영'을 로그/브로드캐스트한다.
-        """
-        async def _poll() -> None:
-            prev_qty: Optional[int] = None
-            for _ in range(attempts):
-                await asyncio.sleep(delay)
-                self.broker.invalidate()  # 캐시 무효화 → 강제 재조회
-                st = self.status_of(code)
-                if st is None:
-                    return
-                self.broadcast({"type": "status", "status": st.model_dump()})
-                qty = st.position.quantity
-                if prev_qty is not None and qty != prev_qty:
-                    self._log(f"[{code}] 체결 반영: 보유 {qty}주")
-                    return  # 변화 감지 완료
-                prev_qty = qty
+    async def _refresh_status(self, code: str) -> None:
+        await asyncio.to_thread(self.broker.position, code)  # 블로킹 조회 오프로드
+        self.broadcast_status(code)
 
-        try:
-            asyncio.create_task(_poll())
-        except RuntimeError:
-            pass  # 실행 중인 루프 없음(테스트 등) — 무시
+    async def _refresh_all_positions(self) -> None:
+        await asyncio.to_thread(self.broker.all_positions)   # 1회 강제 조회로 캐시 채움
+        for code in list(self.stocks.keys()):
+            self.broadcast_status(code)
 
     # -- 틱 루프 (종목별) --------------------------------------------------
     async def _tick_loop(self, stock: Stock) -> None:

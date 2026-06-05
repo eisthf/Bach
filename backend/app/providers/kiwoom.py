@@ -11,7 +11,7 @@ import logging
 import os
 import time
 from datetime import datetime
-from typing import AsyncIterator, Dict, List, Optional
+from typing import AsyncIterator, Callable, Dict, List, Optional
 
 from ..models import Bar, OrderResult, Position, Tick
 from . import kiwoom_api as kw
@@ -25,6 +25,16 @@ F_OPEN = "16"    # 시가
 F_HIGH = "17"    # 고가(당일)
 F_LOW = "18"     # 저가(당일)
 F_VOL = "15"     # 체결량
+
+# 00(주문체결) 실시간 FID 맵 (레퍼런스 검증)
+#  함정: 체결가/체결량은 '단위'(이번 분) 914/915. 911(체결량)은 원주문 누적이라 사용 금지.
+FILL_CODE = "9001"     # 종목코드
+FILL_STATUS = "913"    # 주문상태: 접수/체결/확인/취소/거부
+FILL_PRICE = "914"     # 단위체결가(이번 체결분)
+FILL_QTY = "915"       # 단위체결량(이번 체결분)
+FILL_UNFILLED = "902"  # 미체결수량
+FILL_SIDE = "905"      # 주문구분: +매수 / -매도
+FILL_ORDNO = "9203"    # 주문번호
 
 
 def _today() -> str:
@@ -52,6 +62,8 @@ class KiwoomDataProvider(DataProvider):
         self._subscribed: set[str] = set()       # 구독 중인 종목코드
         self._ws = None                           # 활성 websocket(없으면 None)
         self._ws_task: Optional[asyncio.Task] = None
+        # 주문체결(00) 이벤트 콜백. Hub가 설정한다. fill dict 또는 None(전체 갱신).
+        self.on_order_fill: Optional[Callable[[Optional[dict]], None]] = None
 
     # -- 봉 --------------------------------------------------------------
     def get_bars(self, code: str, interval: int, lookback_extra: int = 60) -> List[Bar]:
@@ -152,7 +164,10 @@ class KiwoomDataProvider(DataProvider):
         try:
             await ws.send(json.dumps({
                 "trnm": "REG", "grp_no": "1", "refresh": "1",
-                "data": [{"item": list(self._subscribed), "type": ["0B"]}],
+                "data": [
+                    {"item": list(self._subscribed), "type": ["0B"]},
+                    {"item": [], "type": ["00"]},  # 주문체결(계좌 전체)
+                ],
             }))
         except Exception:  # noqa: BLE001
             pass  # 다음 재연결 시 일괄 등록됨
@@ -176,14 +191,19 @@ class KiwoomDataProvider(DataProvider):
                                 break
                             backoff = 1.0
                             self._ws = ws
-                            # 현재 구독 중인 전 종목을 한 번에 등록
-                            if self._subscribed:
-                                await ws.send(json.dumps({
-                                    "trnm": "REG", "grp_no": "1", "refresh": "1",
-                                    "data": [{"item": list(self._subscribed),
-                                              "type": ["0B"]}],
-                                }))
-                                logger.info("WS 0B 등록: %s", ", ".join(self._subscribed))
+                            # 현재 구독 중인 전 종목(0B) + 주문체결(00)을 한 번에 등록
+                            await ws.send(json.dumps({
+                                "trnm": "REG", "grp_no": "1", "refresh": "1",
+                                "data": [
+                                    {"item": list(self._subscribed), "type": ["0B"]},
+                                    {"item": [], "type": ["00"]},
+                                ],
+                            }))
+                            logger.info("WS 등록 0B=%s + 00(주문체결)",
+                                        ", ".join(self._subscribed) or "(없음)")
+                            # 재접속 시 누락된 체결 보정: 전체 포지션 갱신 요청
+                            if self.on_order_fill:
+                                self.on_order_fill(None)
                         elif trnm == "PING":
                             await ws.send(raw)  # echo (keepalive)
                         elif trnm == "REAL":
@@ -198,9 +218,13 @@ class KiwoomDataProvider(DataProvider):
             backoff = min(backoff * 2, 30.0)
 
     def _dispatch_real(self, msg: dict) -> None:
-        """REAL 메시지의 0B 틱을 종목별 큐로 라우팅."""
+        """REAL 메시지를 라우팅: 0B→틱 큐, 00→주문체결 콜백."""
         for d in msg.get("data", []):
-            if d.get("type") != "0B":
+            dtype = d.get("type")
+            if dtype == "00":
+                self._handle_fill(d.get("values", {}))
+                continue
+            if dtype != "0B":
                 continue
             code = d.get("item") or ""
             if code not in self._queues:
@@ -228,6 +252,27 @@ class KiwoomDataProvider(DataProvider):
                     q.put_nowait(tick)
                 except asyncio.QueueFull:
                     pass  # 소비가 느리면 최신 틱 일부 드롭(허용)
+
+    def _handle_fill(self, v: dict) -> None:
+        """00(주문체결) → 체결분만 골라 콜백 통지(평단/보유는 Hub가 계좌로 갱신)."""
+        if v.get(FILL_STATUS) != "체결":
+            return  # 접수/확인/취소/거부는 무시(체결만 반영)
+        code = str(v.get(FILL_CODE, "")).lstrip("A").strip()
+        if not code or self.on_order_fill is None:
+            return
+        side = "buy" if "+" in str(v.get(FILL_SIDE, "")) else "sell"
+        fill = {
+            "code": code,
+            "side": side,
+            "qty": kw.parse_int(v.get(FILL_QTY)),
+            "price": kw.parse_price(v.get(FILL_PRICE)),
+            "unfilled": kw.parse_int(v.get(FILL_UNFILLED)),
+            "order_no": str(v.get(FILL_ORDNO, "")).strip(),
+        }
+        try:
+            self.on_order_fill(fill)
+        except Exception:  # noqa: BLE001
+            logger.exception("on_order_fill 콜백 오류")
 
 
 class KiwoomBroker(Broker):
