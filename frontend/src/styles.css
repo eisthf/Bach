@@ -233,3 +233,52 @@ input:focus { outline: none; border-color: var(--accent); }
   .side-col { position: static; }
   .panels { grid-template-columns: 1fr; }
 }
+
+/* ── Multi-account (모의 + 실전 2열) ─────────────────────────────────── */
+.main-grid.multi { grid-template-columns: minmax(0, 1fr) 320px; }
+.accounts-row {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+  min-width: 0; align-items: start;
+}
+.account-col {
+  display: flex; flex-direction: column; min-width: 0;
+  border: 1px solid var(--border); border-radius: 12px; background: var(--bg);
+  padding-bottom: 12px;
+}
+.account-col.danger {
+  border-color: #e53935;
+  box-shadow: 0 0 0 2px rgba(229, 57, 53, 0.12);
+  background: #fff7f6;
+}
+.account-col-head {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 12px 14px 0;
+}
+.account-badge { font-weight: 800; font-size: 14px; padding: 4px 12px; border-radius: 8px; }
+.account-badge.safe { background: var(--accent-soft); color: var(--accent); }
+.account-badge.danger { background: #e53935; color: #fff; letter-spacing: 0.3px; }
+.account-demo {
+  font-size: 11px; color: var(--muted);
+  background: #eef1f5; padding: 2px 8px; border-radius: 6px;
+}
+.account-col .account-summary { gap: 14px; margin-left: auto; }
+.account-col .toolbar-row { padding: 12px 14px 0; }
+.account-col .chip-bar { padding: 8px 14px 0; }
+.account-col .panels-col { padding: 12px 14px 0; gap: 12px; }
+/* 컬럼이 좁으므로 내부 매매/설정 패널은 세로 스택 */
+.account-col .panels,
+.account-col .compact-body { grid-template-columns: 1fr; }
+
+/* 실전 컬럼: 매매 패널·매수 버튼 강조 */
+.account-col.danger .manual-panel { background: #fff1f0; border-color: #f3b6b2; }
+.account-col.danger .buy-btn { box-shadow: 0 0 0 2px rgba(229, 57, 53, 0.25); }
+.account-col.danger .stock-panel { border-color: #f1c4c1; }
+
+/* 로그 계좌 배지 */
+.log-acc { font-size: 10px; font-weight: 700; padding: 0 6px; border-radius: 5px; white-space: nowrap; }
+.log-acc.safe { background: var(--accent-soft); color: var(--accent); }
+.log-acc.danger { background: #fdecec; color: #e53935; }
+
+@media (max-width: 1300px) {
+  .accounts-row { grid-template-columns: 1fr; }
+}

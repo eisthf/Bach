@@ -4,6 +4,7 @@ __pycache__/
 *.pyc
 backend/.env
 backend/state.json
+backend/state.*.json
 *.egg-info/
 
 # Node

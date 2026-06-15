@@ -9,7 +9,7 @@ const LABELS = {
 
 // 현재 state를 표시하고 PUSH 이벤트를 발생시키는 버튼.
 // 장중 MANUAL_TRADING은 종착 → 버튼 비활성.
-export default function StateButton({ stock }) {
+export default function StateButton({ account, stock }) {
   const { phase, actions } = useStore()
   const state = stock.state
   const isPreOpen = phase === 'PRE_OPEN'
@@ -31,7 +31,7 @@ export default function StateButton({ stock }) {
       <button
         className={`state-btn state-${state.toLowerCase()}`}
         disabled={!canPush}
-        onClick={() => actions.push(stock.code)}
+        onClick={() => actions.push(account, stock.code)}
         title={nextHint}
       >
         <span className="state-name">{LABELS[state]}</span>

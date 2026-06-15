@@ -5,12 +5,12 @@ const fmt = (n) => Number(n || 0).toLocaleString('ko-KR')
 
 // 수동매매: 매수 금액(원)·매도 수량(주) 입력 + 버튼.
 // MANUAL_TRADING 상태에서만 활성.
-export default function ManualTradePanel({ stock, tick }) {
+export default function ManualTradePanel({ account, stock, tick }) {
   const { actions, orders } = useStore()
   const [amount, setAmount] = useState(500000)
   const [qty, setQty] = useState(0)  // 기본 0 — '전량' 버튼으로 보유수량 채움
   const [msg, setMsg] = useState('')
-  const pending = orders[stock.code] || []
+  const pending = (orders[account] || {})[stock.code] || []
 
   const enabled = stock.state === 'MANUAL_TRADING'
   const pos = stock.position
@@ -19,11 +19,11 @@ export default function ManualTradePanel({ stock, tick }) {
   const estShares = price ? Math.floor(amount / price) : null
 
   const doBuy = async () => {
-    const r = await actions.buy(stock.code, Number(amount))
+    const r = await actions.buy(account, stock.code, Number(amount))
     setMsg(r.message)
   }
   const doSell = async () => {
-    const r = await actions.sell(stock.code, Number(qty))
+    const r = await actions.sell(account, stock.code, Number(qty))
     setMsg(r.message)
   }
 

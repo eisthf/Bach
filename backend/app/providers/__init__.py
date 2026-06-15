@@ -1,21 +1,21 @@
 """데이터/브로커 제공자.
 
-PROVIDER 환경변수(mock|kiwoom)에 따라 구현체를 선택한다.
+계좌 설정(AccountConfig)에 따라 구현체를 선택한다.
 """
 from __future__ import annotations
 
-import os
-
+from ..accounts import AccountConfig
 from .base import Broker, DataProvider
 
 
-def build_provider() -> tuple[DataProvider, Broker]:
-    """환경변수 PROVIDER 에 맞는 (DataProvider, Broker) 쌍을 생성."""
-    provider = (os.getenv("PROVIDER") or "mock").strip().lower()
-    if provider == "kiwoom":
+def build_provider(cfg: AccountConfig) -> tuple[DataProvider, Broker]:
+    """계좌 설정에 맞는 (DataProvider, Broker) 쌍을 생성."""
+    if cfg.provider == "kiwoom":
         from .kiwoom import KiwoomBroker, KiwoomDataProvider
 
-        dp = KiwoomDataProvider()
+        dp = KiwoomDataProvider(
+            appkey=cfg.appkey, secretkey=cfg.secret, mock=cfg.kiwoom_mock,
+        )
         return dp, KiwoomBroker(dp)
 
     from .mock import MockBroker, MockDataProvider

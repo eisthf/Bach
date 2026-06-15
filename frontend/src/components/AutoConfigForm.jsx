@@ -21,7 +21,7 @@ const BOOLS = [
   { key: 'use_3min_bar_timing', label: '3분봉 타이밍' },
 ]
 
-export default function AutoConfigForm({ stock }) {
+export default function AutoConfigForm({ account, stock }) {
   const { actions } = useStore()
   const [cfg, setCfg] = useState(stock.config)
   const [saved, setSaved] = useState(false)
@@ -37,7 +37,7 @@ export default function AutoConfigForm({ stock }) {
     setSaved(false)
   }
   const save = async () => {
-    await actions.putConfig(stock.code, cfg)
+    await actions.putConfig(account, stock.code, cfg)
     setSaved(true)
   }
 

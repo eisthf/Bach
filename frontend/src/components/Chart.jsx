@@ -8,7 +8,7 @@ import { createChart, CrosshairMode } from 'lightweight-charts'
 import { api } from '../api'
 import { sma, MA_LINES } from '../indicators'
 
-export default function Chart({ code, interval, tick, height = 360 }) {
+export default function Chart({ account, code, interval, tick, height = 360 }) {
   const containerRef = useRef(null)
   const chartRef = useRef(null)
   const candleRef = useRef(null)
@@ -66,7 +66,7 @@ export default function Chart({ code, interval, tick, height = 360 }) {
   // 봉 데이터 로드 (interval 변경 시)
   useEffect(() => {
     let cancelled = false
-    api.getBars(code, interval).then((data) => {
+    api.getBars(account, code, interval).then((data) => {
       if (cancelled || !candleRef.current || !chartRef.current) return
       const bars = data.bars
       barsRef.current = bars
@@ -102,7 +102,7 @@ export default function Chart({ code, interval, tick, height = 360 }) {
     return () => {
       cancelled = true
     }
-  }, [code, interval])
+  }, [account, code, interval])
 
   // 실시간 틱 → 마지막 봉 갱신
   useEffect(() => {

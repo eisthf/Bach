@@ -42,13 +42,21 @@ def _today() -> str:
 
 
 class KiwoomDataProvider(DataProvider):
-    def __init__(self) -> None:
-        appkey = os.getenv("APPKEY")
-        secretkey = os.getenv("SECRETKEY")
-        self._mock = (os.getenv("KIWOOM_MOCK", "true").lower() == "true")
+    def __init__(
+        self,
+        appkey: Optional[str] = None,
+        secretkey: Optional[str] = None,
+        mock: Optional[bool] = None,
+    ) -> None:
+        # 계좌별로 인자 주입. 미지정 시 구 단일계좌 환경변수로 fallback.
+        appkey = appkey or os.getenv("APPKEY")
+        secretkey = secretkey or os.getenv("SECRETKEY")
+        if mock is None:
+            mock = (os.getenv("KIWOOM_MOCK", "true").lower() == "true")
+        self._mock = mock
         if not appkey or not secretkey:
             raise RuntimeError(
-                "PROVIDER=kiwoom 인데 APPKEY/SECRETKEY 가 없습니다(.env 확인)."
+                "kiwoom provider 인데 APPKEY/SECRETKEY 가 없습니다(.env 확인)."
             )
         self.token = kw.get_access_token(appkey, secretkey, mock=self._mock)
         self._last: Dict[str, Tick] = {}
