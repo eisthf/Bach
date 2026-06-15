@@ -27,6 +27,44 @@ npm run dev
 ```
 Vite가 `/api`·`/ws`를 백엔드(8000)로 프록시한다.
 
+### 원격 접속 (GCP VM에서 실행 중일 때)
+
+앱은 WebSocket(`/ws`)으로 실시간 시세를 받고 Vite HMR도 WebSocket을 쓴다.
+**인터넷 직결 환경(예: 집)에서는 외부 IP에 브라우저로 바로 접속해도 문제없다.**
+
+다만 **HTTP 프록시를 경유**해 외부 IP에 직접 접속하면(예: 사내망, 또는 안드로이드
+USB RNDIS + 폰의 HTTP 프록시 경유) 문제가 생긴다. HTTP 요청(GET 페이지/API)은
+프록시가 중계하지만, **브라우저의 평문 `ws://`는 이 경로로 안정적으로 전달되지
+않아** `/ws`(실시간 시세)가 끊기고 Vite HMR이 무한 새로고침 루프에 빠진다.
+(정확한 원인은 환경마다 다를 수 있다 — 프록시가 `Upgrade` 헤더를 중계하지 않거나,
+비표준 포트로의 `CONNECT`를 거부하는 등. 평문 `ws://`를 포워드 HTTP 프록시로
+넘기는 것 자체가 원래 불안정한 시나리오다.)
+
+이 경우 **SSH 포트 포워딩**으로 우회한다. SSH가 WebSocket을 평문 TCP로 감싸
+프록시의 단일 `CONNECT` 터널을 통과시키므로, 중간 프록시는 WebSocket인지조차
+모르고 정상 동작한다. (외부에 포트를 열지 않아 보안상으로도 낫다.)
+
+```bash
+# 로컬 PC에서. 프록시 뒤라면 ~/.ssh/config 의 Host 별칭을 써야
+# ProxyCommand(프록시 경유)가 적용된다. IP를 직접 쓰면 config이 매칭되지
+# 않아 ProxyCommand 없이 22번 직결을 시도하다 멈춘다.
+ssh -L 5173:localhost:5173 -L 8000:localhost:8000 gcp-rblue
+# 그 후 로컬 브라우저: http://localhost:5173
+```
+
+`~/.ssh/config` 예시:
+```
+Host gcp-rblue
+  HostName 34.64.153.2
+  User rblue
+  IdentityFile ~/.ssh/id_ed25519
+  IdentitiesOnly yes
+  ProxyCommand /usr/bin/nc -X connect -x <proxy_host>:<proxy_port> %h %p
+  ServerAliveInterval 5
+  ServerAliveCountMax 10
+  TCPKeepAlive yes
+```
+
 ## 사용 흐름 (mock 데모)
 
 1. 상단에서 **종목코드 추가** (예: `005930`). 카드(차트+패널)가 생성된다.
