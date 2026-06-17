@@ -1,4 +1,4 @@
-# Bach — 주식 거래 웹 앱
+# Bach System
 
 키움 API(`/home/rblue/work/kiwoom`)를 참고해 만든 종목별 차트·실시간 시세·
 상태머신 기반 수동/자동매매 웹 앱.
