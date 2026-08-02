@@ -53,12 +53,19 @@ class UlcEngine:
     x: float                 # 전일 종가(상한가)
     z: float                 # 당일 시가
     log: Callable[[str], None]
+    # 계좌 실보유 조회(awaitable) → (수량, 평단) 또는 None(조회 불가/미지원).
+    # 주문 콜백이 돌려주는 체결가는 시장가 주문의 '직전 틱 가격'이라 실체결가가
+    # 아니다. 이 콜백으로 평단·수량을 계좌 기준에 맞춰 보정한다.
+    position_fn: Optional[Callable[[], Awaitable[Optional[tuple]]]] = None
 
     phase: Phase = Phase.INIT
     scenario: int = 0
     legs: List[BuyLeg] = field(default_factory=list)
     avg_cost: float = 0.0
     shares: int = 0
+    # 평단이 계좌로 확인됐는가. 매수 때마다 False 로 돌아가고, 계좌가 체결을
+    # 반영해 수량이 일치하는 순간 True 가 된다(그 전까지 매 틱 재시도).
+    _avg_synced: bool = False
     half_sold: bool = False
     trail_max: float = 0.0
 
@@ -121,6 +128,46 @@ class UlcEngine:
     def all_filled(self) -> bool:
         return all(leg.filled for leg in self.legs)
 
+    async def _sync_from_account(self) -> None:
+        """보유수량·평단을 계좌(실보유) 기준으로 보정한다.
+
+        엔진이 자체 추정한 수량/평단은 두 가지 이유로 틀어진다:
+          1. 시장가 주문의 체결가를 알 수 없어 '직전 틱 가격'으로 평단을 계산
+          2. 부분체결·주문거부 시 추정 수량이 실보유보다 많아짐
+
+        보정 규칙(보수적):
+        - 계좌 수량이 추정보다 **적으면** 실보유에 맞춘다(과다 매도 방지).
+        - 계좌 수량이 추정보다 **많으면** 건드리지 않는다. 자동매매 이전부터
+          갖고 있던 물량(보유 종목 가져오기 등)일 수 있어, 엔진이 남의 물량까지
+          팔지 않게 한다.
+        - 수량이 정확히 일치할 때만 평단을 계좌 값으로 채택한다. 불일치 상태의
+          계좌 평단은 외부 물량이 섞인 값이라 익절·손절 기준으로 부적절하다.
+        - 계좌가 0을 보고하면 무시한다. 주문 직후 계좌(kt00018)가 아직 체결을
+          반영하지 못한 것일 수 있어, 0을 믿으면 보유를 놓친다.
+        """
+        if self.position_fn is None:
+            return
+        try:
+            pos = await self.position_fn()
+        except Exception:  # noqa: BLE001  (조회 실패 시 추정치 유지)
+            return
+        if not pos:
+            return
+        qty, avg = int(pos[0]), float(pos[1] or 0.0)
+        if qty <= 0:
+            return
+        if qty < self.shares:
+            self._emit(
+                f"⚠️ 계좌 잔량 {qty}주 < 엔진 추정 {self.shares}주 "
+                f"— 부분체결/미체결로 보고 실보유에 맞춤"
+            )
+            self.shares = qty
+        if avg > 0 and qty == self.shares:
+            if abs(avg - self.avg_cost) >= 1:
+                self._emit(f"평단 보정(계좌 기준): {self.avg_cost:,.0f} → {avg:,.0f}")
+            self.avg_cost = avg
+            self._avg_synced = True
+
     async def on_tick(
         self,
         tick: Tick,
@@ -149,6 +196,10 @@ class UlcEngine:
                             self.shares = new_shares
                             leg.filled = True
                             self._emit(f"{i+1}차 매수 {qty}주 @ {fill:,.0f} (평단 {self.avg_cost:,.0f})")
+                            # 위 수량·평단은 직전 틱 가격 기준 추정치다.
+                            # 익절·손절이 이 평단에 걸리므로 계좌로 보정한다.
+                            self._avg_synced = False
+                            await self._sync_from_account()
                     else:
                         leg.filled = True  # 체결 실패해도 무한루프 방지
                 break  # 한 틱에 한 단계만
@@ -158,6 +209,16 @@ class UlcEngine:
 
         if self.shares <= 0:
             return
+
+        # 익절·손절은 모두 평단 기준이다. 주문 직후에는 계좌(kt00018)가 아직
+        # 체결을 반영하지 못해 보정이 실패할 수 있으므로, 확인될 때까지 판단
+        # *직전에* 재시도한다. 확인된 뒤에는 다시 조회하지 않는다(다음 매수까지
+        # 평단이 변하지 않으므로). 이 보정 없이는 추정 평단으로 익절선을
+        # 계산해 엉뚱한 가격에 청산된다.
+        if not self._avg_synced:
+            await self._sync_from_account()
+            if self.shares <= 0:
+                return
 
         # 손절 활성 조건: 마지막 분할 매수 체결 이후
         stop_active = self.all_filled
@@ -190,6 +251,8 @@ class UlcEngine:
                 return
             if price >= self.avg_cost * (1 + c.ulc_tp):
                 if c.ulc_trailing:
+                    # 반익절 수량도 추정치가 아닌 실보유에서 계산한다.
+                    await self._sync_from_account()
                     half = self.shares // 2
                     if half > 0:
                         fill = await sell_fn(half)
@@ -203,6 +266,8 @@ class UlcEngine:
                 return
 
     async def _exit_all(self, sell_fn: Callable[[int], Awaitable[float]], reason: str) -> None:
+        # 청산 수량은 추정치가 아니라 실보유를 따른다(과다 매도 → 주문거부 방지).
+        await self._sync_from_account()
         if self.shares > 0:
             fill = await sell_fn(self.shares)
             self._emit(f"{reason}: 전량 {self.shares}주 매도 @ {fill:,.0f}")

@@ -291,9 +291,22 @@ class Hub:
 
         changed = eng.shares != before_shares
         if eng.phase == Phase.DONE and stock.machine.state == TradeState.AUTO_TRADING:
+            # 엔진의 믿음이 아니라 계좌로 청산을 확인한다. 부분체결·미체결로
+            # 잔량이 남았는데 '청산 완료'라고 기록하면, 아무도 관리하지 않는
+            # 포지션이 조용히 생긴다. 재매도를 자동으로 걸지는 않는다 —
+            # 매도 주문이 아직 미체결일 수 있어 중복 매도 위험이 있다.
+            # 어느 쪽이든 MANUAL_TRADING 으로 넘겨 사람이 인수하게 한다.
+            self.broker.invalidate()
+            pos = await asyncio.to_thread(self.broker.position, stock.code)
             stock.machine.on_position_flat()
             stock.engine = None
-            self._log(f"[{stock.code}] 자동매매 청산 완료(보유수량 0) → MANUAL_TRADING")
+            if pos.quantity > 0:
+                self._log(
+                    f"[{stock.code}] ⚠️ 자동매매 종료 — 계좌 잔량 {pos.quantity}주 남음"
+                    f"(부분체결/미체결 가능). 수동매매에서 확인 필요"
+                )
+            else:
+                self._log(f"[{stock.code}] 자동매매 청산 완료(보유수량 0) → MANUAL_TRADING")
             changed = True
         if changed:
             # 주문이 나갔으면 포지션 캐시가 무효화된 상태다. broadcast_status는
@@ -352,12 +365,18 @@ class Hub:
             lt = self.data.last_tick(stock.code)
             z = lt.open if lt else (
                 bars[-(390 // 3)].open if len(bars) > (390 // 3) else bars[-1].open)
+        async def position_fn():
+            """엔진이 평단·수량을 계좌 기준으로 보정할 때 쓰는 조회(블로킹 → 스레드)."""
+            p = await asyncio.to_thread(self.broker.position, stock.code)
+            return (p.quantity, p.avg_price) if p else None
+
         eng = UlcEngine(
             code=stock.code,
             config=stock.config,
             x=float(x),
             z=float(z),
             log=self._log,
+            position_fn=position_fn,
         )
         eng.setup()
         stock.engine = eng
