@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
@@ -25,9 +26,26 @@ from .providers.base import VALID_INTERVALS  # noqa: E402
 
 app = FastAPI(title="Bach 주식 거래 API")
 
+# CORS — 아는 출처만 허용한다.
+# 프런트는 Vite 프록시(5173)를 거쳐 상대경로로 호출하므로 브라우저는 5173하고만
+# 대화한다. 즉 정상 사용 경로에는 교차 출처 요청이 아예 없다. 그런데도 '*'로
+# 열어두면, 사용자가 서버를 켜둔 채 임의의 웹페이지를 방문했을 때 그 페이지의
+# JS가 localhost:8000/api/real/orders/buy 로 실주문을 낼 수 있다(프런트의
+# confirm 가드는 브라우저 측 코드라 이 경로에선 실행되지 않는다).
+# 백엔드에 직접 붙는 개발 시나리오(/docs 등)를 위해 프런트 출처만 남긴다.
+# ⚠️ CORS는 브라우저만 지키는 규칙이다. curl·스크립트에는 무력하므로 인증의
+#    대체재가 아니라 값싼 방어층으로만 본다.
+CORS_ORIGINS = [
+    o.strip()
+    for o in os.getenv(
+        "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
+    ).split(",")
+    if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
