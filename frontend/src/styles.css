@@ -58,6 +58,24 @@ input:focus { outline: none; border-color: var(--accent); }
 .brand-name { font-size: 20px; font-weight: 700; }
 .brand-sub { color: var(--muted); font-size: 13px; }
 
+/* 계좌 보기 필터(세그먼트 컨트롤) */
+.account-filter {
+  display: flex; gap: 3px;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 9px; padding: 3px;
+}
+.acc-tab {
+  border: none; background: transparent; border-radius: 6px;
+  padding: 5px 14px; font-size: 13px; font-weight: 600;
+  color: var(--muted); cursor: pointer; white-space: nowrap;
+}
+.acc-tab:hover:not(.active) { color: var(--accent); }
+.acc-tab.active {
+  background: var(--card); color: var(--accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.14);
+}
+.acc-tab.danger.active { background: #e53935; color: #fff; }
+
 .market-controls { display: flex; align-items: center; gap: 10px; }
 .market-controls button {
   border: 1px solid var(--border); background: var(--card);
@@ -237,8 +255,10 @@ input:focus { outline: none; border-color: var(--accent); }
 /* ── Multi-account (모의 + 실전 2열) ─────────────────────────────────── */
 .main-grid.multi { grid-template-columns: minmax(0, 1fr) 320px; }
 .accounts-row {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
-  min-width: 0; align-items: start;
+  /* 표시 중인 계좌 수(--acc-cols)만큼 열을 만든다. 단독 선택 시 전폭. */
+  display: grid;
+  grid-template-columns: repeat(var(--acc-cols, 2), minmax(0, 1fr));
+  gap: 16px; min-width: 0; align-items: start;
 }
 .account-col {
   display: flex; flex-direction: column; min-width: 0;

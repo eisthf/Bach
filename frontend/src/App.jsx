@@ -97,8 +97,31 @@ function AccountColumn({ account }) {
   )
 }
 
+// 계좌 보기 필터(세그먼트). 계좌 목록에서 동적 생성하며, 계좌가 하나면 숨긴다.
+function AccountFilter() {
+  const { accounts, accountView, actions } = useStore()
+  if (accounts.length < 2) return null
+  const tabs = [...accounts, { id: 'ALL', label: '모두' }]
+  return (
+    <div className="account-filter" role="group" aria-label="계좌 보기">
+      {tabs.map((t) => (
+        <button
+          key={t.id}
+          className={`acc-tab${accountView === t.id ? ' active' : ''}${t.danger ? ' danger' : ''}`}
+          onClick={() => actions.setAccountView(t.id)}
+        >
+          {t.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 function Dashboard() {
-  const { accounts } = useStore()
+  const { accounts, accountView } = useStore()
+  // 단독 선택 시 그 계좌가 전폭을 쓴다(차트가 넓어짐).
+  const shown =
+    accountView === 'ALL' ? accounts : accounts.filter((a) => a.id === accountView)
   return (
     <div className="app">
       <div className="app-top">
@@ -108,13 +131,14 @@ function Dashboard() {
             <span className="brand-name">Bach</span>
             <span className="brand-sub">trading system</span>
           </div>
+          <AccountFilter />
           <MarketControls />
         </header>
       </div>
 
       <main className="main-grid multi">
-        <div className="accounts-row">
-          {accounts.map((a) => (
+        <div className="accounts-row" style={{ '--acc-cols': Math.max(shown.length, 1) }}>
+          {shown.map((a) => (
             <AccountColumn key={a.id} account={a} />
           ))}
         </div>

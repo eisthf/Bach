@@ -27,6 +27,9 @@ export function StoreProvider({ children }) {
   const [marketAuto, setMarketAuto] = useState(false)
   const [logs, setLogs] = useState([])             // [{t, text, account}]
   const [connected, setConnected] = useState(false)
+  // 표시할 계좌 필터: 'ALL' | 계좌 id. 새로고침해도 유지(localStorage).
+  const [accountView, setAccountViewRaw] = useState(
+    () => localStorage.getItem('bach.accountView') || 'ALL')
   const wsRef = useRef(null)
   // 액션의 confirm 가드가 최신 danger 정보를 보도록 ref로 보관.
   const dangerRef = useRef({})
@@ -145,6 +148,10 @@ export function StoreProvider({ children }) {
       const r = await api.importHeld(acc)
       return r.added || []
     },
+    setAccountView: (v) => {
+      localStorage.setItem('bach.accountView', v)
+      setAccountViewRaw(v)
+    },
     push: (acc, code) => api.push(acc, code),
     buy: (acc, code, amount) => {
       if (dangerRef.current[acc] &&
@@ -168,9 +175,13 @@ export function StoreProvider({ children }) {
     marketReset: () => api.marketReset(),
   }), [])
 
+  // 저장된 계좌가 사라졌거나(ACCOUNTS 변경) 계좌가 하나뿐이면 전체 보기로 폴백.
+  const viewAcc =
+    accounts.length > 1 && accounts.some((a) => a.id === accountView) ? accountView : 'ALL'
+
   const value = {
     accounts, stocks, order, ticks, orders, hidden, compact,
-    phase, marketAuto, logs, connected, actions,
+    phase, marketAuto, logs, connected, accountView: viewAcc, actions,
   }
   return <StoreCtx.Provider value={value}>{children}</StoreCtx.Provider>
 }
