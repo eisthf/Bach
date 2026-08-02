@@ -221,6 +221,18 @@ class Hub:
             f"[{code}] 체결: {side} {fill.get('qty')}주 @ "
             f"{fill.get('price', 0):,.0f} (미체결 {fill.get('unfilled')})"
         )
+        # 자동매매 중이면 엔진 평단을 실체결가로 즉시 확정한다. 계좌 폴링을
+        # 기다리면 그 사이 익절·손절이 낡은 추정 평단으로 판단된다.
+        stock = self.stocks.get(code)
+        if stock is not None and stock.engine is not None:
+            try:
+                stock.engine.on_fill(
+                    str(fill.get("side") or ""),
+                    int(fill.get("qty") or 0),
+                    float(fill.get("price") or 0.0),
+                )
+            except Exception:  # noqa: BLE001  (체결 통지가 엔진을 죽이지 않게)
+                logger.exception("[%s] 엔진 체결 반영 실패", code)
         asyncio.create_task(self._refresh_status(code))
         asyncio.create_task(self.refresh_orders())
 

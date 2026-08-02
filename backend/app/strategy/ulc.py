@@ -66,6 +66,10 @@ class UlcEngine:
     # 평단이 계좌로 확인됐는가. 매수 때마다 False 로 돌아가고, 계좌가 체결을
     # 반영해 수량이 일치하는 순간 True 가 된다(그 전까지 매 틱 재시도).
     _avg_synced: bool = False
+    # 00(주문체결) 이벤트로 확인된 실체결 누적. 계좌 폴링(kt00018)보다 빠르고,
+    # 이 엔진이 낸 주문만 반영하므로 기존 보유분이 섞이지 않는다.
+    fill_qty: int = 0
+    fill_avg: float = 0.0
     half_sold: bool = False
     trail_max: float = 0.0
 
@@ -128,6 +132,33 @@ class UlcEngine:
     def all_filled(self) -> bool:
         return all(leg.filled for leg in self.legs)
 
+    def on_fill(self, side: str, qty: int, price: float) -> None:
+        """실시간 체결(00) 반영 — 평단을 실체결가로 즉시 확정.
+
+        주문 REST 응답에는 체결가가 없고(주문번호만), 계좌 평단은 폴링이라
+        몇 틱 늦는다. 이 이벤트는 단위체결가(FID 914)를 실시간으로 주므로
+        가장 빠르고 정확한 경로다. 계좌 평단과 달리 이 엔진이 낸 주문만
+        누적되어 기존 보유분이 섞이지 않는다.
+
+        동기 메서드다 — WS 디스패치에서 곧바로 호출되며 I/O 가 없다.
+        """
+        if qty <= 0 or self.phase in (Phase.INIT, Phase.SKIPPED):
+            return
+        if side == "buy":
+            if price <= 0:
+                return
+            total = self.fill_qty + qty
+            self.fill_avg = (self.fill_avg * self.fill_qty + price * qty) / total
+            self.fill_qty = total
+        else:
+            # 매도는 수량만 줄인다(주당 평단은 변하지 않는다).
+            self.fill_qty = max(0, self.fill_qty - qty)
+        if self.fill_qty > 0:
+            if abs(self.fill_avg - self.avg_cost) >= 1:
+                self._emit(f"평단 확정(실체결): {self.avg_cost:,.0f} → {self.fill_avg:,.0f}")
+            self.avg_cost = self.fill_avg
+            self._avg_synced = True
+
     async def _sync_from_account(self) -> None:
         """보유수량·평단을 계좌(실보유) 기준으로 보정한다.
 
@@ -162,7 +193,9 @@ class UlcEngine:
                 f"— 부분체결/미체결로 보고 실보유에 맞춤"
             )
             self.shares = qty
-        if avg > 0 and qty == self.shares:
+        # 실체결(00) 로 확정된 평단이 있으면 그쪽이 우선이다. 계좌 평단은
+        # 기존 보유분까지 섞인 집계값이라 이 엔진의 손익 기준으로는 부정확하다.
+        if avg > 0 and qty == self.shares and self.fill_qty <= 0:
             if abs(avg - self.avg_cost) >= 1:
                 self._emit(f"평단 보정(계좌 기준): {self.avg_cost:,.0f} → {avg:,.0f}")
             self.avg_cost = avg
