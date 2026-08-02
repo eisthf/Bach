@@ -32,7 +32,7 @@ from .models import (
 )
 from .providers import build_provider
 from .state_machine import StateMachine
-from .strategy.ulc import UlcEngine
+from .strategy.ulc import Phase, UlcEngine
 
 
 @dataclass
@@ -262,34 +262,44 @@ class Hub:
             async for tick in self.data.stream_ticks(code):
                 self.broadcast({"type": "tick", "tick": tick.model_dump()})
                 if stock.machine.state == TradeState.AUTO_TRADING and stock.engine:
-                    self._run_engine_tick(stock, tick)
+                    await self._run_engine_tick(stock, tick)
         except asyncio.CancelledError:
             pass
 
-    def _run_engine_tick(self, stock: Stock, tick: Tick) -> None:
+    async def _run_engine_tick(self, stock: Stock, tick: Tick) -> None:
+        """엔진에 틱 1개를 흘린다.
+
+        주문(broker.buy/sell)은 블로킹 HTTP + rate-limit 대기라 반드시
+        to_thread로 내보낸다. 루프에서 직접 호출하면 주문이 나가는 동안 전
+        종목의 틱 수신·WS 브로드캐스트·PING echo가 통째로 멈춘다.
+        종목별 틱 루프가 이 코루틴을 순차로 await 하므로 재진입은 없다.
+        """
         eng = stock.engine
         if eng is None:
             return
         before_shares = eng.shares
 
-        def buy_fn(amount: int) -> float:
-            res = self.broker.buy(stock.code, amount)
+        async def buy_fn(amount: int) -> float:
+            res = await asyncio.to_thread(self.broker.buy, stock.code, amount)
             return res.price if res.ok else 0.0
 
-        def sell_fn(qty: int) -> float:
-            res = self.broker.sell(stock.code, qty)
+        async def sell_fn(qty: int) -> float:
+            res = await asyncio.to_thread(self.broker.sell, stock.code, qty)
             return res.price if res.ok else 0.0
 
-        eng.on_tick(tick, buy_fn, sell_fn)
-        if eng.shares != before_shares:
-            self.broadcast_status(stock.code)
-        from .strategy.ulc import Phase
+        await eng.on_tick(tick, buy_fn, sell_fn)
 
+        changed = eng.shares != before_shares
         if eng.phase == Phase.DONE and stock.machine.state == TradeState.AUTO_TRADING:
             stock.machine.on_position_flat()
             stock.engine = None
             self._log(f"[{stock.code}] 자동매매 청산 완료(보유수량 0) → MANUAL_TRADING")
-            self.broadcast_status(stock.code)
+            changed = True
+        if changed:
+            # 주문이 나갔으면 포지션 캐시가 무효화된 상태다. broadcast_status는
+            # 계좌 조회(블로킹 HTTP)를 탈 수 있으므로 스레드에서 캐시를 덥힌 뒤
+            # 브로드캐스트한다(_refresh_status가 그 순서를 담당).
+            await self._refresh_status(stock.code)
 
     # -- 상태 전이 이벤트 --------------------------------------------------
     def push(self, code: str) -> Optional[TradeState]:

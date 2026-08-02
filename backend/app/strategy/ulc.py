@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Callable, List, Optional
+from typing import Awaitable, Callable, List, Optional
 
 from ..models import AutoConfig, Tick
 
@@ -43,6 +43,10 @@ class UlcEngine:
     Broker 의존성을 직접 갖지 않고, 콜백(buy_fn/sell_fn)으로 주문을 위임한다.
     이렇게 하면 mock/live 양쪽에서 동일 엔진을 재사용할 수 있다.
     buy_fn(amount_krw) -> 체결가(없으면 0), sell_fn(qty) -> 체결가
+
+    ⚠️ 두 콜백은 **awaitable** 이다. 실거래 주문은 블로킹 HTTP(+rate-limit
+    대기)라, 호출측이 이를 스레드로 넘겨 이벤트 루프를 막지 않게 하기 위함이다.
+    엔진의 판단 로직 자체는 루프 위에서 동기적으로 돌아 상태 경쟁이 없다.
     """
     code: str
     config: AutoConfig
@@ -117,11 +121,11 @@ class UlcEngine:
     def all_filled(self) -> bool:
         return all(leg.filled for leg in self.legs)
 
-    def on_tick(
+    async def on_tick(
         self,
         tick: Tick,
-        buy_fn: Callable[[int], float],
-        sell_fn: Callable[[int], float],
+        buy_fn: Callable[[int], Awaitable[float]],
+        sell_fn: Callable[[int], Awaitable[float]],
     ) -> None:
         """틱 1개 처리."""
         if self.phase in (Phase.INIT, Phase.SKIPPED, Phase.DONE):
@@ -136,7 +140,7 @@ class UlcEngine:
                     continue
                 hit = (i == 0) or (price <= leg.target)
                 if hit:
-                    fill = buy_fn(leg.amount)
+                    fill = await buy_fn(leg.amount)
                     if fill > 0:
                         qty = int(leg.amount // fill)
                         if qty > 0:
@@ -163,44 +167,44 @@ class UlcEngine:
             self.trail_max = max(self.trail_max, price)
             # 손절 우선
             if price <= self.avg_cost * (1 - c.ulc_sl):
-                self._exit_all(sell_fn, "트레일링 중 손절")
+                await self._exit_all(sell_fn, "트레일링 중 손절")
                 return
             # 상한가 도달
             if price >= self.x * 1.295:
-                self._exit_all(sell_fn, "상한가 도달")
+                await self._exit_all(sell_fn, "상한가 도달")
                 return
             # 보장 익절
             if price >= self.avg_cost * (1 + c.ulc_g):
-                self._exit_all(sell_fn, "보장 익절")
+                await self._exit_all(sell_fn, "보장 익절")
                 return
             # 트레일링 스탑
             if price <= self.trail_max * (1 - c.ulc_t):
-                self._exit_all(sell_fn, f"트레일링 스탑 (max {self.trail_max:,.0f})")
+                await self._exit_all(sell_fn, f"트레일링 스탑 (max {self.trail_max:,.0f})")
                 return
             return
 
         # 3) HOLDING: 익절/손절
         if self.phase == Phase.HOLDING:
             if stop_active and price <= self.avg_cost * (1 - c.ulc_sl):
-                self._exit_all(sell_fn, "손절")
+                await self._exit_all(sell_fn, "손절")
                 return
             if price >= self.avg_cost * (1 + c.ulc_tp):
                 if c.ulc_trailing:
                     half = self.shares // 2
                     if half > 0:
-                        fill = sell_fn(half)
+                        fill = await sell_fn(half)
                         self.shares -= half
                         self.half_sold = True
                         self._emit(f"익절: 절반 {half}주 매도 @ {fill:,.0f} → 트레일링 가동")
                     self.trail_max = price
                     self.phase = Phase.TRAILING
                 else:
-                    self._exit_all(sell_fn, "익절 전량")
+                    await self._exit_all(sell_fn, "익절 전량")
                 return
 
-    def _exit_all(self, sell_fn: Callable[[int], float], reason: str) -> None:
+    async def _exit_all(self, sell_fn: Callable[[int], Awaitable[float]], reason: str) -> None:
         if self.shares > 0:
-            fill = sell_fn(self.shares)
+            fill = await sell_fn(self.shares)
             self._emit(f"{reason}: 전량 {self.shares}주 매도 @ {fill:,.0f}")
             self.shares = 0
         self.phase = Phase.DONE
