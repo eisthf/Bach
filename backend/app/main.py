@@ -209,9 +209,9 @@ def _reject_if_auto():
 
 
 @app.post("/api/market/open")
-def market_open():
+async def market_open():
     _reject_if_auto()
-    manager.market_open()
+    await manager.market_open()
     return {"phase": manager.clock.phase.value, "auto": manager.clock.auto}
 
 

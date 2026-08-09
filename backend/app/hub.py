@@ -346,12 +346,12 @@ class Hub:
             self.broadcast_status(code)
 
     # -- 장 이벤트 적용 (manager가 전 계좌에 대해 호출) --------------------
-    def apply_market_open(self) -> None:
+    async def apply_market_open(self) -> None:
         for stock in self.stocks.values():
             prev = stock.machine.state
             new = stock.machine.on_market_open()
             if prev == TradeState.MONITOR and new == TradeState.AUTO_TRADING:
-                self._start_auto(stock)
+                await self._start_auto(stock)
             self.broadcast_status(stock.code)
 
     def apply_market_close(self) -> None:
@@ -366,11 +366,17 @@ class Hub:
             stock.engine = None
             self.broadcast_status(stock.code)
 
-    def _start_auto(self, stock: Stock) -> None:
-        """MONITOR → AUTO_TRADING 진입 시 ULC 엔진 셋업."""
-        bars = self.data.get_bars(stock.code, 3)
-        x = self.data.prev_close(stock.code)
-        z = self.data.day_open(stock.code)
+    async def _start_auto(self, stock: Stock) -> None:
+        """MONITOR → AUTO_TRADING 진입 시 ULC 엔진 셋업.
+
+        get_bars/prev_close/day_open 은 live 에서 블로킹 REST(+ 최대 50페이지
+        페이징, 페이지마다 sleep)라 to_thread 로 내보낸다. 이 경로는 하필
+        09:00 정각 장 시작 시점에 몰려 실행되므로(_auto_clock_loop, async
+        태스크) 여기서 막으면 그 순간 전 계좌·전 종목의 틱 수신이 멈춘다.
+        """
+        bars = await asyncio.to_thread(self.data.get_bars, stock.code, 3)
+        x = await asyncio.to_thread(self.data.prev_close, stock.code)
+        z = await asyncio.to_thread(self.data.day_open, stock.code)
         if x is None:
             x = bars[-(390 // 3) - 1].close if len(bars) > (390 // 3) else bars[0].close
         if z is None:
@@ -461,11 +467,11 @@ class AccountManager:
         self.start_clock()
 
     # -- 장 이벤트 (공유 시계) ---------------------------------------------
-    def market_open(self) -> None:
+    async def market_open(self) -> None:
         self.clock.open()
         self._log("📈 장 시작 (MARKET-OPEN)")
         for hub in self.hubs.values():
-            hub.apply_market_open()
+            await hub.apply_market_open()
         self.broadcast_market()
 
     def market_close(self) -> None:
@@ -507,7 +513,7 @@ class AccountManager:
                 if cur == last:
                     continue
                 if last == MarketPhase.PRE_OPEN and cur == MarketPhase.OPEN:
-                    self.market_open()
+                    await self.market_open()
                 elif last == MarketPhase.OPEN and cur == MarketPhase.CLOSED:
                     self.market_close()
                 else:
