@@ -50,6 +50,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ---------------------------------------------------------------------------
+# API 토큰 인증 (선택)
+# ---------------------------------------------------------------------------
+# API_TOKEN 이 설정돼 있으면 모든 /api/* 요청에 X-API-Token 헤더를 요구한다.
+# CORS 는 브라우저만 지키는 규칙이라 curl·스크립트·다른 기기에는 무력한데,
+# 이 서버는 실전 계좌 주문 API 를 노출하므로 진짜 자물쇠가 필요하다.
+# 미설정이면 기존처럼 인증 없이 동작한다(mock 데모 하위호환).
+# 프런트는 Vite 프록시가 헤더를 주입하므로 브라우저 코드는 바뀌지 않는다.
+# WebSocket(/ws)은 브라우저 API 가 커스텀 헤더를 못 실으므로 ?token= 쿼리로 받는다.
+API_TOKEN = (os.getenv("API_TOKEN") or "").strip()
+
+
+@app.middleware("http")
+async def _require_token(request, call_next):
+    if API_TOKEN and request.url.path.startswith("/api"):
+        # CORS 예비요청(OPTIONS)은 브라우저가 헤더를 싣기 전 단계라 통과시킨다.
+        # 실제 요청은 어차피 토큰 검사를 다시 거친다.
+        if request.method != "OPTIONS":
+            import secrets
+            given = request.headers.get("x-api-token") or ""
+            if not secrets.compare_digest(given, API_TOKEN):
+                from fastapi.responses import JSONResponse
+                return JSONResponse({"detail": "인증 실패(X-API-Token)"}, status_code=401)
+    return await call_next(request)
+
 
 def _hub(account: str) -> Hub:
     h = manager.get(account)
@@ -240,6 +265,13 @@ async def _on_startup():
 # ---------------------------------------------------------------------------
 @app.websocket("/ws")
 async def ws(websocket: WebSocket):
+    # 브라우저 WebSocket API 는 커스텀 헤더를 못 실으므로 쿼리 토큰으로 검사.
+    if API_TOKEN:
+        import secrets
+        given = websocket.query_params.get("token") or ""
+        if not secrets.compare_digest(given, API_TOKEN):
+            await websocket.close(code=4401)  # 4xxx = 앱 정의 종료 코드
+            return
     await websocket.accept()
     q = manager.subscribe()
     # 접속 직후 현재 스냅샷 전송: 계좌 목록 + 장 단계 + 계좌별 종목/틱
