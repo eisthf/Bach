@@ -96,6 +96,12 @@ AUTO_TRADING --> MANUAL_TRADING : PUSH | POSITION-FLAT(보유수량→0)
 (MARKET-CLOSE 시 장 단계도 장전(PRE_OPEN)으로 리셋 → 초기 상태 복귀)
 ```
 
+## 매매 전략
+
+자동매매는 **상한가 따라잡기(ULC)** 전략을 쓴다 — 진입 필터, 시나리오별
+분할매수, 익절/손절/트레일링, 평단·수량의 진실원(실체결 이벤트 + 계좌 보정)
+등 상세는 [docs/trading-strategy.md](docs/trading-strategy.md) 참고.
+
 ## 실거래(키움) 모드
 
 `backend/.env`:
