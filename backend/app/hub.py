@@ -432,14 +432,22 @@ class AccountManager:
         self._clients.discard(q)
 
     def broadcast(self, msg: dict) -> None:
-        dead = []
         for q in self._clients:
             try:
                 q.put_nowait(msg)
             except asyncio.QueueFull:
-                dead.append(q)
-        for q in dead:
-            self._clients.discard(q)
+                # 가득 차면 가장 오래된 메시지를 버리고 최신을 넣는다. 느린
+                # 클라이언트는 중간이 비지만(틱은 최신이 중요) 연결은 유지된다.
+                #
+                # 예전처럼 큐를 _clients 에서 퇴출하면 안 된다: 그 큐를 기다리는
+                # /ws 핸들러는 put 이 끊겨 q.get() 에서 영원히 잠들고, 소켓이
+                # 좀비로 남았다. 메시지를 계속 흘려보내면 죽은 소켓은 다음
+                # send_json 실패로 핸들러가 깨어나 unsubscribe 로 정리된다.
+                try:
+                    q.get_nowait()
+                    q.put_nowait(msg)
+                except (asyncio.QueueEmpty, asyncio.QueueFull):
+                    pass
 
     def _log(self, text: str) -> None:
         """계좌에 속하지 않는 전역 로그(장 이벤트 등)."""
