@@ -9,7 +9,8 @@ mock 모드에서 AUTO_TRADING 상태의 종목에 대해 틱마다 ``on_tick``�
   - 진입필터: Z >= X*(1+w) → SKIP, X < 1000 → SKIP, 하락시가 & !allow_lower_open → SKIP
   - 시나리오: SC1 [X,X*(1+p)) / SC2 [X*(1+p),X*(1+p1)) / SC3 [X*(1+p1),∞)
   - 분할매수: SC1/2 = 2분할, SC3 = 3분할
-  - 청산: 평단*(1+tp) 익절, 평단*(1-sl) 손절(분할 완료 후 활성), 트레일링(옵션)
+  - 청산: 평단*(1+tp) 익절(1차 매수 직후부터), 평단*(1-sl) 손절(분할 완료
+    후 활성), 트레일링(옵션)
 """
 from __future__ import annotations
 
@@ -277,8 +278,13 @@ class UlcEngine:
                 return
             return
 
-        # 3) HOLDING: 익절/손절
-        if self.phase == Phase.HOLDING:
+        # 3) 익절/손절 — ACCUMULATING 도 포함한다.
+        # 익절은 1차 매수 직후부터 활성이다(원 명세는 손절에만 '2차/3차 체결
+        # 이후' 게이트를 건다). HOLDING 에서만 평가하면, 1차 매수 후 2차
+        # 목표가까지 내려오지 않고 바로 급등하는 — 이 전략의 최선 시나리오 —
+        # 에서 익절을 영영 못 한다. 익절이 발동하면 DONE 으로 가므로 남은
+        # 분할 leg 는 자연히 소멸한다. 손절은 stop_active 로 계속 게이트.
+        if self.phase in (Phase.ACCUMULATING, Phase.HOLDING):
             if stop_active and price <= self.avg_cost * (1 - c.ulc_sl):
                 await self._exit_all(sell_fn, "손절")
                 return

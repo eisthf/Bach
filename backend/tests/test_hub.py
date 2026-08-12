@@ -54,8 +54,11 @@ async def test_tick_path_nonblocking_and_transitions(mock_hub):
     await asyncio.sleep(0.05)
     base, before = beats, len(mgr.msgs)
 
-    # 1차 매수(즉시 발화) → 익절가 도달 → 전량 청산
-    price = eng.z
+    # 1차 매수(즉시 발화) → 익절가 도달 → 전량 청산.
+    # 틱 가격은 z 가 아니라 현재가로 준다: mock 랜덤워크에서 z 가 현재가보다
+    # 5% 이상 높으면 매수 직후 같은 틱에 익절(ACCUMULATING 익절 활성)이
+    # 발동해 바로 청산까지 가버려 테스트가 비결정적이 된다.
+    price = hub.data.last_tick("005930").price
     await hub._run_engine_tick(stock, Tick(code="005930", price=price, high=price,
                                            low=price, open=price))
     assert eng.shares > 0, "1차 매수 미체결"
