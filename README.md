@@ -102,15 +102,41 @@ AUTO_TRADING --> MANUAL_TRADING : PUSH | POSITION-FLAT(보유수량→0)
 분할매수, 익절/손절/트레일링, 평단·수량의 진실원(실체결 이벤트 + 계좌 보정)
 등 상세는 [docs/trading-strategy.md](docs/trading-strategy.md) 참고.
 
-## 실거래(키움) 모드
+## 실거래(키움) 모드 — multi-account
 
-`backend/.env`:
+계좌는 `ACCOUNTS` 환경변수(쉼표구분)로 활성화하고, 계좌별 자격증명은
+`<ID>_APPKEY` 식의 prefix 변수로 준다. `backend/.env`:
 ```
-PROVIDER=kiwoom
-APPKEY=...
-SECRETKEY=...
-KIWOOM_MOCK=true          # true=모의투자(mockapi) / false=실전(api)
+ACCOUNTS=mock,real
+
+MOCK_PROVIDER=kiwoom      # kiwoom=키움 모의서버 | mock=합성 데이터(무자격증명)
+MOCK_APPKEY=...
+MOCK_SECRETKEY=...
+
+REAL_PROVIDER=kiwoom      # ⚠️ 실전 — 실제 주문이 나간다
+REAL_APPKEY=...
+REAL_SECRETKEY=...
 ```
+전체 옵션(CORS, API_TOKEN, 임의 계좌 추가 등)은 `backend/.env.example` 참고.
+kiwoom 계좌인데 자격증명이 없으면 그 계좌만 건너뛰고, 활성 계좌가 없으면
+합성 mock 계좌 하나로 대체돼 자격증명 없이도 데모가 돈다.
+
+### 장 시계는 전 계좌 공유 — 혼합 구성 시 수동 장 제어 불가
+
+장 단계(장전/장중/장종료)는 계좌별이 아니라 **전 계좌가 하나의 시계를
+공유**한다. 두 계좌가 같은 한국 시장에서 거래하므로 장 시각도 하나여야
+하기 때문이다. 이 시계의 모드는 활성 계좌 구성이 결정한다:
+
+- **kiwoom 계좌가 하나라도 있으면**: 실제 KST 시계로 자동 판정
+  (평일 09:00~15:30). 헤더의 수동 버튼(장 시작/종료/초기화)은 사라지고
+  API로 호출해도 409로 거부된다 — 진실원이 실제 시각이기 때문.
+- **합성 mock 계좌뿐이면**: 수동 토글로 장 이벤트를 데모할 수 있다.
+
+따라서 `ACCOUNTS=mock,real`에서 mock을 합성(`MOCK_PROVIDER=mock`)으로
+두더라도, real(kiwoom)이 함께 있으면 합성 계좌의 장 토글 데모는 불가하다.
+수동 토글 데모가 필요하면 `ACCOUNTS=mock` + `MOCK_PROVIDER=mock`으로
+kiwoom 계좌 없이 띄운다.
+
 `app/providers/kiwoom_api.py`가 키움 REST/WebSocket을 **self-contained**로 구현한다
 (외부 kiwoom 프로젝트 의존 없음). 토큰(au10001), 분봉(ka10080), 일봉(ka10081),
 주문(kt10000/kt10001), 잔고(kt00018), 실시간 체결(WebSocket `0B`)을 직접 호출한다.
