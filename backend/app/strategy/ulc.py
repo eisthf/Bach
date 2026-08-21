@@ -71,7 +71,6 @@ class UlcEngine:
     # 이 엔진이 낸 주문만 반영하므로 기존 보유분이 섞이지 않는다.
     fill_qty: int = 0
     fill_avg: float = 0.0
-    half_sold: bool = False
     trail_max: float = 0.0
 
     # ------------------------------------------------------------------
@@ -295,8 +294,13 @@ class UlcEngine:
                     half = self.shares // 2
                     if half > 0:
                         fill = await sell_fn(half)
+                        if fill <= 0:
+                            # 주문 전송 실패(fill=0 은 주문번호를 못 받은 경우라
+                            # 중복 주문 위험 없음). 상태를 바꾸지 않고 다음 틱에
+                            # 재시도한다 — 익절 조건은 다음 틱에도 대개 참이다.
+                            self._emit("⚠️ 반익절 주문 실패 — 다음 틱에 재시도")
+                            return
                         self.shares -= half
-                        self.half_sold = True
                         self._emit(f"익절: 절반 {half}주 매도 @ {fill:,.0f} → 트레일링 가동")
                     self.trail_max = price
                     self.phase = Phase.TRAILING
@@ -309,6 +313,13 @@ class UlcEngine:
         await self._sync_from_account()
         if self.shares > 0:
             fill = await sell_fn(self.shares)
+            if fill <= 0:
+                # 주문 전송 실패. 여기서 DONE 으로 가면 "팔았다"는 착각 속에
+                # 하락 중인 포지션이 방치된다 — 청산은 이 엔진에서 가장 실패하면
+                # 안 되는 동작이다. phase 를 유지해 다음 틱에 청산 조건이 다시
+                # 평가되게 한다(전송 실패라 주문번호가 없으므로 중복 주문 아님).
+                self._emit(f"⚠️ 청산 주문 실패({reason}) — 다음 틱에 재시도")
+                return
             self._emit(f"{reason}: 전량 {self.shares}주 매도 @ {fill:,.0f}")
             self.shares = 0
         self.phase = Phase.DONE
