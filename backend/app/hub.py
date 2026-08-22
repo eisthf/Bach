@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import calendar
 import json
 import logging
 import os
@@ -22,7 +23,7 @@ from typing import Dict, List, Optional, Set
 logger = logging.getLogger("bach.hub")
 
 from .accounts import AccountConfig, load_account_configs
-from .market_clock import MarketClock
+from .market_clock import MarketClock, now_kst
 from .models import (
     AutoConfig,
     MarketPhase,
@@ -351,7 +352,21 @@ class Hub:
             prev = stock.machine.state
             new = stock.machine.on_market_open()
             if prev == TradeState.MONITOR and new == TradeState.AUTO_TRADING:
-                await self._start_auto(stock)
+                # 종목별로 격리: 한 종목의 셋업 실패(레이트리밋, 빈 응답 등)가
+                # 나머지 종목의 장 시작 처리까지 삼키지 않게 한다.
+                try:
+                    ok = await self._start_auto(stock)
+                except Exception:  # noqa: BLE001
+                    logger.exception("[%s] 자동매매 셋업 오류", stock.code)
+                    ok = False
+                if not ok:
+                    # 엔진 없는 AUTO_TRADING 은 "자동매매 중" 착시만 남기므로,
+                    # 실패를 정직하게 수동매매로 인계한다.
+                    stock.machine.state = TradeState.MANUAL_TRADING
+                    self._log(
+                        f"[{stock.code}] ⚠️ 자동매매 셋업 실패(기준가 미확보) "
+                        f"→ 수동매매로 복귀"
+                    )
             self.broadcast_status(stock.code)
 
     def apply_market_close(self) -> None:
@@ -366,23 +381,43 @@ class Hub:
             stock.engine = None
             self.broadcast_status(stock.code)
 
-    async def _start_auto(self, stock: Stock) -> None:
-        """MONITOR → AUTO_TRADING 진입 시 ULC 엔진 셋업.
+    async def _start_auto(self, stock: Stock) -> bool:
+        """MONITOR → AUTO_TRADING 진입 시 ULC 엔진 셋업. 성공 여부 반환.
 
-        get_bars/prev_close/day_open 은 live 에서 블로킹 REST(+ 최대 50페이지
-        페이징, 페이지마다 sleep)라 to_thread 로 내보낸다. 이 경로는 하필
-        09:00 정각 장 시작 시점에 몰려 실행되므로(_auto_clock_loop, async
-        태스크) 여기서 막으면 그 순간 전 계좌·전 종목의 틱 수신이 멈춘다.
+        prev_close/day_open/get_bars 는 live 에서 블로킹 REST 라 to_thread 로
+        내보낸다. 이 경로는 하필 09:00 정각 장 시작 시점에 몰려 실행되므로
+        (_auto_clock_loop, async 태스크) 여기서 막으면 그 순간 전 계좌·전
+        종목의 틱 수신이 멈춘다.
+
+        X(전일 종가)/Z(당일 시가)는 전용 API(prev_close=ka10081, day_open)가
+        정상 경로다. 실패 시에만 분봉을 조회해 **날짜 경계**로 역산한다 —
+        전일 마지막 봉의 close = X, 당일 첫 봉의 open = Z. (예전의 고정 인덱스
+        bars[-131]/[-130] 산술은 "당일 130봉이 꽉 차 있다"를 가정하는데, 이
+        코드가 도는 09:00 에는 당일 봉이 0~1개라 항상 어긋났다. 봉 time 은
+        KST 벽시계를 UTC 로 간주한 epoch 이라 자정 경계가 86400 배수에
+        정렬되므로 날짜 비교가 안전하다.)
+
+        그래도 X/Z 를 못 구하면 추측하지 않고 셋업을 포기한다(False). 틀린
+        X 는 진입 필터·시나리오 분류·2차 매수가·상한가 매도선을 하루 종일
+        조용히 오염시키므로, 그 종목만 수동으로 넘기는 편이 안전하다.
         """
-        bars = await asyncio.to_thread(self.data.get_bars, stock.code, 3)
         x = await asyncio.to_thread(self.data.prev_close, stock.code)
         z = await asyncio.to_thread(self.data.day_open, stock.code)
-        if x is None:
-            x = bars[-(390 // 3) - 1].close if len(bars) > (390 // 3) else bars[0].close
-        if z is None:
-            lt = self.data.last_tick(stock.code)
-            z = lt.open if lt else (
-                bars[-(390 // 3)].open if len(bars) > (390 // 3) else bars[-1].open)
+        if x is None or z is None:
+            # 폴백: 분봉에서 날짜 경계로 역산. 엔진은 이평선이 필요 없으므로
+            # lookback 은 전일 꼬리 몇 개면 충분(09:00 REST 부하 최소화).
+            bars = await asyncio.to_thread(
+                self.data.get_bars, stock.code, 3, 3)
+            midnight = calendar.timegm(now_kst().date().timetuple())
+            if x is None:
+                prev_bars = [b for b in bars if b.time < midnight]
+                x = prev_bars[-1].close if prev_bars else None
+            if z is None:
+                day_bars = [b for b in bars if b.time >= midnight]
+                z = day_bars[0].open if day_bars else None
+        if not x or not z:
+            return False
+
         async def position_fn():
             """엔진이 평단·수량을 계좌 기준으로 보정할 때 쓰는 조회(블로킹 → 스레드)."""
             p = await asyncio.to_thread(self.broker.position, stock.code)
@@ -399,6 +434,7 @@ class Hub:
         eng.setup()
         stock.engine = eng
         self._log(f"[{stock.code}] 자동매매 시작 (X={x:,.0f}, Z={z:,.0f})")
+        return True
 
     # -- 라이프사이클 -----------------------------------------------------
     def start(self) -> None:

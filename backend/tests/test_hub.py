@@ -81,15 +81,19 @@ async def test_tick_path_nonblocking_and_transitions(mock_hub):
 
 
 async def test_market_open_setup_nonblocking(mock_hub):
-    """09:00 장 시작: 종목당 0.3초 REST × 3종목 셋업 중 루프 생존 (5b3e7ba)."""
-    hub, mgr, clock = mock_hub
-    orig = hub.data.get_bars
+    """09:00 장 시작: 종목당 0.3초 REST × 3종목 셋업 중 루프 생존 (5b3e7ba).
 
-    def slow_bars(*a, **kw):
+    지연 대상은 prev_close — 정상 경로에서 실제 호출되는 REST 다.
+    (get_bars 는 X/Z 폴백에서만 호출되므로 여기 지연을 걸면 무의미.)
+    """
+    hub, mgr, clock = mock_hub
+    orig = hub.data.prev_close
+
+    def slow_prev_close(*a, **kw):
         time.sleep(0.3)
         return orig(*a, **kw)
 
-    hub.data.get_bars = slow_bars
+    hub.data.prev_close = slow_prev_close
     for code in ("005930", "000660", "035720"):
         _to_auto(hub, clock, code)
 
