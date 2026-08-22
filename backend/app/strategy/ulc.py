@@ -215,6 +215,19 @@ class UlcEngine:
 
         # 1) 분할매수: 1차는 즉시(시가), 이후는 목표가 도달 시
         if self.phase == Phase.ACCUMULATING:
+            # 지연 진입 가드. 갭 필터는 셋업 시점의 Z 로만 평가되는데, 1차
+            # 매수는 가격 조건 없이(i==0) 첫 틱에 발화한다. 셋업이 레이트리밋
+            # 재시도로 밀리거나 첫 틱이 늦게 오면, 그 사이 갭 상한을 넘어선
+            # 가격에 그대로 진입한다 — 필터가 걸렀어야 할 자리다. 아직 한 주도
+            # 사기 전이라면 실가격으로 같은 필터를 다시 건다.
+            # (2차 이후는 price <= target 조건이 있어 이 가드가 필요 없다.)
+            if self.shares <= 0 and price >= self.x * (1 + c.ulc_w):
+                self.phase = Phase.SKIPPED
+                self._emit(
+                    f"SKIP: 진입 지연 중 갭 초과 현재가={price:,.0f} >= "
+                    f"X*(1+w)={self.x * (1 + c.ulc_w):,.0f}"
+                )
+                return
             for i, leg in enumerate(self.legs):
                 if leg.filled:
                     continue
