@@ -9,6 +9,23 @@
 
 ## 실행
 
+### 한 번에 (권장)
+```bash
+./dev.sh          # .env 설정 그대로 — 백엔드(8000) + 프런트(5173)
+./dev.sh --demo   # 합성 mock 계좌 1개만. 장 시작/종료를 수동 토글
+```
+최초 1회 셋업(venv·npm install·`.env` 복사)도 자동으로 처리하며, Ctrl+C 한 번에
+양쪽을 정리한다.
+
+**`--demo`가 필요한 이유**: 장 시계는 전 계좌 공유라 kiwoom 계좌가 하나라도
+있으면 실제 KST 시각으로 자동 판정되고, 수동 장 토글이 409로 거부된다
+([아래](#장-시계는-전-계좌-공유--혼합-구성-시-수동-장-제어-불가) 참고). 주말이나
+장 마감 시각에 UI·상태머신·자동매매를 시연하려면 `--demo`로 띄운다. 실거래
+계좌를 배제하므로 실주문 위험이 없고, 종목 목록도 `state.demo.json`에 따로
+저장해 평소 설정을 건드리지 않는다.
+
+수동으로 따로 띄우려면:
+
 ### 1) 백엔드 (포트 8000)
 ```bash
 cd backend
@@ -158,6 +175,9 @@ frontend/src/
   store.jsx          전역 상태 + WebSocket
   components/        Chart, PriceTicker, StateButton, ManualTradePanel,
                      AutoConfigForm, StockInput, StockPanel, MarketControls, LogPanel
+
+dev.sh               개발 서버 일괄 실행 (--demo: 합성 mock 단독)
+backend/tests/       pytest 회귀 테스트 (uv run pytest)
 
 # frontend/smoke.mjs : Playwright 헤드리스 스모크 테스트(개발용)
 ```
