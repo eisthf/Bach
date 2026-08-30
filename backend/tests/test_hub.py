@@ -55,10 +55,13 @@ async def test_tick_path_nonblocking_and_transitions(mock_hub):
     base, before = beats, len(mgr.msgs)
 
     # 1차 매수(즉시 발화) → 익절가 도달 → 전량 청산.
-    # 틱 가격은 z 가 아니라 현재가로 준다: mock 랜덤워크에서 z 가 현재가보다
-    # 5% 이상 높으면 매수 직후 같은 틱에 익절(ACCUMULATING 익절 활성)이
-    # 발동해 바로 청산까지 가버려 테스트가 비결정적이 된다.
-    price = hub.data.last_tick("005930").price
+    # 가격은 명시적으로 고정한다. mock 랜덤워크 결과에 맡기면 진입 가드
+    # (현재가 >= X*(1+w) → SKIP)나 매수 직후 즉시 익절이 우발적으로 걸려
+    # 비결정적이 된다. z 는 setup 필터를 통과한 값이라 가드에 안 걸리고,
+    # 브로커 체결가(last_tick)도 같은 값으로 맞춰 평단==틱가 → 즉시 익절 없음.
+    price = eng.z
+    hub.data._last_tick["005930"] = Tick(code="005930", price=price, high=price,
+                                         low=price, open=price, time=0)
     await hub._run_engine_tick(stock, Tick(code="005930", price=price, high=price,
                                            low=price, open=price))
     assert eng.shares > 0, "1차 매수 미체결"

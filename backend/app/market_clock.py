@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import calendar
 from datetime import datetime, time as dtime, timedelta, timezone
 
 from .models import MarketPhase
@@ -20,6 +21,28 @@ REGULAR_CLOSE = dtime(15, 30)
 
 def now_kst() -> datetime:
     return datetime.now(KST)
+
+
+def chart_epoch(dt: datetime | None = None) -> int:
+    """KST 벽시계 시각 → **차트 시간축** epoch.
+
+    lightweight-charts는 UTC로 렌더링하므로, 봉 시각은 KST 벽시계를 UTC인 것처럼
+    환산해 저장한다(kiwoom_api._kst_epoch). 즉 봉 축은 진짜 epoch보다 9시간 앞선다.
+
+    틱도 반드시 같은 축에 올려야 한다. 예전엔 틱만 진짜 epoch(time.time())이라
+    두 축이 9시간 어긋났고, 그래서 프런트가 "이 틱이 어느 봉에 속하는가"를 계산할
+    수 없어 새 봉을 만들지 못했다(마지막 봉 하나가 무한히 커지는 원인).
+    """
+    dt = dt or now_kst()
+    return calendar.timegm(dt.timetuple())
+
+
+def session_open_epoch(dt: datetime | None = None) -> int:
+    """해당 날짜 09:00(KST)의 차트 시간축 epoch."""
+    d = (dt or now_kst()).date()
+    return calendar.timegm(
+        datetime(d.year, d.month, d.day, REGULAR_OPEN.hour, REGULAR_OPEN.minute).timetuple()
+    )
 
 
 def phase_for(dt: datetime) -> MarketPhase:

@@ -13,6 +13,7 @@ import time
 from datetime import datetime
 from typing import AsyncIterator, Callable, Dict, List, Optional
 
+from ..market_clock import chart_epoch
 from ..models import Bar, OrderResult, Position, Tick
 from . import kiwoom_api as kw
 from .base import Broker, DataProvider
@@ -131,7 +132,7 @@ class KiwoomDataProvider(DataProvider):
                     self._last[code] = Tick(
                         code=code, price=price,
                         high=q.get("high") or price, low=q.get("low") or price,
-                        open=op, volume=0.0, time=int(time.time()),
+                        open=op, volume=0.0, time=chart_epoch(),
                     )
                     if op:
                         self._day_open.setdefault(code, op)
@@ -251,7 +252,7 @@ class KiwoomDataProvider(DataProvider):
                 low=kw.parse_price(v.get(F_LOW)) or price,
                 open=open_,
                 volume=kw.parse_price(v.get(F_VOL)),
-                time=int(time.time()),
+                time=chart_epoch(),
             )
             self._last[code] = tick
             q = self._queues.get(code)
