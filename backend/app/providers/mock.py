@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import random
+import zlib
 from typing import AsyncIterator, Dict, List
 
 from ..market_clock import chart_epoch, session_open_epoch
@@ -41,7 +42,13 @@ def round_to_tick(price: float) -> float:
 
 
 def _seed_for(code: str) -> int:
-    return abs(hash(("bach-mock", code))) % (2**31)
+    """종목코드 → 시드. **프로세스 간에도 안정적**이어야 한다.
+
+    파이썬의 str.hash 는 PYTHONHASHSEED 로 랜덤화되어 실행마다 값이 달라진다.
+    그래서 예전엔 재시작할 때마다 같은 종목의 차트·시나리오가 통째로 바뀌어,
+    "어제 본 그 상황을 다시 재현"이 불가능했다. crc32 는 결정적이다.
+    """
+    return zlib.crc32(f"bach-mock:{code}".encode()) % (2**31)
 
 
 # 당일 정규장 분 수(09:00~15:30 = 390분)
@@ -146,13 +153,17 @@ class MockDataProvider(DataProvider):
         # 틱 시뮬은 마지막 봉 종가에서 이어진다(차트와 시각적 연속성).
         # 단, open 필드에는 당일 시가 Z를 보존(ULC 엔진이 시나리오 판정에 사용).
         last_close = closes[-1]
-        now = chart_epoch()
+        # 장중 고가/저가는 '당일 봉 전체'에서 구한다. 예전엔 마지막 봉 종가로
+        # 초기화해, 헤더의 고가/저가가 실제로는 '앱을 켠 뒤의' 값이라 차트가
+        # 보여주는 당일 범위와 어긋났다(live 의 FID 17/18 은 진짜 당일 고저다).
+        day_bars = bars[lookback_extra:] or bars
+        self._session_high[code] = max(b.high for b in day_bars)
+        self._session_low[code] = min(b.low for b in day_bars)
         self._last_tick[code] = Tick(
-            code=code, price=last_close, high=last_close, low=last_close,
-            open=z, volume=0, time=now,
+            code=code, price=last_close,
+            high=self._session_high[code], low=self._session_low[code],
+            open=z, volume=0, time=chart_epoch(),
         )
-        self._session_high[code] = last_close
-        self._session_low[code] = last_close
         return bars
 
     # -- X/Z (자동매매 엔진 셋업용) ---------------------------------------
