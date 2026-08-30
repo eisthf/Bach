@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import os
+import threading
 import time
 from datetime import datetime
 from typing import AsyncIterator, Callable, Dict, List, Optional
@@ -43,6 +44,9 @@ def _today() -> str:
 
 
 class KiwoomDataProvider(DataProvider):
+    # 봉 캐시 유효시간(초). 동시·연속 요청을 합치는 것이 목적이라 짧게 잡는다.
+    _BARS_TTL = 3.0
+
     def __init__(
         self,
         appkey: Optional[str] = None,
@@ -65,6 +69,10 @@ class KiwoomDataProvider(DataProvider):
         self._prev_close: Dict[str, float] = {}  # 전일 종가(X) 캐시
         self._prev_close_day: Dict[str, str] = {}
         self._name: Dict[str, str] = {}          # 종목명 캐시
+        # 봉 조회 단기 캐시: {(code, interval, lookback, bucket): (조회시각, bars)}
+        self._bars_cache: Dict[tuple, tuple] = {}
+        self._bars_locks: Dict[tuple, threading.Lock] = {}
+        self._bars_guard = threading.Lock()
         # 실시간 0B: 키움은 앱키당 WebSocket 1개만 허용 → 단일 연결로 전 종목을
         # 멀티플렉싱한다(종목마다 연결하면 서로 LOGIN으로 밀어내 끊김 반복).
         self._queues: Dict[str, "asyncio.Queue[Tick]"] = {}  # code -> 소비 큐
@@ -76,6 +84,45 @@ class KiwoomDataProvider(DataProvider):
 
     # -- 봉 --------------------------------------------------------------
     def get_bars(self, code: str, interval: int, lookback_extra: int = 60) -> List[Bar]:
+        """분봉 조회. 같은 요청이 몰리면 합친다(단기 캐시 + 동시요청 병합).
+
+        같은 (종목,간격)을 여러 곳이 거의 동시에 요청한다: 차트 카드 여러 개가
+        한꺼번에 마운트될 때, 브라우저 탭이 여러 개일 때, 그리고 봉 경계에서
+        모든 차트가 동시에 재조회할 때. ka10080 은 페이징까지 하는데 REST 게이트가
+        0.35초 간격으로 직렬화하므로, 중복이 그대로 지연으로 쌓인다.
+
+        캐시 키에 '현재 봉 버킷'을 포함해, 봉 경계를 넘는 순간 자동으로 무효화된다
+        (경계 직전 응답이 재사용되어 새 봉이 안 보이는 일이 없다). 버킷 안에서는
+        TTL 만큼 재사용하는데, 진행 중인 봉의 종가는 프런트가 틱으로 갱신하므로
+        몇 초 묵어도 화면상 차이가 없다.
+
+        키마다 락을 잡아 동시 요청을 하나로 합친다(뒤따라온 호출은 앞선 조회가
+        끝난 뒤 그 결과를 재사용). 서로 다른 키는 막지 않는다.
+        """
+        bucket = chart_epoch() // max(1, interval * 60)
+        key = (code, interval, lookback_extra, bucket)
+        with self._bars_lock(key):
+            hit = self._bars_cache.get(key)
+            if hit is not None and time.time() - hit[0] < self._BARS_TTL:
+                return list(hit[1])
+            bars = self._fetch_bars(code, interval, lookback_extra)
+            now = time.time()
+            self._bars_cache[key] = (now, bars)
+            # 버킷이 바뀌면 옛 키는 다시 쓰이지 않으므로 주기적으로 정리.
+            for k, (ts, _) in list(self._bars_cache.items()):
+                if now - ts > 60:
+                    self._bars_cache.pop(k, None)
+                    self._bars_locks.pop(k, None)
+            return list(bars)
+
+    def _bars_lock(self, key: tuple) -> threading.Lock:
+        with self._bars_guard:
+            lk = self._bars_locks.get(key)
+            if lk is None:
+                lk = self._bars_locks[key] = threading.Lock()
+            return lk
+
+    def _fetch_bars(self, code: str, interval: int, lookback_extra: int) -> List[Bar]:
         # rate-limit 등으로 빈 응답이 오면 짧게 쉬고 1회 재시도(빈 차트 방지).
         rows: List[dict] = []
         for attempt in range(2):
