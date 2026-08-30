@@ -12,9 +12,11 @@ from __future__ import annotations
 
 import asyncio
 import random
-import time
+import zlib
 from typing import AsyncIterator, Dict, List
 
+from ..market_clock import (
+    chart_epoch, prev_session_close_epoch, session_open_epoch)
 from ..models import Bar, OrderResult, Position, Tick
 from .base import Broker, DataProvider
 
@@ -41,14 +43,31 @@ def round_to_tick(price: float) -> float:
 
 
 def _seed_for(code: str) -> int:
-    return abs(hash(("bach-mock", code))) % (2**31)
+    """종목코드 → 시드. **프로세스 간에도 안정적**이어야 한다.
+
+    파이썬의 str.hash 는 PYTHONHASHSEED 로 랜덤화되어 실행마다 값이 달라진다.
+    그래서 예전엔 재시작할 때마다 같은 종목의 차트·시나리오가 통째로 바뀌어,
+    "어제 본 그 상황을 다시 재현"이 불가능했다. crc32 는 결정적이다.
+    """
+    return zlib.crc32(f"bach-mock:{code}".encode()) % (2**31)
 
 
 # 당일 정규장 분 수(09:00~15:30 = 390분)
 SESSION_MINUTES = 390
-# 당일 봉의 기준 날짜를 위한 09:00 KST. UTC로는 00:00. 차트 표시용이라 정확한
-# 타임존보다 '연속된 시간축'이 중요. epoch seconds 기준 임의 기준일 사용.
-_BASE_DAY_EPOCH = 1_700_000_000  # 고정 기준(2023-11-14 부근), 표시 일관성용
+
+
+def _bars_elapsed(interval: int) -> int:
+    """지금까지 형성됐을 당일 봉 수(장전 0, 장마감 후 전체).
+
+    live(ka10080)가 '당일 봉 지금까지'만 주는 것과 같은 모양을 만든다. 예전엔
+    시각과 무관하게 항상 하루치를 통째로 생성해, 같은 코드가 mock/live 에서
+    정반대로 동작했다(hub._start_auto 의 X/Z 산정이 mock 에서만 맞았던 원인).
+    """
+    per_day = max(1, SESSION_MINUTES // interval)
+    elapsed_min = (chart_epoch() - session_open_epoch()) // 60
+    if elapsed_min < 0:
+        return 0
+    return max(0, min(per_day, int(elapsed_min) // interval + 1))
 
 
 class MockDataProvider(DataProvider):
@@ -80,11 +99,11 @@ class MockDataProvider(DataProvider):
         x = self._prev_close[code]
         z = self._open_price[code]
 
-        bars_per_day = max(1, SESSION_MINUTES // interval)
-        # 당일 첫 봉의 SMA60을 위해 이전 lookback_extra개 봉을 앞에 붙인다.
-        total = lookback_extra + bars_per_day
+        # 당일 봉은 '지금까지' 형성된 만큼만(live 와 동일한 모양).
+        bars_per_day = _bars_elapsed(interval)
 
-        # 이전 구간은 X(전일 종가) 근처에서 수렴하도록 역방향 워크.
+        # 당일 첫 봉의 SMA60을 위해 이전 lookback_extra개 봉을 앞에 붙인다.
+        # 이 구간은 X(전일 종가) 근처에서 수렴하도록 역방향 워크.
         prices: List[float] = []
         price = x
         for _ in range(lookback_extra):
@@ -102,11 +121,20 @@ class MockDataProvider(DataProvider):
             day_prices.append(price)
 
         closes = prices + day_prices
+        if not closes:
+            return []
 
         bars: List[Bar] = []
         interval_sec = interval * 60
-        # 이전 봉들은 당일 09:00 이전 시간축에 배치(연속된 음수 오프셋).
-        start_epoch = _BASE_DAY_EPOCH - lookback_extra * interval_sec
+        # 실제 날짜에 앵커링해야 틱(chart_epoch)과 같은 축에 놓여, 프런트가
+        # "이 틱이 어느 봉인가"를 계산할 수 있다.
+        #   - 이전 구간: 직전 거래일 15:30 에서 끝나도록 뒤에서부터 배치
+        #   - 당일 구간: 오늘 09:00 에서 시작
+        # 이전 구간을 오늘 09:00 바로 앞에 붙이면, 장전(00:00~09:00)에는 그
+        # 봉들이 '미래'에 놓여 마지막 봉이 현재 틱보다 뒤가 된다(롤오버 판정이
+        # 깨진다). live 의 ka10080 도 전일 봉을 전일 시각에 준다.
+        day_open_t = session_open_epoch()
+        prev_close_t = prev_session_close_epoch()
         prev_close = closes[0]
         for i, close in enumerate(closes):
             o = prev_close
@@ -116,9 +144,13 @@ class MockDataProvider(DataProvider):
             hi = round_to_tick(hi)
             lo = round_to_tick(max(lo, tick_size(lo)))
             vol = rng.randint(1_000, 100_000)
+            if i < lookback_extra:
+                t = prev_close_t - (lookback_extra - i) * interval_sec
+            else:
+                t = day_open_t + (i - lookback_extra) * interval_sec
             bars.append(
                 Bar(
-                    time=start_epoch + i * interval_sec,
+                    time=t,
                     open=round_to_tick(o),
                     high=hi,
                     low=lo,
@@ -131,13 +163,17 @@ class MockDataProvider(DataProvider):
         # 틱 시뮬은 마지막 봉 종가에서 이어진다(차트와 시각적 연속성).
         # 단, open 필드에는 당일 시가 Z를 보존(ULC 엔진이 시나리오 판정에 사용).
         last_close = closes[-1]
-        now = int(time.time())
+        # 장중 고가/저가는 '당일 봉 전체'에서 구한다. 예전엔 마지막 봉 종가로
+        # 초기화해, 헤더의 고가/저가가 실제로는 '앱을 켠 뒤의' 값이라 차트가
+        # 보여주는 당일 범위와 어긋났다(live 의 FID 17/18 은 진짜 당일 고저다).
+        day_bars = bars[lookback_extra:] or bars
+        self._session_high[code] = max(b.high for b in day_bars)
+        self._session_low[code] = min(b.low for b in day_bars)
         self._last_tick[code] = Tick(
-            code=code, price=last_close, high=last_close, low=last_close,
-            open=z, volume=0, time=now,
+            code=code, price=last_close,
+            high=self._session_high[code], low=self._session_low[code],
+            open=z, volume=0, time=chart_epoch(),
         )
-        self._session_high[code] = last_close
-        self._session_low[code] = last_close
         return bars
 
     # -- X/Z (자동매매 엔진 셋업용) ---------------------------------------
@@ -158,7 +194,7 @@ class MockDataProvider(DataProvider):
         if code not in self._last_tick:
             # 봉을 먼저 만들지 않았다면 시가 기준으로 초기화
             z = self._open_price[code]
-            now = int(time.time())
+            now = chart_epoch()
             self._last_tick[code] = Tick(code=code, price=z, high=z, low=z, open=z, time=now)
             self._session_high[code] = z
             self._session_low[code] = z
@@ -175,7 +211,7 @@ class MockDataProvider(DataProvider):
             self._session_low[code] = lo
             tick = Tick(
                 code=code, price=price, high=hi, low=lo,
-                open=prev.open, volume=rng.randint(1, 500), time=int(time.time()),
+                open=prev.open, volume=rng.randint(1, 500), time=chart_epoch(),
             )
             self._last_tick[code] = tick
             yield tick

@@ -5,17 +5,17 @@ const fmt = (n) => (n == null ? '-' : Math.round(Number(n)).toLocaleString('ko-K
 
 // 계좌 요약(예수금/주문가능금액/평가금액/총자산) 헤더 바. 주기적 폴링.
 // mock 등 미지원이면 null → 렌더 안 함.
-export default function AccountSummary() {
+export default function AccountSummary({ account }) {
   const [acc, setAcc] = useState(null)
 
   useEffect(() => {
     let stopped = false
     const load = () =>
-      api.account().then((a) => { if (!stopped) setAcc(a) }).catch(() => {})
+      api.account(account).then((a) => { if (!stopped) setAcc(a) }).catch(() => {})
     load()
     const t = setInterval(load, 8000)
     return () => { stopped = true; clearInterval(t) }
-  }, [])
+  }, [account])
 
   if (!acc) return null
   const pnl = acc.eval_pnl

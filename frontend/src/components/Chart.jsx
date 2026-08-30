@@ -2,19 +2,24 @@
 // - 캔들: 내부 투명, 테두리만. 상승(close>=open) 적색 / 하락 청색.
 // - SMA 5/10/20/60 겹쳐 그림 (파랑/분홍/주황/초록).
 // - 크로스헤어: 내장. 마우스 가격 수평선 + 가격 라벨(손절선 가늠용).
-// - 실시간 틱으로 마지막 봉 갱신.
-import React, { useEffect, useRef } from 'react'
+// - 실시간 틱으로 마지막 봉 갱신. 봉 경계를 넘으면 서버에서 재조회(아래 참고).
+import React, { useCallback, useEffect, useRef } from 'react'
 import { createChart, CrosshairMode } from 'lightweight-charts'
 import { api } from '../api'
-import { sma, MA_LINES } from '../indicators'
+import { sma, lastSma, MA_LINES } from '../indicators'
 
-export default function Chart({ code, interval, tick, height = 360 }) {
+// 봉 경계를 넘었는데 서버 봉이 아직 안 만들어졌을 때, 매 틱 재조회하지 않도록.
+const REFRESH_COOLDOWN_MS = 10_000
+
+export default function Chart({ account, code, interval, tick, height = 360 }) {
   const containerRef = useRef(null)
   const chartRef = useRef(null)
   const candleRef = useRef(null)
   const maRefs = useRef([])
   const barsRef = useRef([])
   const dayStartRef = useRef(0)
+  const refreshingRef = useRef(false)
+  const lastRefreshRef = useRef(0)
 
   // 차트 생성 (1회)
   useEffect(() => {
@@ -66,7 +71,7 @@ export default function Chart({ code, interval, tick, height = 360 }) {
   // 봉 데이터 로드 (interval 변경 시)
   useEffect(() => {
     let cancelled = false
-    api.getBars(code, interval).then((data) => {
+    api.getBars(account, code, interval).then((data) => {
       if (cancelled || !candleRef.current || !chartRef.current) return
       const bars = data.bars
       barsRef.current = bars
@@ -102,14 +107,49 @@ export default function Chart({ code, interval, tick, height = 360 }) {
     return () => {
       cancelled = true
     }
-  }, [code, interval])
+  }, [account, code, interval])
 
-  // 실시간 틱 → 마지막 봉 갱신
+  // 봉 경계를 넘었을 때 서버에서 다시 받는다.
+  // 클라이언트가 틱으로 새 봉을 지어내지 않는 이유: 틱은 큐가 차면 드롭될 수
+  // 있고 거래량도 실려오지 않아, 만들어낸 봉의 고가/저가/거래량이 실제와
+  // 달라진다. 봉의 진실원은 서버(ka10080)다.
+  const refreshBars = useCallback(async () => {
+    if (refreshingRef.current) return
+    refreshingRef.current = true
+    try {
+      const data = await api.getBars(account, code, interval)
+      if (!candleRef.current) return
+      barsRef.current = data.bars
+      dayStartRef.current = data.day_start_index
+      candleRef.current.setData(data.bars)
+      MA_LINES.forEach((m, i) => maRefs.current[i].setData(sma(data.bars, m.period)))
+      // 시야(setVisibleRange)는 건드리지 않는다 — 사용자의 확대/이동 유지.
+    } catch {
+      // 실패해도 다음 경계에서 재시도. 그 사이 마지막 봉은 틱으로 계속 갱신됨.
+    } finally {
+      refreshingRef.current = false
+    }
+  }, [account, code, interval])
+
+  // 실시간 틱 → 마지막 봉 갱신 (경계를 넘으면 재조회)
   useEffect(() => {
     if (!tick || !candleRef.current) return
     const bars = barsRef.current
     if (!bars.length) return
     const last = bars[bars.length - 1]
+
+    // 틱과 봉이 같은 시간축(KST 벽시계를 UTC로 간주한 epoch)이라 봉 경계를
+    // 직접 계산할 수 있다. 예전엔 틱만 진짜 epoch이라 9시간 어긋나 이 판정이
+    // 불가능했고, 그래서 마지막 봉 하나가 무한히 커졌다.
+    if (tick.time >= last.time + interval * 60) {
+      const now = Date.now()
+      if (now - lastRefreshRef.current > REFRESH_COOLDOWN_MS) {
+        lastRefreshRef.current = now
+        refreshBars()
+      }
+      return // 새 구간의 가격으로 '이전' 봉을 오염시키지 않는다
+    }
+
     const updated = {
       time: last.time,
       open: last.open,
@@ -119,12 +159,12 @@ export default function Chart({ code, interval, tick, height = 360 }) {
     }
     bars[bars.length - 1] = { ...last, ...updated }
     candleRef.current.update(updated)
-    // 마지막 봉 변동으로 SMA 끝점도 갱신
+    // 마지막 봉 변동으로 SMA 끝점도 갱신(끝점만 필요 → O(period))
     MA_LINES.forEach((m, i) => {
-      const series = sma(bars, m.period)
-      if (series.length) maRefs.current[i].update(series[series.length - 1])
+      const point = lastSma(bars, m.period)
+      if (point) maRefs.current[i].update(point)
     })
-  }, [tick])
+  }, [tick, interval, refreshBars])
 
   return <div ref={containerRef} style={{ width: '100%', height }} />
 }

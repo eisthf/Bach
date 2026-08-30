@@ -9,6 +9,23 @@
 
 ## 실행
 
+### 한 번에 (권장)
+```bash
+./dev.sh          # .env 설정 그대로 — 백엔드(8000) + 프런트(5173)
+./dev.sh --demo   # 합성 mock 계좌 1개만. 장 시작/종료를 수동 토글
+```
+최초 1회 셋업(venv·npm install·`.env` 복사)도 자동으로 처리하며, Ctrl+C 한 번에
+양쪽을 정리한다.
+
+**`--demo`가 필요한 이유**: 장 시계는 전 계좌 공유라 kiwoom 계좌가 하나라도
+있으면 실제 KST 시각으로 자동 판정되고, 수동 장 토글이 409로 거부된다
+([아래](#장-시계는-전-계좌-공유--혼합-구성-시-수동-장-제어-불가) 참고). 주말이나
+장 마감 시각에 UI·상태머신·자동매매를 시연하려면 `--demo`로 띄운다. 실거래
+계좌를 배제하므로 실주문 위험이 없고, 종목 목록도 `state.demo.json`에 따로
+저장해 평소 설정을 건드리지 않는다.
+
+수동으로 따로 띄우려면:
+
 ### 1) 백엔드 (포트 8000)
 ```bash
 cd backend
@@ -27,14 +44,45 @@ npm run dev
 ```
 Vite가 `/api`·`/ws`를 백엔드(8000)로 프록시한다.
 
-**외부 IP(VM 공용 IP 등)에서 접속하려면:**
+### 원격 접속 (GCP VM에서 실행 중일 때)
+
+앱은 WebSocket(`/ws`)으로 실시간 시세를 받고 Vite HMR도 WebSocket을 쓴다.
+**인터넷 직결 환경(예: 집)에서는 외부 IP에 브라우저로 바로 접속해도 문제없다.**
+(`vite.config.js`가 `server.host: true`로 모든 인터페이스에 바인딩하므로 `--host`
+플래그를 따로 줄 필요는 없다. VM 공용 IP `34.64.x.x:5173` 형태로 접속 가능.)
+
+다만 **HTTP 프록시를 경유**해 외부 IP에 직접 접속하면(예: 사내망, 또는 안드로이드
+USB RNDIS + 폰의 HTTP 프록시 경유) 문제가 생긴다. HTTP 요청(GET 페이지/API)은
+프록시가 중계하지만, **브라우저의 평문 `ws://`는 이 경로로 안정적으로 전달되지
+않아** `/ws`(실시간 시세)가 끊기고 Vite HMR이 무한 새로고침 루프에 빠진다.
+(정확한 원인은 환경마다 다를 수 있다 — 프록시가 `Upgrade` 헤더를 중계하지 않거나,
+비표준 포트로의 `CONNECT`를 거부하는 등. 평문 `ws://`를 포워드 HTTP 프록시로
+넘기는 것 자체가 원래 불안정한 시나리오다.)
+
+이 경우 **SSH 포트 포워딩**으로 우회한다. SSH가 WebSocket을 평문 TCP로 감싸
+프록시의 단일 `CONNECT` 터널을 통과시키므로, 중간 프록시는 WebSocket인지조차
+모르고 정상 동작한다. (외부에 포트를 열지 않아 보안상으로도 낫다.)
+
 ```bash
-npm run dev -- --host
-# 또는 vite.config.js에 server.host: '0.0.0.0' 추가
+# 로컬 PC에서. 프록시 뒤라면 ~/.ssh/config 의 Host 별칭을 써야
+# ProxyCommand(프록시 경유)가 적용된다. IP를 직접 쓰면 config이 매칭되지
+# 않아 ProxyCommand 없이 22번 직결을 시도하다 멈춘다.
+ssh -L 5173:localhost:5173 -L 8000:localhost:8000 gcp-rblue
+# 그 후 로컬 브라우저: http://localhost:5173
 ```
-기본값은 `localhost`만 바인딩하므로 GCP VM의 공용 IP(`34.64.x.x:5173`) 등으로 직접 접속 불가.
-`--host` 플래그로 모든 인터페이스(0.0.0.0)에 바인딩하면 외부 IP 접속도 가능하지만,
-**폰 프록시 경유 환경에서는 WebSocket이 여전히 끊긴다** — 이 경우 SSH 터널 사용 필수.
+
+`~/.ssh/config` 예시:
+```
+Host gcp-rblue
+  HostName 34.64.153.2
+  User rblue
+  IdentityFile ~/.ssh/id_ed25519
+  IdentitiesOnly yes
+  ProxyCommand /usr/bin/nc -X connect -x <proxy_host>:<proxy_port> %h %p
+  ServerAliveInterval 5
+  ServerAliveCountMax 10
+  TCPKeepAlive yes
+```
 
 ## 사용 흐름 (mock 데모)
 
@@ -67,15 +115,47 @@ AUTO_TRADING --> MANUAL_TRADING : PUSH | POSITION-FLAT(보유수량→0)
 (MARKET-CLOSE 시 장 단계도 장전(PRE_OPEN)으로 리셋 → 초기 상태 복귀)
 ```
 
-## 실거래(키움) 모드
+## 매매 전략
 
-`backend/.env`:
+자동매매는 **상한가 따라잡기(ULC)** 전략을 쓴다 — 진입 필터, 시나리오별
+분할매수, 익절/손절/트레일링, 평단·수량의 진실원(실체결 이벤트 + 계좌 보정)
+등 상세는 [docs/trading-strategy.md](docs/trading-strategy.md) 참고.
+
+## 실거래(키움) 모드 — multi-account
+
+계좌는 `ACCOUNTS` 환경변수(쉼표구분)로 활성화하고, 계좌별 자격증명은
+`<ID>_APPKEY` 식의 prefix 변수로 준다. `backend/.env`:
 ```
-PROVIDER=kiwoom
-APPKEY=...
-SECRETKEY=...
-KIWOOM_MOCK=true          # true=모의투자(mockapi) / false=실전(api)
+ACCOUNTS=mock,real
+
+MOCK_PROVIDER=kiwoom      # kiwoom=키움 모의서버 | mock=합성 데이터(무자격증명)
+MOCK_APPKEY=...
+MOCK_SECRETKEY=...
+
+REAL_PROVIDER=kiwoom      # ⚠️ 실전 — 실제 주문이 나간다
+REAL_APPKEY=...
+REAL_SECRETKEY=...
 ```
+전체 옵션(CORS, API_TOKEN, 임의 계좌 추가 등)은 `backend/.env.example` 참고.
+kiwoom 계좌인데 자격증명이 없으면 그 계좌만 건너뛰고, 활성 계좌가 없으면
+합성 mock 계좌 하나로 대체돼 자격증명 없이도 데모가 돈다.
+
+### 장 시계는 전 계좌 공유 — 혼합 구성 시 수동 장 제어 불가
+
+장 단계(장전/장중/장종료)는 계좌별이 아니라 **전 계좌가 하나의 시계를
+공유**한다. 두 계좌가 같은 한국 시장에서 거래하므로 장 시각도 하나여야
+하기 때문이다. 이 시계의 모드는 활성 계좌 구성이 결정한다:
+
+- **kiwoom 계좌가 하나라도 있으면**: 실제 KST 시계로 자동 판정
+  (평일 09:00~15:30). 헤더의 수동 버튼(장 시작/종료/초기화)은 사라지고
+  API로 호출해도 409로 거부된다 — 진실원이 실제 시각이기 때문.
+- **합성 mock 계좌뿐이면**: 수동 토글로 장 이벤트를 데모할 수 있다.
+
+따라서 `ACCOUNTS=mock,real`에서 mock을 합성(`MOCK_PROVIDER=mock`)으로
+두더라도, real(kiwoom)이 함께 있으면 합성 계좌의 장 토글 데모는 불가하다.
+수동 토글 데모가 필요하면 `ACCOUNTS=mock` + `MOCK_PROVIDER=mock`으로
+kiwoom 계좌 없이 띄운다.
+
 `app/providers/kiwoom_api.py`가 키움 REST/WebSocket을 **self-contained**로 구현한다
 (외부 kiwoom 프로젝트 의존 없음). 토큰(au10001), 분봉(ka10080), 일봉(ka10081),
 주문(kt10000/kt10001), 잔고(kt00018), 실시간 체결(WebSocket `0B`)을 직접 호출한다.
@@ -97,6 +177,9 @@ frontend/src/
   store.jsx          전역 상태 + WebSocket
   components/        Chart, PriceTicker, StateButton, ManualTradePanel,
                      AutoConfigForm, StockInput, StockPanel, MarketControls, LogPanel
+
+dev.sh               개발 서버 일괄 실행 (--demo: 합성 mock 단독)
+backend/tests/       pytest 회귀 테스트 (uv run pytest)
 
 # frontend/smoke.mjs : Playwright 헤드리스 스모크 테스트(개발용)
 ```

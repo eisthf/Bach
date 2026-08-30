@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import { useStore } from '../store'
 
 // 종목코드 입력 → 추가. 하나 이상 추가 가능(엔터/버튼).
-export default function StockInput() {
+export default function StockInput({ account }) {
   const { actions } = useStore()
   const [code, setCode] = useState('')
   const [name, setName] = useState('')
@@ -13,7 +13,7 @@ export default function StockInput() {
     const c = code.trim()
     if (!c) return
     try {
-      await actions.addStock(c, name.trim())
+      await actions.addStock(account, c, name.trim())
       setCode('')
       setName('')
       setErr('')

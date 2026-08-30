@@ -17,6 +17,15 @@ export function sma(bars, period) {
   return out
 }
 
+// 마지막 한 점만 필요할 때(틱 갱신). 전체 재계산(O(n))을 피해 O(period)로.
+// 반환: {time, value} 또는 데이터 부족 시 null
+export function lastSma(bars, period) {
+  if (bars.length < period) return null
+  let sum = 0
+  for (let i = bars.length - period; i < bars.length; i++) sum += bars[i].close
+  return { time: bars[bars.length - 1].time, value: sum / period }
+}
+
 // 이평선 정의 (요구사항 색상)
 export const MA_LINES = [
   { period: 5, color: '#2962FF', title: 'MA5' },   // 파랑
