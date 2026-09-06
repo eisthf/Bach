@@ -21,6 +21,12 @@ try {
   await page.fill('.name-input', 'SK하이닉스')
   await page.click('.add-btn')
   await page.waitForSelector('.stock-panel canvas')
+  await page.locator('.stock-panel').first().locator('.iv-btn', { hasText: '일봉' }).click()
+  await page.waitForTimeout(500)
+  assert.equal(
+    await page.locator('.stock-panel').first().locator('.iv-btn.active').innerText(),
+    '일봉',
+  )
 
   const metrics = await page.evaluate(() => ({
     viewport: document.documentElement.clientWidth,

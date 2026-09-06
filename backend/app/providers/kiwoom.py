@@ -17,7 +17,7 @@ from typing import AsyncIterator, Callable, Dict, List, Optional
 from ..market_clock import chart_epoch
 from ..models import Bar, OrderResult, Position, Tick
 from . import kiwoom_api as kw
-from .base import Broker, DataProvider
+from .base import Broker, DAY_INTERVAL, DataProvider
 
 logger = logging.getLogger("bach.kiwoom")
 
@@ -84,7 +84,7 @@ class KiwoomDataProvider(DataProvider):
 
     # -- 봉 --------------------------------------------------------------
     def get_bars(self, code: str, interval: int, lookback_extra: int = 60) -> List[Bar]:
-        """분봉 조회. 같은 요청이 몰리면 합친다(단기 캐시 + 동시요청 병합).
+        """분봉·일봉 조회. 같은 요청이 몰리면 합친다(단기 캐시 + 동시요청 병합).
 
         같은 (종목,간격)을 여러 곳이 거의 동시에 요청한다: 차트 카드 여러 개가
         한꺼번에 마운트될 때, 브라우저 탭이 여러 개일 때, 그리고 봉 경계에서
@@ -126,14 +126,21 @@ class KiwoomDataProvider(DataProvider):
         # rate-limit 등으로 빈 응답이 오면 짧게 쉬고 1회 재시도(빈 차트 방지).
         rows: List[dict] = []
         for attempt in range(2):
-            rows = kw.fetch_min_bars(
-                self.token, code, interval, mock=self._mock,
-                today=_today(), lookback_extra=lookback_extra,
-            )
+            if interval == DAY_INTERVAL:
+                rows = kw.fetch_day_bars(
+                    self.token, code, mock=self._mock,
+                    today=_today(), lookback_extra=lookback_extra,
+                )
+            else:
+                rows = kw.fetch_min_bars(
+                    self.token, code, interval, mock=self._mock,
+                    today=_today(), lookback_extra=lookback_extra,
+                )
             if rows:
                 break
             if attempt == 0:
-                logger.warning("[%s] 분봉 빈 응답 → 재시도", code)
+                label = "일봉" if interval == DAY_INTERVAL else "분봉"
+                logger.warning("[%s] %s 빈 응답 → 재시도", code, label)
                 time.sleep(0.3)
         today = _today()
         bars: List[Bar] = []

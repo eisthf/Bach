@@ -271,8 +271,77 @@ def fetch_min_bars(
 
 
 # ---------------------------------------------------------------------------
-# 일봉 차트 (ka10081) — 전일 종가(X) 산정용
+# 일봉 차트 (ka10081)
 # ---------------------------------------------------------------------------
+def fetch_day_bars(
+    token: str,
+    code: str,
+    mock: bool = False,
+    today: Optional[str] = None,
+    lookback_extra: int = 60,
+    max_pages: int = 10,
+) -> List[dict]:
+    """최근 일봉을 시간 오름차순으로 정규화해 반환한다."""
+    import time as _time
+
+    today = today or datetime.now().strftime("%Y%m%d")
+    url = f"{rest_host(mock)}/api/dostk/chart"
+    base_hdr = {
+        "Content-Type": "application/json;charset=UTF-8",
+        "authorization": f"Bearer {token}",
+        "api-id": "ka10081",
+    }
+    body = {"stk_cd": code, "base_dt": today, "upd_stkpc_tp": "1"}
+    wanted = max(1, lookback_extra + 1)  # 오늘 진행봉 + 이전 SMA 계산 구간
+    rows: List[dict] = []
+    cont_yn, next_key = "N", ""
+    for _ in range(max_pages):
+        hdr = dict(base_hdr)
+        if cont_yn == "Y" and next_key:
+            hdr["cont-yn"] = "Y"
+            hdr["next-key"] = next_key
+        resp = _post(url, hdr, body, timeout=15)
+        if resp is None or resp.status_code != 200:
+            sc = resp.status_code if resp is not None else "—"
+            logger.warning("[%s] 일봉 조회 실패(HTTP %s)", code, sc)
+            break
+        try:
+            data = resp.json()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[%s] 일봉 파싱 오류: %s", code, e)
+            break
+        if data.get("return_code") != 0:
+            logger.warning("[%s] 일봉 API 오류: %s", code, data.get("return_msg"))
+            break
+        page = data.get("stk_dt_pole_chart_qry") or []
+        if isinstance(page, dict):
+            page = [page]
+        for raw in page:
+            day = str(raw.get("dt") or "").strip()[:8]
+            if not day:
+                continue
+            o = parse_price(raw.get("open_pric"))
+            rows.append({
+                "time": _kst_epoch(day),
+                "open": o,
+                "high": parse_price(raw.get("high_pric")) or o,
+                "low": parse_price(raw.get("low_pric")) or o,
+                "close": parse_price(raw.get("cur_prc")) or o,
+                "volume": parse_price(raw.get("trde_qty")),
+                "_date": day,
+            })
+        cont_yn = resp.headers.get("cont-yn", "N")
+        next_key = resp.headers.get("next-key", "")
+        if len(rows) >= wanted or cont_yn != "Y" or not next_key:
+            break
+        _time.sleep(0.15)
+
+    # 페이지 경계 중복을 날짜 기준으로 제거하고 최근 요청 개수만 유지한다.
+    by_day = {row["_date"]: row for row in rows}
+    normalized = sorted(by_day.values(), key=lambda row: row["time"])
+    return normalized[-wanted:]
+
+
 def fetch_prev_close(token: str, code: str, mock: bool = False,
                      today: Optional[str] = None) -> Optional[float]:
     """직전 거래일 종가를 반환(없으면 None)."""

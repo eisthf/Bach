@@ -11,14 +11,16 @@
 from __future__ import annotations
 
 import asyncio
+import calendar
 import random
 import zlib
+from datetime import timedelta
 from typing import AsyncIterator, Dict, List
 
 from ..market_clock import (
-    chart_epoch, prev_session_close_epoch, session_open_epoch)
+    chart_epoch, now_kst, prev_session_close_epoch, session_open_epoch)
 from ..models import Bar, OrderResult, Position, Tick
-from .base import Broker, DataProvider
+from .base import Broker, DAY_INTERVAL, DataProvider
 
 # KRX 호가 단위
 def tick_size(price: float) -> int:
@@ -94,6 +96,8 @@ class MockDataProvider(DataProvider):
 
     def get_bars(self, code: str, interval: int, lookback_extra: int = 60) -> List[Bar]:
         self._ensure_base(code)
+        if interval == DAY_INTERVAL:
+            return self._get_day_bars(code, lookback_extra)
         rng = random.Random(_seed_for(code) ^ (interval * 2654435761 & 0xFFFFFFFF))
 
         x = self._prev_close[code]
@@ -174,6 +178,66 @@ class MockDataProvider(DataProvider):
             high=self._session_high[code], low=self._session_low[code],
             open=z, volume=0, time=chart_epoch(),
         )
+        return bars
+
+    def _get_day_bars(self, code: str, lookback_extra: int) -> List[Bar]:
+        """주말을 제외한 이전 일봉과 오늘 진행봉을 결정적으로 생성한다."""
+        now = now_kst()
+        include_today = now.weekday() < 5 and now.hour >= 9
+        previous_count = lookback_extra if include_today else lookback_extra + 1
+        dates = []
+        day = now.date() - timedelta(days=1)
+        while len(dates) < previous_count:
+            if day.weekday() < 5:
+                dates.append(day)
+            day -= timedelta(days=1)
+        dates.reverse()
+        if include_today:
+            dates.append(now.date())
+        if not dates:
+            return []
+
+        rng = random.Random(_seed_for(code) ^ 0x1DA7B4)
+        x = self._prev_close[code]
+        z = self._open_price[code]
+
+        # 과거 구간의 마지막 종가가 전략 기준가 X와 일치하도록 뒤에서 생성한다.
+        historical = []
+        price = x
+        for _ in range(previous_count):
+            historical.append(price)
+            price = round_to_tick(price / (1 + rng.uniform(-0.025, 0.025)))
+        historical.reverse()
+
+        bars: List[Bar] = []
+        previous_close = historical[0] if historical else x
+        for day, close in zip(dates[:previous_count], historical):
+            opened = previous_close
+            high = round_to_tick(max(opened, close) * (1 + rng.uniform(0, 0.018)))
+            low = round_to_tick(min(opened, close) * (1 - rng.uniform(0, 0.018)))
+            bars.append(Bar(
+                time=calendar.timegm(day.timetuple()),
+                open=opened,
+                high=high,
+                low=max(low, tick_size(low)),
+                close=close,
+                volume=rng.randint(100_000, 5_000_000),
+            ))
+            previous_close = close
+
+        if include_today:
+            tick = self._last_tick.get(code)
+            close = tick.price if tick else z
+            high = tick.high if tick else max(z, close)
+            low = tick.low if tick else min(z, close)
+            bars.append(Bar(
+                time=calendar.timegm(now.date().timetuple()),
+                open=z,
+                high=high,
+                low=low,
+                close=close,
+                volume=tick.volume if tick else 0,
+            ))
         return bars
 
     # -- X/Z (자동매매 엔진 셋업용) ---------------------------------------

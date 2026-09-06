@@ -44,6 +44,11 @@ await panel.locator('.iv-btn', { hasText: '60분' }).click()
 await page.waitForTimeout(800)
 const active60 = await panel.locator('.iv-btn.active').innerText()
 
+// daily bars use ka10081/mock daily provider and hide intraday time labels
+await panel.locator('.iv-btn', { hasText: '일봉' }).click()
+await page.waitForTimeout(800)
+const activeDay = await panel.locator('.iv-btn.active').innerText()
+
 // crosshair: hover over chart
 const box = await page.locator('.stock-panel canvas').first().boundingBox()
 await page.mouse.move(box.x + box.width * 0.6, box.y + box.height * 0.5)
@@ -56,7 +61,8 @@ await page.screenshot({ path: process.env.BACH_SMOKE_SCREENSHOT || 'smoke.png', 
 await browser.close()
 
 console.log(JSON.stringify({
-  canvases, price, stateName, stateAfterPush, stateAfterOpen, active60, logCount, errors,
+  canvases, price, stateName, stateAfterPush, stateAfterOpen,
+  active60, activeDay, logCount, errors,
 }, null, 2))
 
 if (errors.length) { console.error('CONSOLE ERRORS PRESENT'); process.exit(1) }

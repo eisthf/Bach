@@ -22,7 +22,7 @@ from .models import (  # noqa: E402
     OrderResult,
     SellOrderReq,
 )
-from .providers.base import VALID_INTERVALS  # noqa: E402
+from .providers.base import DAY_INTERVAL, VALID_INTERVALS  # noqa: E402
 
 app = FastAPI(title="Bach 주식 거래 API")
 
@@ -147,7 +147,8 @@ def get_bars(
         "code": code,
         "interval": interval,
         "lookback_extra": lookback_extra,
-        "day_start_index": lookback_extra,
+        # 분봉은 당일 구간으로 이동하고, 일봉은 조회한 기간 전체를 보여준다.
+        "day_start_index": 0 if interval == DAY_INTERVAL else lookback_extra,
         "bars": [b.model_dump() for b in bars],
     }
 

@@ -71,6 +71,10 @@ export default function Chart({ account, code, interval, tick, height = 360 }) {
   // 봉 데이터 로드 (interval 변경 시)
   useEffect(() => {
     let cancelled = false
+    chartRef.current?.timeScale().applyOptions({
+      timeVisible: interval !== 1440,
+      secondsVisible: false,
+    })
     api.getBars(account, code, interval).then((data) => {
       if (cancelled || !candleRef.current || !chartRef.current) return
       const bars = data.bars

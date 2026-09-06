@@ -10,8 +10,9 @@ from typing import AsyncIterator, Callable, List
 from ..models import Bar, OrderResult, Tick
 
 
-# 지원 분봉 간격(분)
-VALID_INTERVALS = (3, 5, 10, 30, 60)
+# 지원 봉 간격. 일봉은 기존 정수형 API와의 호환을 위해 1440분으로 표현한다.
+VALID_INTERVALS = (3, 5, 10, 30, 60, 1440)
+DAY_INTERVAL = 1440
 
 
 class DataProvider(ABC):
@@ -21,7 +22,7 @@ class DataProvider(ABC):
     def get_bars(self, code: str, interval: int, lookback_extra: int = 60) -> List[Bar]:
         """당일 봉 + 이전 ``lookback_extra``개 봉(SMA 계산용)을 시간순으로 반환.
 
-        interval: 분 단위(3/5/10/30/60).
+        interval: 분 단위(3/5/10/30/60), 일봉은 1440.
         """
 
     @abstractmethod
