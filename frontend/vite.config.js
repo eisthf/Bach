@@ -17,6 +17,10 @@ function backendToken() {
 }
 
 // 백엔드(8000)로 API/WS 프록시. 프런트는 5173에서 동작.
+// BACH_BACKEND_PORT 로 타깃 포트를 바꿀 수 있다(이미 8000을 쓰는 인스턴스가
+// 떠 있을 때 두 번째 인스턴스를 띄워 검증하는 용도).
+const BACKEND_PORT = process.env.BACH_BACKEND_PORT || '8000'
+
 export default defineConfig(() => {
   const token = backendToken()
   return {
@@ -30,11 +34,11 @@ export default defineConfig(() => {
         // 이 호스트는 localhost가 IPv6(::1)로만 해석됨 → 백엔드(IPv4)와 불일치.
         // 프록시 타깃을 127.0.0.1로 고정해 IPv4로 연결한다.
         '/api': {
-          target: 'http://127.0.0.1:8000',
+          target: `http://127.0.0.1:${BACKEND_PORT}`,
           headers: token ? { 'X-API-Token': token } : {},
         },
         '/ws': {
-          target: 'ws://127.0.0.1:8000',
+          target: `ws://127.0.0.1:${BACKEND_PORT}`,
           ws: true,
           // WebSocket 은 커스텀 헤더를 못 실으므로 쿼리로 전달.
           rewrite: token

@@ -133,3 +133,27 @@ class StockStatus(BaseModel):
 class MarketStatus(BaseModel):
     phase: MarketPhase
     auto: bool = False   # True=실시간 KST 시계 자동(live), False=수동 토글(mock)
+
+
+# ---------------------------------------------------------------------------
+# 상한가 스크리너
+# ---------------------------------------------------------------------------
+class UpperLimitStock(BaseModel):
+    """D일 상한가(직전 거래일 종가 대비 +29~30%) 종목 한 건."""
+    code: str
+    name: str = ""
+    market: str = ""                 # "KOSPI" | "KOSDAQ"
+    close: int                       # D일 종가
+    prev_close: int                  # 직전 거래일 종가
+    change_pct: float                # 등락률(%)
+    market_cap: int = 0              # 시가총액(원)
+
+
+class UpperLimitResult(BaseModel):
+    date: str                        # 조회일 D (YYYY-MM-DD)
+    prev_date: str                   # 비교 기준이 된 직전 거래일 (YYYY-MM-DD)
+    min_pct: float
+    max_pct: float
+    source: str                      # "krx"=실데이터 | "mock"=합성 데모 데이터
+    scanned: int                     # D일 조회된 전체 종목 수
+    stocks: list[UpperLimitStock] = []

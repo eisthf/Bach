@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from typing import Optional
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
@@ -21,8 +22,17 @@ from .models import (  # noqa: E402
     BuyOrderReq,
     OrderResult,
     SellOrderReq,
+    UpperLimitResult,
 )
 from .providers.base import DAY_INTERVAL, VALID_INTERVALS  # noqa: E402
+from .providers.krx_api import KrxAuthError, KrxError  # noqa: E402
+from .screener import (  # noqa: E402
+    MAX_PCT_DEFAULT,
+    MIN_PCT_DEFAULT,
+    NotATradingDay,
+    ScreenerError,
+    screen_upper_limit,
+)
 
 app = FastAPI(title="Bach 주식 거래 API")
 
@@ -266,6 +276,29 @@ def market_reset():
     _reject_if_auto()
     manager.market_reset()
     return {"phase": manager.clock.phase.value, "auto": manager.clock.auto}
+
+
+# ---------------------------------------------------------------------------
+# 스크리너 (전 계좌 공통 — 시장 전체 데이터라 계좌 스코프가 아니다)
+# ---------------------------------------------------------------------------
+@app.get("/api/screener/upper-limit", response_model=UpperLimitResult)
+async def screener_upper_limit(
+    date: Optional[str] = Query(None, description="조회일 D (YYYY-MM-DD). 생략 시 가장 최근 거래일"),
+    min_pct: float = Query(MIN_PCT_DEFAULT, ge=0, le=100),
+    max_pct: float = Query(MAX_PCT_DEFAULT, ge=0, le=100),
+):
+    """D일 종가가 직전 거래일 종가 대비 min_pct~max_pct% 오른 종목."""
+    try:
+        # 전종목 조회는 네트워크 블로킹이라 이벤트 루프 밖에서 돌린다.
+        return await asyncio.to_thread(screen_upper_limit, date, min_pct, max_pct)
+    except NotATradingDay as e:
+        raise HTTPException(404, str(e))
+    except ScreenerError as e:
+        raise HTTPException(400, str(e))
+    except KrxAuthError as e:
+        raise HTTPException(503, str(e))
+    except KrxError as e:
+        raise HTTPException(502, str(e))
 
 
 @app.on_event("startup")

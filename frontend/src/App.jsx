@@ -1,10 +1,13 @@
 import React from 'react'
 import { StoreProvider, useStore } from './store'
+import { ROUTES, useRoute } from './router'
 import StockInput from './components/StockInput'
 import StockPanel from './components/StockPanel'
 import MarketControls from './components/MarketControls'
 import AccountSummary from './components/AccountSummary'
 import LogPanel from './components/LogPanel'
+import PageNav from './components/PageNav'
+import UpperLimitPage from './pages/UpperLimitPage'
 
 // 한 계좌(모의/실전)의 종목 입력 + 칩바 + 패널 목록. 실전(danger)은 위험 톤.
 function AccountColumn({ account }) {
@@ -119,24 +122,37 @@ function AccountFilter() {
   )
 }
 
-function Dashboard() {
-  const { accounts, accountView } = useStore()
-  // 단독 선택 시 그 계좌가 전폭을 쓴다(차트가 넓어짐).
-  const shown =
-    accountView === 'ALL' ? accounts : accounts.filter((a) => a.id === accountView)
+// 페이지 공통 헤더. 브랜드 + 페이지 전환은 어디서나 같고, 오른쪽 영역만
+// 페이지가 채운다(매매 페이지는 계좌 필터 + 장 제어).
+function AppHeader({ children }) {
   return (
-    <div className="app">
-      <div className="app-top">
-        <header className="app-header">
+    <div className="app-top">
+      <header className="app-header">
+        <div className="head-left">
           <div className="brand">
             <span className="brand-mark">♪</span>
             <span className="brand-name">Bach</span>
             <span className="brand-sub">trading system</span>
           </div>
-          <AccountFilter />
-          <MarketControls />
-        </header>
-      </div>
+          <PageNav />
+        </div>
+        {children}
+      </header>
+    </div>
+  )
+}
+
+function TradingPage() {
+  const { accounts, accountView } = useStore()
+  // 단독 선택 시 그 계좌가 전폭을 쓴다(차트가 넓어짐).
+  const shown =
+    accountView === 'ALL' ? accounts : accounts.filter((a) => a.id === accountView)
+  return (
+    <>
+      <AppHeader>
+        <AccountFilter />
+        <MarketControls />
+      </AppHeader>
 
       <main className="main-grid multi">
         <div className="accounts-row" style={{ '--acc-cols': Math.max(shown.length, 1) }}>
@@ -148,14 +164,31 @@ function Dashboard() {
           <LogPanel />
         </aside>
       </main>
-    </div>
+    </>
   )
+}
+
+// 페이지 전환 시 매매 화면은 언마운트된다(차트 시야는 초기화). WebSocket은
+// StoreProvider가 위에 있어 끊기지 않으므로, 돌아와도 상태/시세는 그대로다.
+function Router() {
+  const route = useRoute()
+  if (route === ROUTES.UPPER_LIMIT) {
+    return (
+      <>
+        <AppHeader />
+        <UpperLimitPage />
+      </>
+    )
+  }
+  return <TradingPage />
 }
 
 export default function App() {
   return (
     <StoreProvider>
-      <Dashboard />
+      <div className="app">
+        <Router />
+      </div>
     </StoreProvider>
   )
 }

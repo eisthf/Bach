@@ -8,7 +8,13 @@ async function req(path, opts = {}) {
   })
   if (!res.ok) {
     const txt = await res.text().catch(() => '')
-    throw new Error(`${res.status} ${txt}`)
+    // FastAPI는 오류를 {"detail": "..."}로 준다. 사람이 읽을 문장만 꺼내
+    // 그대로 화면에 띄운다(원문 JSON을 보여주면 읽기 어렵다).
+    let detail = txt
+    try { detail = JSON.parse(txt).detail ?? txt } catch { /* 평문이면 그대로 */ }
+    const err = new Error(detail || `HTTP ${res.status}`)
+    err.status = res.status
+    throw err
   }
   return res.status === 204 ? null : res.json()
 }
@@ -22,6 +28,11 @@ export const api = {
   marketOpen: () => req('/api/market/open', { method: 'POST' }),
   marketClose: () => req('/api/market/close', { method: 'POST' }),
   marketReset: () => req('/api/market/reset', { method: 'POST' }),
+
+  // 상한가 스크리너 — 시장 전체 데이터라 계좌 스코프가 아니다.
+  // date 생략 시 서버가 가장 최근 거래일을 잡는다.
+  upperLimit: (date) =>
+    req(`/api/screener/upper-limit${date ? `?date=${enc(date)}` : ''}`),
 
   // 계좌 스코프 (a = account id)
   listStocks: (a) => req(`/api/${enc(a)}/stocks`),

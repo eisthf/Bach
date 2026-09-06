@@ -115,6 +115,36 @@ AUTO_TRADING --> MANUAL_TRADING : PUSH | POSITION-FLAT(보유수량→0)
 (MARKET-CLOSE 시 장 단계도 장전(PRE_OPEN)으로 리셋 → 초기 상태 복귀)
 ```
 
+## 상한가 종목 페이지
+
+헤더의 **매매 / 상한가 종목** 탭으로 오간다(해시 라우팅 — 새로고침·뒤로가기 유지).
+
+지정일 **D**의 종가가 **직전 거래일 D-1** 종가 대비 **+29%~+30%** 인 종목을
+표(종목코드·종목명·시장·시가총액·종가·등락률)로 보여준다. 날짜를 비우고 조회하면
+가장 최근 거래일을 서버가 잡는다. D-1은 달력상 전날이 아니라 직전 *거래일*로,
+주말·공휴일은 시세가 비어 오는 것으로 판별해 건너뛴다.
+
+> 29~30% 구간인 이유: 가격제한폭은 +30%지만 호가단위 반올림 때문에 상한가가
+> 정확히 30%가 되는 경우는 드물다.
+
+### 데이터 소스 — KRX Open API
+
+키움 REST에는 **전종목 일별시세** 엔드포인트가 없다(종목별 조회뿐이라 날짜당
+~2,800회 호출, 순위 API는 당일만 조회). 그래서 이 페이지만 KRX Open API를 쓴다 —
+날짜당 시장별 1회 호출로 시가총액까지 함께 받는다.
+
+```
+# backend/.env
+KRX_OPEN_API_KEY=<openapi.krx.co.kr 발급 인증키>
+```
+[openapi.krx.co.kr](https://openapi.krx.co.kr)에서 인증키를 발급받고 **'유가증권
+일별매매정보'와 '코스닥 일별매매정보' 각각** 이용신청(승인 필요)을 마쳐야 한다.
+승인 전이면 `401 Unauthorized Key`가 떨어지고 화면에 안내가 뜬다.
+
+키가 없으면 **합성 mock 데이터**로 자동 대체돼 화면·흐름을 확인할 수 있고,
+이때는 표 위에 노란 **데모 데이터** 배지가 붙는다. `SCREENER_SOURCE=krx|mock`로
+소스를 강제할 수도 있다.
+
 ## 매매 전략
 
 자동매매는 **상한가 따라잡기(ULC)** 전략을 쓴다 — 진입 필터, 시나리오별
@@ -171,15 +201,20 @@ backend/app/
   state_machine.py   상태머신 (장전/장중 가드)
   market_clock.py    장 단계
   models.py          Pydantic 모델
-  providers/         mock | kiwoom 데이터·브로커
+  screener.py        상한가 종목 스크리너 (+ 합성 mock 소스)
+  providers/         mock | kiwoom 데이터·브로커, krx_api(전종목 일별시세)
   strategy/ulc.py    상한가 따라잡기 전략 엔진
 frontend/src/
   store.jsx          전역 상태 + WebSocket
-  components/        Chart, PriceTicker, StateButton, ManualTradePanel,
-                     AutoConfigForm, StockInput, StockPanel, MarketControls, LogPanel
+  router.js          해시 라우터 (매매 / 상한가 종목)
+  pages/             UpperLimitPage(상한가 종목 표)
+  components/        Chart, PriceTicker, StateButton, ManualTradePanel, AutoConfigForm,
+                     StockInput, StockPanel, MarketControls, LogPanel, PageNav
 
 dev.sh               개발 서버 일괄 실행 (--demo: 합성 mock 단독)
 backend/tests/       pytest 회귀 테스트 (uv run pytest)
 
-# frontend/smoke.mjs : Playwright 헤드리스 스모크 테스트(개발용)
+# frontend/smoke*.mjs : Playwright 헤드리스 스모크 테스트(개발용)
+#   smoke.mjs 기본 흐름 | smoke_multi.mjs 다중계좌 | smoke-mobile.mjs 모바일
+#   smoke-restore.mjs 재시작 복원 | smoke-screener.mjs 상한가 종목 페이지
 ```

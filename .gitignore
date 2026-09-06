@@ -13,6 +13,8 @@ frontend/dist/
 
 # Playwright (개발용 스모크 테스트)
 test-results/
+# 스모크 테스트가 남기는 스크린샷
+frontend/*.png
 
 # 로그
 *.log
