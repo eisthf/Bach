@@ -1,6 +1,7 @@
 // lightweight-charts 캔들 차트.
 // - 캔들: 내부 투명, 테두리만. 상승(close>=open) 적색 / 하락 청색.
 // - SMA 5/10/20/60 겹쳐 그림 (파랑/분홍/주황/초록).
+// - 거래량: 하단 막대. 상승봉 적색 / 하락봉 청색.
 // - 크로스헤어: 내장. 마우스 가격 수평선 + 가격 라벨(손절선 가늠용).
 // - 실시간 틱으로 마지막 봉 갱신. 봉 경계를 넘으면 서버에서 재조회(아래 참고).
 import React, { useCallback, useEffect, useRef } from 'react'
@@ -11,10 +12,17 @@ import { sma, lastSma, MA_LINES } from '../indicators'
 // 봉 경계를 넘었는데 서버 봉이 아직 안 만들어졌을 때, 매 틱 재조회하지 않도록.
 const REFRESH_COOLDOWN_MS = 10_000
 
+const volumePoint = (bar) => ({
+  time: bar.time,
+  value: Number(bar.volume || 0),
+  color: bar.close >= bar.open ? 'rgba(211, 47, 47, 0.35)' : 'rgba(21, 101, 192, 0.35)',
+})
+
 export default function Chart({ account, code, interval, tick, height = 360 }) {
   const containerRef = useRef(null)
   const chartRef = useRef(null)
   const candleRef = useRef(null)
+  const volumeRef = useRef(null)
   const maRefs = useRef([])
   const barsRef = useRef([])
   const dayStartRef = useRef(0)
@@ -39,7 +47,10 @@ export default function Chart({ account, code, interval, tick, height = 360 }) {
         horzLine: { labelVisible: true, color: '#888', width: 1, style: 2 },
         vertLine: { labelVisible: true, color: '#888', width: 1, style: 2 },
       },
-      rightPriceScale: { borderColor: '#ddd' },
+      rightPriceScale: {
+        borderColor: '#ddd',
+        scaleMargins: { top: 0.05, bottom: 0.25 },
+      },
       timeScale: { borderColor: '#ddd', timeVisible: true, secondsVisible: false },
     })
     // 테두리만 있는 캔들: body 투명, border 색만.
@@ -55,15 +66,24 @@ export default function Chart({ account, code, interval, tick, height = 360 }) {
     const maSeries = MA_LINES.map((m) =>
       chart.addLineSeries({ color: m.color, lineWidth: 1, priceLineVisible: false, title: m.title }),
     )
+    const volume = chart.addHistogramSeries({
+      priceFormat: { type: 'volume' },
+      priceScaleId: '',
+      priceLineVisible: false,
+      lastValueVisible: false,
+    })
+    volume.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } })
 
     chartRef.current = chart
     candleRef.current = candle
+    volumeRef.current = volume
     maRefs.current = maSeries
 
     return () => {
       chart.remove()
       chartRef.current = null
       candleRef.current = null
+      volumeRef.current = null
       maRefs.current = []
     }
   }, [])
@@ -81,6 +101,7 @@ export default function Chart({ account, code, interval, tick, height = 360 }) {
       barsRef.current = bars
       dayStartRef.current = data.day_start_index
       candleRef.current.setData(bars)
+      volumeRef.current?.setData(bars.map(volumePoint))
       MA_LINES.forEach((m, i) => {
         maRefs.current[i].setData(sma(bars, m.period))
       })
@@ -129,6 +150,7 @@ export default function Chart({ account, code, interval, tick, height = 360 }) {
       barsRef.current = data.bars
       dayStartRef.current = data.day_start_index
       candleRef.current.setData(data.bars)
+      volumeRef.current?.setData(data.bars.map(volumePoint))
       MA_LINES.forEach((m, i) => maRefs.current[i].setData(sma(data.bars, m.period)))
       // 시야(setVisibleRange)는 건드리지 않는다 — 사용자의 확대/이동 유지.
     } catch {
@@ -165,9 +187,11 @@ export default function Chart({ account, code, interval, tick, height = 360 }) {
       high: Math.max(last.high, tick.price, interval === 1440 ? tick.high : tick.price),
       low: Math.min(last.low, tick.price, interval === 1440 ? tick.low : tick.price),
       close: tick.price,
+      volume: Number(last.volume || 0) + Number(tick.volume || 0),
     }
     bars[bars.length - 1] = { ...last, ...updated }
     candleRef.current.update(updated)
+    volumeRef.current?.update(volumePoint(updated))
     // 마지막 봉 변동으로 SMA 끝점도 갱신(끝점만 필요 → O(period))
     MA_LINES.forEach((m, i) => {
       const point = lastSma(bars, m.period)
