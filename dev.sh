@@ -55,7 +55,67 @@ cleanup() {
   exit 0
 }
 
-trap cleanup SIGINT SIGTERM
+# SIGHUP 이 반드시 포함돼야 한다. 서버는 아래에서 setsid 로 '새 세션'에 띄우므로
+# 터미널이 사라져도 SIGHUP 을 받지 않고 살아남는다(그게 setsid 의 목적이다).
+# 그런데 이 스크립트가 SIGHUP 을 안 잡으면, SSH 가 끊기거나 터미널 창을 닫는
+# 순간 스크립트만 즉사하고 cleanup 이 돌지 않는다 → 서버는 부모 없이(PPID=1)
+# 영원히 남아 포트 8000 을 점유한다. 이 VM 은 SSH 로 접속하는 환경이라 연결
+# 끊김이 흔해서 실제로 이 경로로 고아가 쌓였다.
+trap cleanup SIGINT SIGTERM SIGHUP
+
+# ---------------------------------------------------------------------------
+# 포트 선점 검사
+#
+# 검사 없이 진행하면 vite(5173)만 뜨고 백엔드는 'Address already in use' 로
+# 실패한다 — 화면은 열리는데 아무것도 안 되고, 원인은 스크롤을 한참 거슬러
+# 올라가야 보인다. 시작 전에 멈추고 무엇이 잡고 있는지 알려준다.
+#
+# 자동으로 죽이지는 않는다: 남아 있는 백엔드가 실전 계좌(ACCOUNTS 에 real)로
+# 떠 있을 수 있어, 무엇인지 확인하고 사람이 종료하는 편이 안전하다.
+# ---------------------------------------------------------------------------
+port_pids() {
+  command -v ss >/dev/null 2>&1 || return 0
+  ss -ltnp 2>/dev/null | grep -E ":$1[[:space:]]" \
+    | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u
+}
+
+check_ports() {
+  local busy=0 port pids pid pgid pgids=""
+  for port in 8000 5173; do
+    pids="$(port_pids "$port")"
+    [ -z "$pids" ] && continue
+    busy=1
+    echo "⚠️  포트 $port 가 이미 사용 중입니다:" >&2
+    for pid in $pids; do
+      # 소켓을 쥔 PID 가 프로세스 그룹 리더가 아닌 경우가 많다(uvicorn --reload
+      # 는 감시 프로세스와 워커를 따로 둔다). 그룹째 정리해야 하므로 PGID 를
+      # 함께 뽑아 안내한다.
+      pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')"
+      echo "     PID $pid (그룹 ${pgid:-?})  시작: $(ps -o lstart= -p "$pid" 2>/dev/null | xargs)" >&2
+      echo "         $(ps -o args= -p "$pid" 2>/dev/null | cut -c1-80)" >&2
+      [ -n "$pgid" ] && case " $pgids " in *" $pgid "*) ;; *) pgids="$pgids $pgid" ;; esac
+    done
+  done
+  [ "$busy" -eq 0 ] && return 0
+
+  echo "" >&2
+  echo "   이전 실행이 남긴 프로세스일 수 있습니다(SSH 끊김·터미널 종료 시 발생)." >&2
+  if [ -n "$pgids" ]; then
+    echo "   확인 후 프로세스 그룹째 종료하세요:" >&2
+    echo "" >&2
+    for pgid in $pgids; do
+      echo "       kill -TERM -$pgid" >&2
+    done
+    echo "" >&2
+    echo "   ⚠️ 실전 계좌가 붙은 백엔드일 수 있습니다. 종료 전에 확인하세요:" >&2
+    for pgid in $pgids; do
+      echo "       tr '\\0' '\\n' < /proc/$pgid/environ | grep ACCOUNTS" >&2
+    done
+  fi
+  exit 1
+}
+
+check_ports
 
 # 백엔드 초기 셋업 (1회만)
 if [ ! -d "backend/.venv" ]; then
