@@ -6,7 +6,7 @@ const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
 page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
 page.on('pageerror', (e) => errors.push('PAGEERROR: ' + e.message))
 
-await page.goto('http://localhost:5173/', { waitUntil: 'networkidle' })
+await page.goto(process.env.BACH_SMOKE_URL || 'http://localhost:5173/', { waitUntil: 'networkidle' })
 
 // reset market to PRE_OPEN for a clean run
 await page.evaluate(() => fetch('/api/market/reset', { method: 'POST' }))
@@ -52,7 +52,7 @@ await page.waitForTimeout(300)
 // some logs present?
 const logCount = await page.locator('.log-row').count()
 
-await page.screenshot({ path: 'smoke.png', fullPage: true })
+await page.screenshot({ path: process.env.BACH_SMOKE_SCREENSHOT || 'smoke.png', fullPage: true })
 await browser.close()
 
 console.log(JSON.stringify({

@@ -32,6 +32,7 @@ input {
   font-size: 13px;
 }
 input:focus { outline: none; border-color: var(--accent); }
+.chart-canvas { height: var(--chart-height); }
 
 /* Header */
 /* 상단(헤더+종목입력+칩) 고정: 스크롤해도 항상 보이게 */
@@ -301,4 +302,107 @@ input:focus { outline: none; border-color: var(--accent); }
 
 @media (max-width: 1300px) {
   .accounts-row { grid-template-columns: 1fr; }
+}
+
+.recovery-notice { padding: 10px 14px; margin: 8px; border: 1px solid #d99a30; border-radius: 6px; color: #ffd48a; background: #372b18; line-height: 1.5; }
+
+/* 휴대전화: 고정 데스크톱 행을 한 열로 풀고 터치 영역을 확보한다. */
+@media (max-width: 700px) {
+  body { font-size: 14px; overflow-x: hidden; }
+  button, input { min-height: 44px; font-size: 16px; }
+
+  /* 두세 줄짜리 헤더가 화면을 계속 가리지 않게 모바일에서는 고정하지 않는다. */
+  .app-top { position: static; padding-bottom: 0; }
+  .app-header {
+    display: grid; grid-template-columns: 1fr auto; gap: 10px;
+    padding: 10px 12px;
+  }
+  .brand-sub { display: none; }
+  .brand-mark { font-size: 20px; }
+  .brand-name { font-size: 19px; }
+  .account-filter {
+    grid-column: 1 / -1; grid-row: 2;
+    width: 100%; overflow-x: auto;
+  }
+  .acc-tab { flex: 1; min-height: 38px; padding: 6px 10px; }
+  .market-controls {
+    justify-self: end; gap: 6px; flex-wrap: wrap; justify-content: flex-end;
+  }
+  .market-controls button { min-height: 38px; padding: 6px 9px; }
+  .conn { font-size: 0; }
+  .conn::before { content: '●'; font-size: 12px; }
+  .phase { font-size: 12px; padding: 4px 8px; }
+  .phase-auto { font-size: 12px; }
+
+  .main-grid,
+  .main-grid.multi { display: block; padding: 10px 8px 28px; }
+  .accounts-row { display: block; }
+  .account-col { border-radius: 10px; padding-bottom: 8px; }
+  .account-col-head { padding: 10px 10px 0; gap: 8px; }
+  .account-col .account-summary {
+    width: 100%; margin-left: 0; gap: 8px 16px;
+  }
+  .acc-cell { min-width: calc(33.333% - 12px); }
+  .account-col .toolbar-row { padding: 10px 10px 0; gap: 8px; }
+  .stock-input { width: 100%; display: grid; grid-template-columns: 1fr 1fr; }
+  .code-input, .name-input { width: 100%; min-width: 0; }
+  .add-btn { grid-column: 1 / -1; width: 100%; }
+  .import-held-btn { flex: 1 1 calc(50% - 4px); padding: 8px; }
+  .import-msg { flex-basis: 100%; }
+  .account-col .chip-bar {
+    padding: 8px 10px 0; flex-wrap: nowrap; overflow-x: auto;
+    scrollbar-width: thin;
+  }
+  .stock-chip { flex: 0 0 auto; min-height: 38px; }
+  .account-col .panels-col { padding: 10px 0 0; }
+
+  .stock-panel { border-left: 0; border-right: 0; border-radius: 0; padding: 12px 10px; }
+  .panel-header { display: grid; grid-template-columns: auto 1fr; gap: 8px 12px; }
+  .panel-id { min-width: 0; }
+  .panel-actions { grid-column: 2; grid-row: 1; }
+  .layout-btn, .remove-btn { min-height: 38px; }
+  .ticker {
+    grid-column: 1 / -1; justify-content: space-between;
+    gap: 8px; padding-top: 2px;
+  }
+  .ticker-cell { align-items: flex-start; }
+  .ticker-price { font-size: 22px; }
+  .chart-toolbar { align-items: stretch; gap: 8px; }
+  .interval-selector {
+    min-width: 0; overflow-x: auto; padding-bottom: 2px;
+    scrollbar-width: thin;
+  }
+  .iv-btn { min-width: 44px; min-height: 44px; padding: 6px 8px; }
+  .state-box { flex: 0 0 auto; }
+  .state-btn { min-width: 108px; min-height: 44px; padding: 4px 8px; }
+  .chart-canvas { height: min(var(--chart-height), 280px); }
+
+  .panels, .compact-body { grid-template-columns: 1fr; gap: 10px; }
+  .manual-panel, .auto-form { padding: 12px 10px; }
+  .trade-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; }
+  .trade-row label { grid-column: 1 / -1; width: auto; }
+  .trade-row input { width: 100%; }
+  .trade-row .hint { align-self: center; }
+  .buy-btn, .sell-all { margin-left: 0; }
+  .buy-btn { grid-column: 3; grid-row: 2; }
+  .sell-btn { min-width: 64px; }
+  .auto-grid { grid-template-columns: 1fr; gap: 8px; }
+  .field input { width: 112px; }
+  .auto-bools { grid-template-columns: 1fr; gap: 8px; }
+  .checkfield input { min-height: 24px; width: 24px; }
+  .save-btn { width: 100%; }
+  .auto-actions { flex-wrap: wrap; }
+  .recovery-notice { margin: 8px 0; padding: 10px; }
+
+  .side-col { margin-top: 10px; }
+  .log-list { max-height: 260px; }
+  .log-row { align-items: flex-start; }
+}
+
+@media (max-width: 380px) {
+  .stock-input { grid-template-columns: 1fr; }
+  .name-input, .add-btn { grid-column: 1; }
+  .market-controls .phase-auto { display: none; }
+  .ticker-val { font-size: 13px; }
+  .state-btn { min-width: 96px; }
 }

@@ -27,6 +27,7 @@ from .market_clock import MarketClock, now_kst
 from .models import (
     AutoConfig,
     MarketPhase,
+    Position,
     StockStatus,
     Tick,
     TradeState,
@@ -44,6 +45,7 @@ class Stock:
     config: AutoConfig
     task: Optional[asyncio.Task] = None
     engine: Optional[UlcEngine] = None
+    recovery_notice: str = ""
 
 
 class Hub:
@@ -68,6 +70,7 @@ class Hub:
             or (base / ("state.json" if cfg.id == "mock" else f"state.{cfg.id}.json"))
         )
         self._restoring = False
+        self.recovery_notice = ""
         # 주문체결(00) 이벤트 → 포지션 즉시 갱신(폴링 대신 이벤트 기반).
         if hasattr(self.data, "on_order_fill"):
             self.data.on_order_fill = self._on_order_fill
@@ -93,6 +96,8 @@ class Hub:
         self.stocks[code] = stock
         stock.task = asyncio.create_task(self._tick_loop(stock))
         self._persist()
+        if self._restoring:
+            return stock
         self._log(f"[{code}] 종목 추가됨")
         self.broadcast_status(code)
         lt = self.data.last_tick(code)
@@ -116,7 +121,8 @@ class Hub:
             return
         data = {
             "stocks": [
-                {"code": s.code, "name": s.name, "config": s.config.model_dump()}
+                {"code": s.code, "name": s.name, "config": s.config.model_dump(),
+                 "state": s.machine.state.value, "recovery_notice": s.recovery_notice}
                 for s in self.stocks.values()
             ]
         }
@@ -139,33 +145,61 @@ class Hub:
         for s in raw.get("stocks", []) or []:
             code = str(s.get("code", "")).strip()
             if code:
-                out[code] = {"name": s.get("name") or "", "config": s.get("config")}
+                out[code] = s
         return out
 
     async def restore(self) -> None:
-        """startup 시 1회: 마지막으로 화면에 표시됐던 종목 목록(JSON)을 복원."""
+        """엔진 이력은 복원하지 않는다. 저장 상태와 계좌 잔량을 수동 인계한다."""
         saved = self._load_state()
-        if not saved:
-            return
+        positions = {}
+        position_error = False
+        try:
+            positions = {p.code: p for p in await asyncio.to_thread(self.broker.all_positions)
+                         if p.quantity > 0}
+        except Exception:  # noqa: BLE001
+            position_error = True
+            logger.exception("[%s] 재시작 잔고 확인 실패", self.account)
+            self.recovery_notice = "재시작 잔고 확인 실패 — 보유 종목·미체결을 계좌에서 직접 확인 필요"
+            self._log(f"⚠️ {self.recovery_notice}")
         self._restoring = True
         try:
-            for code, entry in saved.items():
-                fetched = None
-                try:
-                    fetched = await asyncio.to_thread(self.data.stock_name, code)
-                except Exception:  # noqa: BLE001
-                    pass
-                name = entry.get("name") or fetched or ""
+            for code in dict.fromkeys([*saved, *positions]):
+                entry = saved.get(code, {})
+                name = entry.get("name") or ""
+                if not name:
+                    try:
+                        name = await asyncio.to_thread(self.data.stock_name, code) or ""
+                    except Exception:  # noqa: BLE001
+                        pass
                 stock = self.add_stock(code, name)
                 cfg = entry.get("config")
                 if cfg:
                     try:
                         stock.config = AutoConfig(**cfg)
                     except Exception:  # noqa: BLE001
-                        pass
+                        self._log(f"[{code}] 저장 설정 오류 — 기본 설정으로 복원")
+                reasons = []
+                if entry.get("state") in (TradeState.AUTO_TRADING.value, TradeState.MONITOR.value):
+                    reasons.append(f"저장된 {entry['state']} 자동 재개 안 함")
+                if code in positions:
+                    reasons.append(f"계좌 잔량 {positions[code].quantity}주")
+                if position_error:
+                    reasons.append("계좌 잔고 확인 실패")
+                stock.machine.state = TradeState.MANUAL_TRADING
+                stock.engine = None
+                stock.recovery_notice = (
+                    "재시작 수동 인계: " + "; ".join(reasons)
+                    + ". 자동매매 보호 없음. 보유 종목·미체결을 확인하고 수동 관리하세요."
+                    if reasons else entry.get("recovery_notice", "")
+                )
+                if stock.recovery_notice:
+                    logger.warning("[%s][%s] %s", self.account, code, stock.recovery_notice)
+                    self._log(f"[{code}] ⚠️ {stock.recovery_notice}")
+                self.broadcast_status(code)
         finally:
             self._restoring = False
-        self._log(f"종목 복원: {len(saved)}개")
+        self._persist()
+        self._log(f"종목 복원: {len(self.stocks)}개 (수동매매)")
 
     async def import_held(self) -> List[str]:
         """계좌(kt00018) 보유 종목 중 화면에 없는 것을 가져와 추가. 추가 코드 반환."""
@@ -194,13 +228,20 @@ class Hub:
         stock = self.stocks.get(code)
         if not stock:
             return None
-        pos = self.broker.position(code)
+        verified = True
+        try:
+            pos = self.broker.position(code)
+        except Exception:  # noqa: BLE001
+            pos = Position(code=code)
+            verified = False
         return StockStatus(
             code=code,
             name=stock.name,
             state=stock.machine.state,
             config=stock.config,
             position=pos,
+            position_verified=verified,
+            recovery_notice=stock.recovery_notice,
         )
 
     def broadcast_status(self, code: str) -> None:
@@ -238,8 +279,9 @@ class Hub:
         asyncio.create_task(self.refresh_orders())
 
     async def _refresh_status(self, code: str) -> None:
-        await asyncio.to_thread(self.broker.position, code)
-        self.broadcast_status(code)
+        st = await asyncio.to_thread(self.status_of, code)
+        if st:
+            self.broadcast({"type": "status", "status": st.model_dump()})
 
     async def _refresh_all_positions(self) -> None:
         await asyncio.to_thread(self.broker.all_positions)
@@ -310,10 +352,19 @@ class Hub:
             # 매도 주문이 아직 미체결일 수 있어 중복 매도 위험이 있다.
             # 어느 쪽이든 MANUAL_TRADING 으로 넘겨 사람이 인수하게 한다.
             self.broker.invalidate()
-            pos = await asyncio.to_thread(self.broker.position, stock.code)
+            try:
+                pos = await asyncio.to_thread(self.broker.position, stock.code)
+            except Exception:  # noqa: BLE001
+                pos = None
             stock.machine.on_position_flat()
             stock.engine = None
-            if pos.quantity > 0:
+            if pos is None:
+                stock.recovery_notice = (
+                    "자동매매 종료 수동 인계: 계좌 잔고 확인 실패. "
+                    "자동매매 보호 없음. 보유 종목·미체결을 확인하세요."
+                )
+                self._log(f"[{stock.code}] ⚠️ {stock.recovery_notice}")
+            elif pos.quantity > 0:
                 self._log(
                     f"[{stock.code}] ⚠️ 자동매매 종료 — 계좌 잔량 {pos.quantity}주 남음"
                     f"(부분체결/미체결 가능). 수동매매에서 확인 필요"
@@ -322,6 +373,7 @@ class Hub:
                 self._log(f"[{stock.code}] 자동매매 청산 완료(보유수량 0) → MANUAL_TRADING")
             changed = True
         if changed:
+            self._persist()
             # 주문이 나갔으면 포지션 캐시가 무효화된 상태다. broadcast_status는
             # 계좌 조회(블로킹 HTTP)를 탈 수 있으므로 스레드에서 캐시를 덥힌 뒤
             # 브로드캐스트한다(_refresh_status가 그 순서를 담당).
@@ -335,6 +387,9 @@ class Hub:
         new_state = stock.machine.push()
         if new_state == TradeState.MANUAL_TRADING:
             stock.engine = None
+        if new_state == TradeState.MONITOR:
+            stock.recovery_notice = ""
+        self._persist()
         self._log(f"[{code}] PUSH → {new_state.value}")
         self.broadcast_status(code)
         return new_state
@@ -368,18 +423,21 @@ class Hub:
                         f"→ 수동매매로 복귀"
                     )
             self.broadcast_status(stock.code)
+        self._persist()
 
     def apply_market_close(self) -> None:
         for stock in self.stocks.values():
             stock.machine.on_market_close()
             stock.engine = None
             self.broadcast_status(stock.code)
+        self._persist()
 
     def apply_market_reset(self) -> None:
         for stock in self.stocks.values():
             stock.machine.state = TradeState.MANUAL_TRADING
             stock.engine = None
             self.broadcast_status(stock.code)
+        self._persist()
 
     async def _start_auto(self, stock: Stock) -> bool:
         """MONITOR → AUTO_TRADING 진입 시 ULC 엔진 셋업. 성공 여부 반환.
@@ -496,7 +554,8 @@ class AccountManager:
     def accounts_payload(self) -> List[dict]:
         return [
             {"id": c.id, "label": c.label,
-             "live": c.provider == "kiwoom", "danger": c.danger}
+             "live": c.provider == "kiwoom", "danger": c.danger,
+             "recovery_notice": self.hubs[c.id].recovery_notice}
             for c in self.configs
         ]
 

@@ -48,6 +48,9 @@ export default function StockPanel({ account, stock }) {
         </div>
       </div>
 
+      {stock.recovery_notice && <div className="recovery-notice" role="alert">{stock.recovery_notice}</div>}
+      {stock.position_verified === false && <div className="recovery-notice" role="alert">잔고 조회 실패 — 표시 수량을 신뢰하지 말고 계좌에서 확인하세요.</div>}
+
       {isCompact ? (
         <div className="compact-body">
           <div className="compact-chart">

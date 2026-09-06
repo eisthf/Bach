@@ -13,6 +13,7 @@ export default function ManualTradePanel({ account, stock, tick }) {
   const pending = (orders[account] || {})[stock.code] || []
 
   const enabled = stock.state === 'MANUAL_TRADING'
+  const verified = stock.position_verified !== false
   const pos = stock.position
   const price = tick?.price
   // 현재가가 없으면 주식수를 계산할 수 없음 → null(표시는 '—'주)
@@ -31,10 +32,10 @@ export default function ManualTradePanel({ account, stock, tick }) {
     <div className={`manual-panel ${enabled ? '' : 'disabled'}`}>
       <div className="panel-title">수동매매</div>
       <div className="position-row">
-        <span>보유 {fmt(pos.quantity)}주</span>
-        <span>평단 {fmt(Math.round(pos.avg_price))}</span>
+        <span>보유 {verified ? fmt(pos.quantity) : '확인 불가'}주</span>
+        <span>평단 {verified ? fmt(Math.round(pos.avg_price)) : '—'}</span>
         <span className={pos.quantity > 0 && price >= pos.avg_price ? 'up' : 'down'}>
-          평가손익 {price ? fmt(Math.round((price - pos.avg_price) * pos.quantity)) : '-'}
+          평가손익 {verified && price ? fmt(Math.round((price - pos.avg_price) * pos.quantity)) : '-'}
         </span>
       </div>
 
@@ -64,7 +65,7 @@ export default function ManualTradePanel({ account, stock, tick }) {
         />
         <button
           className="sell-all"
-          disabled={!enabled}
+          disabled={!enabled || !verified}
           onClick={() => setQty(pos.quantity)}
           title="보유 전량"
         >

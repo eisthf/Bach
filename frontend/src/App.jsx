@@ -16,7 +16,7 @@ function AccountColumn({ account }) {
   const accCompact = compact[acc] || new Set()
 
   const visibleCodes = accOrder.filter((c) => accStocks[c])
-  const list = visibleCodes.filter((c) => !accHidden.has(c)).map((c) => accStocks[c])
+  const list = visibleCodes.filter((c) => (!accHidden.has(c) || accStocks[c].recovery_notice)).map((c) => accStocks[c])
   const manualCodes = visibleCodes.filter((c) => accStocks[c].state === 'MANUAL_TRADING')
   const allManualCompact =
     manualCodes.length > 0 && manualCodes.every((c) => accCompact.has(c))
@@ -46,6 +46,8 @@ function AccountColumn({ account }) {
         <AccountSummary account={acc} />
       </div>
 
+      {account.recovery_notice && <div className="recovery-notice" role="alert">{account.recovery_notice}</div>}
+
       <div className="toolbar-row">
         <StockInput account={acc} />
         <button className="import-held-btn" onClick={doImportHeld} disabled={importing}>
@@ -66,7 +68,7 @@ function AccountColumn({ account }) {
         <div className="chip-bar">
           {visibleCodes.map((c) => {
             const s = accStocks[c]
-            const off = accHidden.has(c)
+            const off = accHidden.has(c) && !s.recovery_notice
             return (
               <button
                 key={c}

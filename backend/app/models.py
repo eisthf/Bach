@@ -126,6 +126,8 @@ class StockStatus(BaseModel):
     state: TradeState
     config: AutoConfig
     position: Position
+    position_verified: bool = True
+    recovery_notice: str = ""
 
 
 class MarketStatus(BaseModel):

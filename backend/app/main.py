@@ -285,6 +285,11 @@ async def ws(websocket: WebSocket):
             if st:
                 await websocket.send_json(
                     {"type": "status", "account": acc, "status": st.model_dump()})
+            if st and st.recovery_notice:
+                await websocket.send_json({
+                    "type": "log", "account": acc,
+                    "text": f"[{code}] ⚠️ {st.recovery_notice}",
+                })
             lt = hub.data.last_tick(code)
             if lt is not None:
                 await websocket.send_json(

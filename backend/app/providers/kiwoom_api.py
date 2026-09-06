@@ -467,15 +467,15 @@ def fetch_positions(token: str, mock: bool = False) -> Dict[str, dict]:
     if resp is None or resp.status_code != 200:
         sc = resp.status_code if resp is not None else "—"
         logger.error("계좌 잔고 조회 실패(HTTP %s)", sc)
-        return {}
+        raise RuntimeError("계좌 잔고 조회 실패")
     try:
         data = resp.json()
     except Exception as e:  # noqa: BLE001
         logger.error("계좌 잔고 파싱 오류: %s", e)
-        return {}
+        raise RuntimeError("계좌 잔고 조회 실패")
     if data.get("return_code") != 0:
         logger.error("계좌 잔고 조회 실패: %s", data.get("return_msg"))
-        return {}
+        raise RuntimeError("계좌 잔고 조회 실패")
 
     out: Dict[str, dict] = {}
     for item in data.get("acnt_evlt_remn_indv_tot", []) or []:

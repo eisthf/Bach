@@ -166,5 +166,11 @@ export default function Chart({ account, code, interval, tick, height = 360 }) {
     })
   }, [tick, interval, refreshBars])
 
-  return <div ref={containerRef} style={{ width: '100%', height }} />
+  return (
+    <div
+      ref={containerRef}
+      className="chart-canvas"
+      style={{ width: '100%', '--chart-height': `${height}px` }}
+    />
+  )
 }
