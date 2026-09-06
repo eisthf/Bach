@@ -90,7 +90,8 @@ Host gcp-rblue
 2. 차트: 3/5/10/30/60분봉 전환(기본 3분). 캔들은 테두리만(상승 적색/하락 청색),
    이평선 MA5(파랑)/MA10(분홍)/MA20(주황)/MA60(초록) 겹쳐 그림.
    차트에 마우스를 올리면 크로스헤어 수평선+가격 라벨(손절선 가늠용).
-3. 우상단 **장 시작** 전(장전)에는 상태버튼 PUSH로 `수동매매 ↔ 모니터` 토글.
+3. 우상단 **장 시작** 전에는 상태 버튼으로 `수동매매 ↔ 모니터` 토글. 실전 모드에서는
+   장 종료 후나 주말에도 `다음 장 모니터 예약`이 가능하다.
 4. **장 시작** 누르면 `모니터` 종목이 `자동매매`로 진입 → 상한가 따라잡기 엔진이
    틱에 반응해 분할매수/익절/손절 실행(로그 패널에 표시).
 5. 자동매매 중엔 **PUSH**로 직접 인수하면 `수동매매`로 전환(장중 종착, 엔진 정리).
@@ -105,7 +106,7 @@ Host gcp-rblue
 
 ```
 [*] --> MANUAL_TRADING
-MANUAL_TRADING --> MONITOR : PUSH (장전에만)
+MANUAL_TRADING --> MONITOR : PUSH (장중이 아닐 때)
 MONITOR --> MANUAL_TRADING : PUSH
 MONITOR --> AUTO_TRADING : MARKET-OPEN
 AUTO_TRADING --> MANUAL_TRADING : PUSH | POSITION-FLAT(보유수량→0)

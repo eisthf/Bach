@@ -3,7 +3,7 @@
 요구 다이어그램(project_requirement.md):
 
     [*] --> MANUAL_TRADING
-    MANUAL_TRADING --> MONITOR : PUSH [장전]
+    MANUAL_TRADING --> MONITOR : PUSH [장중이 아닐 때]
     MONITOR --> MANUAL_TRADING : PUSH
     MONITOR --> AUTO_TRADING : MARKET-OPEN
     AUTO_TRADING --> MANUAL_TRADING : PUSH
@@ -41,8 +41,9 @@ class StateMachine:
         """버튼 PUSH. 전이 규칙은 현재 state + 장 단계에 의존."""
         s = self.state
         if s == TradeState.MANUAL_TRADING:
-            # 장전에만 MONITOR로. 장중 MANUAL_TRADING은 종착(무시).
-            if self._clock.is_pre_open():
+            # 장전뿐 아니라 장 종료 후·주말에도 다음 장 감시를 미리 예약할 수
+            # 있다. 실제 장중의 MANUAL_TRADING만 종착 상태로 둔다.
+            if not self._clock.is_open():
                 self.state = TradeState.MONITOR
         elif s == TradeState.MONITOR:
             self.state = TradeState.MANUAL_TRADING
@@ -80,5 +81,5 @@ class StateMachine:
         """현재 PUSH가 의미 있는 전이를 일으키는가(프런트 버튼 활성화용)."""
         s = self.state
         if s == TradeState.MANUAL_TRADING:
-            return self._clock.is_pre_open()
+            return not self._clock.is_open()
         return True  # MONITOR, AUTO_TRADING 에선 항상 전이 가능
