@@ -142,13 +142,26 @@ def get_bars(
 ):
     if interval not in VALID_INTERVALS:
         raise HTTPException(400, f"interval must be one of {VALID_INTERVALS}")
-    bars = _hub(account).data.get_bars(code, interval, lookback_extra)
+    hub = _hub(account)
+    bars = hub.data.get_bars(code, interval, lookback_extra)
+    if interval == DAY_INTERVAL and bars:
+        tick = hub.data.last_tick(code)
+        if tick and tick.time // (DAY_INTERVAL * 60) == bars[-1].time // (DAY_INTERVAL * 60):
+            last = bars[-1]
+            bars = [*bars[:-1], last.model_copy(update={
+                "high": max(last.high, tick.high, tick.price),
+                "low": min(last.low, tick.low, tick.price),
+                "close": tick.price,
+            })]
+    day_start_index = (
+        max(0, len(bars) - 60) if interval == DAY_INTERVAL else lookback_extra
+    )
     return {
         "code": code,
         "interval": interval,
         "lookback_extra": lookback_extra,
-        # 분봉은 당일 구간으로 이동하고, 일봉은 조회한 기간 전체를 보여준다.
-        "day_start_index": 0 if interval == DAY_INTERVAL else lookback_extra,
+        # 일봉은 계산용 120개 중 최근 60거래일을 화면에 보여준다.
+        "day_start_index": day_start_index,
         "bars": [b.model_dump() for b in bars],
     }
 

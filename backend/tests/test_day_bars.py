@@ -23,6 +23,13 @@ def test_mock_day_bars_are_ordered_weekdays():
         assert datetime.fromtimestamp(bar.time, timezone.utc).weekday() < 5
 
 
+def test_mock_fetches_enough_warmup_for_sixty_visible_ma_points():
+    bars = MockDataProvider().get_bars("005930", DAY_INTERVAL, 119)
+    assert len(bars) == 120
+    # 120개에서 MA60은 61개 점이 생겨 최근 60일 전체에 선을 그릴 수 있다.
+    assert len(bars) - 60 + 1 == 61
+
+
 def test_fetch_day_bars_pages_normalizes_and_deduplicates(monkeypatch):
     pages = [
         SimpleNamespace(

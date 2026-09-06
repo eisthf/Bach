@@ -98,8 +98,11 @@ export default function Chart({ account, code, interval, tick, height = 360 }) {
         const ts = chartRef.current.timeScale()
         // 당일 구간으로 시야 이동(이전 60봉은 SMA 계산용이라 살짝만 보이게)
         if (bars.length > data.day_start_index) {
+          const fromIndex = interval === 1440
+            ? data.day_start_index
+            : Math.max(0, data.day_start_index - 5)
           ts.setVisibleRange({
-            from: bars[Math.max(0, data.day_start_index - 5)].time,
+            from: bars[fromIndex].time,
             to: bars[bars.length - 1].time,
           })
         } else {
@@ -157,8 +160,10 @@ export default function Chart({ account, code, interval, tick, height = 360 }) {
     const updated = {
       time: last.time,
       open: last.open,
-      high: Math.max(last.high, tick.price),
-      low: Math.min(last.low, tick.price),
+      // 일봉은 서버 캐시를 하루 동안 유지하므로 실시간 틱의 당일 고저를
+      // 사용해 새 브라우저에서도 오늘 꼬리를 즉시 정확하게 맞춘다.
+      high: Math.max(last.high, tick.price, interval === 1440 ? tick.high : tick.price),
+      low: Math.min(last.low, tick.price, interval === 1440 ? tick.low : tick.price),
       close: tick.price,
     }
     bars[bars.length - 1] = { ...last, ...updated }

@@ -103,14 +103,30 @@ class KiwoomDataProvider(DataProvider):
         key = (code, interval, lookback_extra, bucket)
         with self._bars_lock(key):
             hit = self._bars_cache.get(key)
-            if hit is not None and time.time() - hit[0] < self._BARS_TTL:
-                return list(hit[1])
+            if hit is not None:
+                age = time.time() - hit[0]
+                # 오늘 진행 일봉까지 받은 응답은 자정까지 재사용한다. 장중
+                # 고가·저가·종가는 실시간 틱이 프런트의 마지막 봉을 갱신한다.
+                has_today = (
+                    interval == DAY_INTERVAL
+                    and hit[1]
+                    and hit[1][-1].time // (DAY_INTERVAL * 60) == bucket
+                )
+                if has_today or age < self._BARS_TTL:
+                    return list(hit[1])
             bars = self._fetch_bars(code, interval, lookback_extra)
             now = time.time()
             self._bars_cache[key] = (now, bars)
             # 버킷이 바뀌면 옛 키는 다시 쓰이지 않으므로 주기적으로 정리.
-            for k, (ts, _) in list(self._bars_cache.items()):
-                if now - ts > 60:
+            current_day_bucket = chart_epoch() // (DAY_INTERVAL * 60)
+            for k, (ts, cached_bars) in list(self._bars_cache.items()):
+                current_daily = (
+                    k[1] == DAY_INTERVAL
+                    and k[3] == current_day_bucket
+                    and cached_bars
+                    and cached_bars[-1].time // (DAY_INTERVAL * 60) == current_day_bucket
+                )
+                if not current_daily and now - ts > 60:
                     self._bars_cache.pop(k, None)
                     self._bars_locks.pop(k, None)
             return list(bars)

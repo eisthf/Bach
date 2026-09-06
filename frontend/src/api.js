@@ -30,7 +30,8 @@ export const api = {
   removeStock: (a, code) => req(`/api/${enc(a)}/stocks/${code}`, { method: 'DELETE' }),
   importHeld: (a) => req(`/api/${enc(a)}/stocks/import-held`, { method: 'POST' }),
 
-  getBars: (a, code, interval, lookbackExtra = 60) =>
+  // 일봉은 최근 60일 전체에 MA60을 그릴 수 있도록 59일의 계산 여유분을 더 받는다.
+  getBars: (a, code, interval, lookbackExtra = interval === 1440 ? 119 : 60) =>
     req(`/api/${enc(a)}/bars?code=${code}&interval=${interval}&lookback_extra=${lookbackExtra}`),
 
   buy: (a, code, amount_krw) =>

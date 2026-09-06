@@ -10,6 +10,7 @@ import time
 import pytest
 
 from app.models import Bar
+from app.providers.base import DAY_INTERVAL
 from app.providers.kiwoom import KiwoomDataProvider
 
 
@@ -87,3 +88,40 @@ def test_returned_list_is_isolated(provider):
     a.append(Bar(time=1, open=1, high=1, low=1, close=1, volume=0))
     b = provider.get_bars("005930", 3)
     assert len(b) == 1
+
+
+def test_current_daily_bars_are_cached_until_next_day(provider, monkeypatch):
+    """오늘 일봉을 받은 뒤에는 3초 TTL이 지나도 과거 120개를 다시 받지 않는다."""
+    day = (1_788_000_000 // 86_400) * 86_400
+    clock = {"now": day + 9 * 3600}
+    monkeypatch.setattr("app.providers.kiwoom.chart_epoch", lambda: clock["now"])
+
+    def daily_fetch(code, interval, lookback_extra):
+        provider.calls += 1
+        current_day = (clock["now"] // 86_400) * 86_400
+        return [Bar(time=current_day, open=1, high=2, low=1, close=2, volume=1)]
+
+    provider._fetch_bars = daily_fetch
+    provider.get_bars("005930", DAY_INTERVAL, 119)
+    monkeypatch.setattr("app.providers.kiwoom.time.time", lambda: 99_999_999_999)
+    provider.get_bars("005930", DAY_INTERVAL, 119)
+    assert provider.calls == 1
+
+    clock["now"] += 86_400
+    provider.get_bars("005930", DAY_INTERVAL, 119)
+    assert provider.calls == 2
+
+
+def test_daily_without_today_uses_short_cache(provider, monkeypatch):
+    """장전 응답은 고정하지 않아 장 시작 뒤 오늘 봉을 다시 조회할 수 있다."""
+    day = (1_788_000_000 // 86_400) * 86_400
+    monkeypatch.setattr("app.providers.kiwoom.chart_epoch", lambda: day + 8 * 3600)
+    provider._fetch_bars = lambda *args: (
+        setattr(provider, "calls", provider.calls + 1)
+        or [Bar(time=day - 86_400, open=1, high=2, low=1, close=2, volume=1)]
+    )
+    times = iter([100.0, 104.1, 104.1])
+    monkeypatch.setattr("app.providers.kiwoom.time.time", lambda: next(times))
+    provider.get_bars("005930", DAY_INTERVAL, 119)
+    provider.get_bars("005930", DAY_INTERVAL, 119)
+    assert provider.calls == 2
