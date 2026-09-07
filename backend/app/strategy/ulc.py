@@ -1,8 +1,9 @@
 """상한가 따라잡기(upper_limit_chase) 전략 엔진.
 
-`/home/rblue/work/kiwoom/doc/상한가 전략 시각화.md`의 흐름을 틱 기반으로 구현.
-mock 모드에서 AUTO_TRADING 상태의 종목에 대해 틱마다 ``on_tick``이 호출되어
-분할매수·익절·손절·트레일링을 시뮬레이션한다.
+`/home/rblue/work/kiwoom/doc/상한가 전략 시각화.md`의 흐름을 구현.
+AUTO_TRADING 상태의 종목에 대해 틱마다 ``on_tick``이 호출된다. 기본값은
+틱마다 조건을 평가하고, ``use_3min_bar_timing``을 켜면 완성된 3분봉의 종가로
+한 번만 평가한다.
 
 흐름 요약:
   X = 전일 종가(상한가), Z = 당일 시가
@@ -72,6 +73,10 @@ class UlcEngine:
     fill_qty: int = 0
     fill_avg: float = 0.0
     trail_max: float = 0.0
+    # 3분봉 모드의 현재 봉. 다음 3분 구간의 첫 틱이 들어와야 직전 봉 종가가
+    # 확정되므로, 마지막 틱을 보관했다가 그때 전략에 전달한다.
+    _bar_bucket: Optional[int] = None
+    _bar_close: Optional[Tick] = None
 
     # ------------------------------------------------------------------
     def _emit(self, msg: str) -> None:
@@ -207,7 +212,49 @@ class UlcEngine:
         buy_fn: Callable[[int], Awaitable[float]],
         sell_fn: Callable[[int], Awaitable[float]],
     ) -> None:
-        """틱 1개 처리."""
+        """틱 1개를 받아 설정에 맞는 판단 시점에 전략을 실행한다.
+
+        3분봉 모드에서는 epoch 기준 180초 구간별 마지막 틱을 종가로 삼는다.
+        다음 구간의 첫 틱이 도착했을 때만 직전 종가가 확정되며, 그 첫 틱은
+        새 봉의 종가 후보로 보관된다. 틱의 ``time``이 없으면 봉 경계를 안전하게
+        판정할 수 없으므로 주문 판단을 하지 않는다.
+        """
+        if not self.config.use_3min_bar_timing:
+            # AUTO_TRADING 중 설정은 잠기지만, 단독 엔진 사용이나 향후 호출부가
+            # 모드를 바꾸더라도 오래된 봉이 뒤늦게 실행되지 않게 비운다.
+            self._bar_bucket = None
+            self._bar_close = None
+            await self._on_strategy_tick(tick, buy_fn, sell_fn)
+            return
+
+        if tick.time <= 0:
+            return
+
+        bucket = tick.time // 180
+        if self._bar_bucket is None:
+            self._bar_bucket = bucket
+            self._bar_close = tick
+            return
+        if bucket < self._bar_bucket:
+            # 재연결 등으로 늦게 도착한 과거 틱이 현재 봉의 종가를 덮지 않게 한다.
+            return
+        if bucket == self._bar_bucket:
+            self._bar_close = tick
+            return
+
+        completed = self._bar_close
+        self._bar_bucket = bucket
+        self._bar_close = tick
+        if completed is not None:
+            await self._on_strategy_tick(completed, buy_fn, sell_fn)
+
+    async def _on_strategy_tick(
+        self,
+        tick: Tick,
+        buy_fn: Callable[[int], Awaitable[float]],
+        sell_fn: Callable[[int], Awaitable[float]],
+    ) -> None:
+        """틱 또는 확정 3분봉 종가 1개로 매매 조건을 평가한다."""
         if self.phase in (Phase.INIT, Phase.SKIPPED, Phase.DONE):
             return
         price = tick.price

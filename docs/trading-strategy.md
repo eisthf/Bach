@@ -94,7 +94,12 @@ X·Z는 전용 API가 정상 경로이고, 실패 시에만 3분봉을 조회해
 | `ulc_t` | 0.02 | 트레일링 스탑: trail_max 대비 하락률 |
 | `ulc_g` | 0.15 | 트레일링 중 보장 익절 비율 |
 | `ulc_first_buy_only` | false | 1차 매수만 실행 |
-| `use_3min_bar_timing` | false | **미구현** — 필드만 존재, 엔진은 항상 틱 기준 |
+| `use_3min_bar_timing` | false | true면 완성된 3분봉의 종가 확정 시에만 매매 조건 평가 |
+
+`use_3min_bar_timing`을 활성화하면 봉 안에서 조건가를 일시적으로 통과해도
+주문하지 않는다. 다음 3분 구간의 첫 틱이 들어와 직전 봉 종가가 확정될 때
+한 번만 판단한다. 주문은 확정 직후의 시장가로 실행되므로 판단 종가와 실제
+체결가는 다를 수 있다.
 
 ## 평단·수량의 진실원 (실거래)
 
@@ -126,8 +131,8 @@ kiwoom 문서의 전체 명세 중 Bach가 구현하지 않은 것:
   정리하고 전 종목 `MANUAL_TRADING` 복귀.
 - **분할 매수가 수동 지정(`y_sc1`/`y_sc2`/`y1_sc3`/`y2_sc3`) 미지원** —
   항상 공식값 사용.
-- **`use_3min_bar_timing` 미구현** — 필드만 있고 엔진은 항상 틱 기준.
-  `use_tick_buy`, `tick_instant_profit_percent`는 필드조차 없음.
+- **틱 전용 추가 옵션 없음** — `use_tick_buy`,
+  `tick_instant_profit_percent`는 필드조차 없음.
 - **호가 단위(tick) 보정 없음** — 전량 시장가 주문이라 지정가 산출이 불필요.
 
 

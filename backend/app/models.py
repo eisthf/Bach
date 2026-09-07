@@ -79,7 +79,8 @@ class AutoConfig(BaseModel):
 
     # 실행 모드
     ulc_first_buy_only: bool = Field(False, description="1차 매수만 실행")
-    use_3min_bar_timing: bool = Field(False, description="3분봉 종가 기준 매매")
+    use_3min_bar_timing: bool = Field(
+        False, description="완성된 3분봉 종가가 확정될 때만 매매 조건 평가")
 
 
 # ---------------------------------------------------------------------------

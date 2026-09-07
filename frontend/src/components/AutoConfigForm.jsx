@@ -18,7 +18,7 @@ const BOOLS = [
   { key: 'ulc_allow_lower_open', label: '하락 시가 진입 허용' },
   { key: 'ulc_trailing', label: '트레일링 스탑' },
   { key: 'ulc_first_buy_only', label: '1차 매수만' },
-  { key: 'use_3min_bar_timing', label: '3분봉 타이밍' },
+  { key: 'use_3min_bar_timing', label: '3분봉 종가 타이밍' },
 ]
 
 export default function AutoConfigForm({ account, stock }) {
