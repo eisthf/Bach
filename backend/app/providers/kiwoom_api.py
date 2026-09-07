@@ -240,6 +240,7 @@ def fetch_upper_limits(token: str, mock: bool = False) -> Optional[List[dict]]:
             "price": price,
             "prev_close": max(0, price - change),
             "change_pct": parse_price(row.get("flu_rt")),
+            "volume": parse_int(row.get("trde_qty")),
         })
     return out
 

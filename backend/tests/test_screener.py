@@ -140,7 +140,7 @@ def test_current_upper_limits_use_today_and_previous_krx_metadata():
     previous = [q("048770", 3_050, name="TPC로보틱스", cap=46_000_000_000)]
     res = screen_current_upper_limits(
         [{"code": "048770", "name": "TPC로보틱스", "price": 3_965,
-          "prev_close": 3_050, "change_pct": 30.0}],
+          "prev_close": 3_050, "change_pct": 30.0, "volume": 12_345_678}],
         fetch=fetcher({"20260904": previous}),
         today=date(2026, 9, 7),
     )
@@ -151,6 +151,7 @@ def test_current_upper_limits_use_today_and_previous_krx_metadata():
     assert res.scanned == 1
     assert res.stocks[0].market == "KOSDAQ"
     assert res.stocks[0].market_cap == 3_965_000
+    assert res.stocks[0].volume == 12_345_678
 
 
 def test_current_upper_limits_keep_successful_empty_today():

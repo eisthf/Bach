@@ -147,6 +147,7 @@ class UpperLimitStock(BaseModel):
     close: int                       # D일 종가
     prev_close: int                  # 직전 거래일 종가
     change_pct: float                # 등락률(%)
+    volume: int = 0                  # 조회일 거래량(키움 시세면 현재까지 누적)
     market_cap: int = 0              # 시가총액(원)
 
 

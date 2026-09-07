@@ -19,13 +19,14 @@ def test_fetch_upper_limits_normalizes_signed_prices(monkeypatch):
             "updown_pric": [{
                 "stk_cd": "A048770", "stk_nm": "TPC로보틱스",
                 "cur_prc": "+003965", "pred_pre": "+000915", "flu_rt": "+30.00",
+                "trde_qty": "12,345,678",
             }],
         })
 
     monkeypatch.setattr(kw, "_post", post)
     assert kw.fetch_upper_limits("token") == [{
         "code": "048770", "name": "TPC로보틱스", "price": 3965,
-        "prev_close": 3050, "change_pct": 30.0,
+        "prev_close": 3050, "change_pct": 30.0, "volume": 12_345_678,
     }]
 
 

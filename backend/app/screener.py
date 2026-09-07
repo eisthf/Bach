@@ -252,6 +252,7 @@ def screen_upper_limit(
                 close=q.close,
                 prev_close=base,
                 change_pct=pct,
+                volume=q.volume,
                 market_cap=q.market_cap,
             ))
 
@@ -303,6 +304,7 @@ def screen_current_upper_limits(
             close=price,
             prev_close=prev_close,
             change_pct=pct,
+            volume=int(item.get("volume") or 0),
             market_cap=shares * price,
         ))
 

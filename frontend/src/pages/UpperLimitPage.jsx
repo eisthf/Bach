@@ -128,7 +128,10 @@ export default function UpperLimitPage() {
                 <th>종목명</th>
                 <th>시장</th>
                 <th className="col-num">시가총액</th>
-                  <th className="col-num">{data.snapshot ? '현재가' : '종가'}</th>
+                <th className="col-num" title={data.snapshot ? '현재까지 누적 거래량' : '조회일 거래량'}>
+                  거래량{data.snapshot ? ' (누적)' : ''}
+                </th>
+                <th className="col-num">{data.snapshot ? '현재가' : '종가'}</th>
                 <th className="col-num">등락률</th>
               </tr>
             </thead>
@@ -142,6 +145,7 @@ export default function UpperLimitPage() {
                     <span className={`mkt mkt-${s.market.toLowerCase()}`}>{s.market}</span>
                   </td>
                   <td className="col-num">{formatMarketCap(s.market_cap)}</td>
+                  <td className="col-num">{won(s.volume)}</td>
                   <td className="col-num strong">{won(s.close)}</td>
                   <td className="col-num up" title={`직전 거래일 종가 ${won(s.prev_close)}원`}>
                     +{s.change_pct.toFixed(2)}%
