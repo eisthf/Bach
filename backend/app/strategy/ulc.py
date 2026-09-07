@@ -73,6 +73,9 @@ class UlcEngine:
     fill_qty: int = 0
     fill_avg: float = 0.0
     trail_max: float = 0.0
+    # 손절선 도달 시 자동매도를 생략하고 Hub에 수동 인계를 요청한 사유.
+    # 빈 문자열이면 기존처럼 매도 후 종료한 것이다.
+    manual_handoff_reason: str = ""
     # 3분봉 모드의 현재 봉. 다음 3분 구간의 첫 틱이 들어와야 직전 봉 종가가
     # 확정되므로, 마지막 틱을 보관했다가 그때 전략에 전달한다.
     _bar_bucket: Optional[int] = None
@@ -321,7 +324,7 @@ class UlcEngine:
             self.trail_max = max(self.trail_max, price)
             # 손절 우선
             if price <= self.avg_cost * (1 - c.ulc_sl):
-                await self._exit_all(sell_fn, "트레일링 중 손절")
+                await self._handle_stop(sell_fn, "트레일링 중 손절")
                 return
             # 상한가 도달
             if price >= self.x * 1.295:
@@ -345,7 +348,7 @@ class UlcEngine:
         # 분할 leg 는 자연히 소멸한다. 손절은 stop_active 로 계속 게이트.
         if self.phase in (Phase.ACCUMULATING, Phase.HOLDING):
             if stop_active and price <= self.avg_cost * (1 - c.ulc_sl):
-                await self._exit_all(sell_fn, "손절")
+                await self._handle_stop(sell_fn, "손절")
                 return
             if price >= self.avg_cost * (1 + c.ulc_tp):
                 if c.ulc_trailing:
@@ -367,6 +370,20 @@ class UlcEngine:
                 else:
                     await self._exit_all(sell_fn, "익절 전량")
                 return
+
+    async def _handle_stop(
+        self, sell_fn: Callable[[int], Awaitable[float]], reason: str,
+    ) -> None:
+        """손절선 도달: 설정에 따라 자동 청산하거나 보유 그대로 수동 인계."""
+        if self.config.ulc_manual_on_stop and self.all_filled:
+            self.manual_handoff_reason = reason
+            self.phase = Phase.DONE
+            self._emit(
+                f"{reason} 기준 도달: 자동매도 생략 → 수동매매 인계 "
+                f"(평단 {self.avg_cost:,.0f}, 보유 {self.shares}주)"
+            )
+            return
+        await self._exit_all(sell_fn, reason)
 
     async def _exit_all(self, sell_fn: Callable[[int], Awaitable[float]], reason: str) -> None:
         # 청산 수량은 추정치가 아니라 실보유를 따른다(과다 매도 → 주문거부 방지).

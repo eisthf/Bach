@@ -360,6 +360,7 @@ class Hub:
 
         changed = eng.shares != before_shares
         if eng.phase == Phase.DONE and stock.machine.state == TradeState.AUTO_TRADING:
+            manual_handoff_reason = eng.manual_handoff_reason
             # 엔진의 믿음이 아니라 계좌로 청산을 확인한다. 부분체결·미체결로
             # 잔량이 남았는데 '청산 완료'라고 기록하면, 아무도 관리하지 않는
             # 포지션이 조용히 생긴다. 재매도를 자동으로 걸지는 않는다 —
@@ -374,11 +375,19 @@ class Hub:
             stock.machine.on_position_flat()
             stock.engine = None
             self._log_transition(
-                stock, previous, "ENGINE_DONE",
+                stock, previous,
+                "STOP_MANUAL_HANDOFF" if manual_handoff_reason else "ENGINE_DONE",
                 position_quantity=pos.quantity if pos is not None else None,
                 position_verified=pos is not None,
             )
-            if pos is None:
+            if manual_handoff_reason:
+                qty = f"계좌 잔량 {pos.quantity}주" if pos is not None else "계좌 잔고 확인 실패"
+                stock.recovery_notice = (
+                    f"{manual_handoff_reason} 기준 도달 수동 인계: 자동 매도하지 않음. "
+                    f"{qty}. 보유 종목·미체결을 확인하고 수동 관리하세요."
+                )
+                self._log(f"[{stock.code}] ⚠️ {stock.recovery_notice}")
+            elif pos is None:
                 stock.recovery_notice = (
                     "자동매매 종료 수동 인계: 계좌 잔고 확인 실패. "
                     "자동매매 보호 없음. 보유 종목·미체결을 확인하세요."

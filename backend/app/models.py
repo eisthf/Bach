@@ -71,6 +71,8 @@ class AutoConfig(BaseModel):
     # 손익 청산
     ulc_tp: float = Field(0.05, description="익절 비율(평단 대비)")
     ulc_sl: float = Field(0.05, description="손절 비율(평단 대비)")
+    ulc_manual_on_stop: bool = Field(
+        False, description="분할매수 완료 후 손절선 도달 시 자동매도 없이 수동 인계")
 
     # 트레일링 스탑
     ulc_trailing: bool = Field(False, description="트레일링 스탑 활성화")
