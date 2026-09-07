@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useStore } from '../store'
 
 const fmt = (n) => Number(n || 0).toLocaleString('ko-KR')
@@ -10,14 +10,26 @@ export default function ManualTradePanel({ account, stock, tick }) {
   const [amount, setAmount] = useState(500000)
   const [qty, setQty] = useState(0)  // 기본 0 — '전량' 버튼으로 보유수량 채움
   const [msg, setMsg] = useState('')
+  const [stopEnabled, setStopEnabled] = useState(!!stock.config.manual_stop_enabled)
+  const [stopPct, setStopPct] = useState(stock.config.manual_stop_pct ?? 5)
   const pending = (orders[account] || {})[stock.code] || []
 
   const enabled = stock.state === 'MANUAL_TRADING'
   const verified = stock.position_verified !== false
   const pos = stock.position
   const price = tick?.price
+  const stopPctNumber = Number(stopPct)
+  const validStopPct = Number.isFinite(stopPctNumber) && stopPctNumber > 0 && stopPctNumber <= 100
   // 현재가가 없으면 주식수를 계산할 수 없음 → null(표시는 '—'주)
   const estShares = price ? Math.floor(amount / price) : null
+  const stopPrice = verified && pos.avg_price > 0 && validStopPct
+    ? Math.round(pos.avg_price * (1 - stopPctNumber / 100))
+    : null
+
+  useEffect(() => {
+    setStopEnabled(!!stock.config.manual_stop_enabled)
+    setStopPct(stock.config.manual_stop_pct ?? 5)
+  }, [stock.config])
 
   const doBuy = async () => {
     const r = await actions.buy(account, stock.code, Number(amount))
@@ -26,6 +38,16 @@ export default function ManualTradePanel({ account, stock, tick }) {
   const doSell = async () => {
     const r = await actions.sell(account, stock.code, Number(qty))
     setMsg(r.message)
+  }
+  const saveStop = async () => {
+    await actions.putConfig(account, stock.code, {
+      ...stock.config,
+      manual_stop_enabled: stopEnabled,
+      manual_stop_pct: stopPctNumber,
+    })
+    setMsg(stopEnabled
+      ? `자동 손절 저장: 평단 대비 ${stopPctNumber}% 하락 (${stopPrice == null ? '평단 확인 후 계산' : `${fmt(stopPrice)}원`})`
+      : '자동 손절 해제')
   }
 
   return (
@@ -78,6 +100,39 @@ export default function ManualTradePanel({ account, stock, tick }) {
         >
           매도
         </button>
+      </div>
+
+      <div className="manual-stop-row">
+        <label className="checkfield">
+          <input
+            type="checkbox"
+            checked={stopEnabled}
+            disabled={!enabled}
+            onChange={(e) => setStopEnabled(e.target.checked)}
+          />
+          <span>평단 대비 자동 손절</span>
+        </label>
+        <input
+          className="manual-stop-pct"
+          type="number"
+          min="0.1"
+          max="100"
+          step="0.1"
+          value={stopPct}
+          disabled={!enabled || !stopEnabled}
+          onChange={(e) => setStopPct(e.target.value)}
+        />
+        <span className="hint">% 하락{stopPrice == null ? '' : ` · ${fmt(stopPrice)}원 이하`}</span>
+        <button
+          className="save-btn"
+          disabled={!enabled || !validStopPct}
+          onClick={saveStop}
+        >
+          저장
+        </button>
+      </div>
+      <div className="manual-stop-note">
+        조건 충족 시 보유 전량 시장가 매도 · 주문 전송 후 자동 해제
       </div>
 
       {pending.length > 0 && (

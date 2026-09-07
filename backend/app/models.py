@@ -84,6 +84,11 @@ class AutoConfig(BaseModel):
     use_3min_bar_timing: bool = Field(
         False, description="완성된 3분봉 종가가 확정될 때만 매매 조건 평가")
 
+    # 수동매매 보호 주문
+    manual_stop_enabled: bool = Field(False, description="수동매매 평단 기준 자동 전량 손절")
+    manual_stop_pct: float = Field(
+        5.0, gt=0, le=100, description="수동매매 자동 손절률(퍼센트, 5=5%)")
+
 
 # ---------------------------------------------------------------------------
 # 주문 / 포지션

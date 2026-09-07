@@ -238,6 +238,10 @@ input:focus { outline: none; border-color: var(--accent); }
 .trade-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .trade-row label { width: 88px; font-size: 12px; color: var(--muted); }
 .trade-row input { width: 110px; }
+.manual-stop-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); }
+.manual-stop-row .checkfield { margin-right: auto; }
+.manual-stop-row .manual-stop-pct { width: 72px; }
+.manual-stop-note { color: var(--muted); font-size: 11px; margin-top: 5px; }
 .hint { font-size: 11px; color: var(--muted); }
 .buy-btn { background: var(--up); color: #fff; border: none; border-radius: 6px; padding: 7px 16px; font-weight: 700; margin-left: auto; }
 .sell-btn { background: var(--down); color: #fff; border: none; border-radius: 6px; padding: 7px 16px; font-weight: 700; }
@@ -495,6 +499,9 @@ input:focus { outline: none; border-color: var(--accent); }
   .checkfield input { min-height: 24px; width: 24px; }
   .save-btn { width: 100%; }
   .auto-actions { flex-wrap: wrap; }
+  .manual-stop-row { flex-wrap: wrap; }
+  .manual-stop-row .checkfield { flex-basis: 100%; }
+  .manual-stop-row .save-btn { width: auto; }
   .recovery-notice { margin: 8px 0; padding: 10px; }
 
   .side-col { margin-top: 10px; }

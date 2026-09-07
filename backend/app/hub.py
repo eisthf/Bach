@@ -16,6 +16,7 @@ import calendar
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Set
@@ -47,6 +48,8 @@ class Stock:
     task: Optional[asyncio.Task] = None
     engine: Optional[UlcEngine] = None
     recovery_notice: str = ""
+    manual_stop_triggered: bool = False
+    manual_stop_checked_at: float = 0.0
 
 
 class Hub:
@@ -201,9 +204,14 @@ class Hub:
                 stock.machine.state = TradeState.MANUAL_TRADING
                 stock.engine = None
                 self._log_transition(stock, entry.get("state"), "SERVER_RESTORE")
+                protection = (
+                    f"수동 자동손절 {stock.config.manual_stop_pct:g}% 설정은 유지됩니다."
+                    if stock.config.manual_stop_enabled
+                    else "자동매매 보호 없음."
+                )
                 stock.recovery_notice = (
                     "재시작 수동 인계: " + "; ".join(reasons)
-                    + ". 자동매매 보호 없음. 보유 종목·미체결을 확인하고 수동 관리하세요."
+                    + f". {protection} 보유 종목·미체결을 확인하고 수동 관리하세요."
                     if reasons else entry.get("recovery_notice", "")
                 )
                 if stock.recovery_notice:
@@ -332,8 +340,77 @@ class Hub:
                 self.broadcast({"type": "tick", "tick": tick.model_dump()})
                 if stock.machine.state == TradeState.AUTO_TRADING and stock.engine:
                     await self._run_engine_tick(stock, tick)
+                elif stock.machine.state == TradeState.MANUAL_TRADING:
+                    await self._run_manual_stop(stock, tick)
         except asyncio.CancelledError:
             pass
+
+    async def _run_manual_stop(self, stock: Stock, tick: Tick) -> None:
+        """수동매매 보호 손절. 조건 충족 시 계좌 보유수량 전량을 한 번만 주문."""
+        cfg = stock.config
+        if (not cfg.manual_stop_enabled or stock.manual_stop_triggered
+                or not self.clock.is_open() or tick.price <= 0):
+            return
+
+        # 고빈도 틱마다 계좌 잔고를 조회하지 않는다. KiwoomBroker에도 2초 캐시가
+        # 있지만 종목별 tick task가 동시에 몰리는 부하를 여기서 한 번 더 줄인다.
+        now = time.monotonic()
+        if now - stock.manual_stop_checked_at < 1.0:
+            return
+        stock.manual_stop_checked_at = now
+        try:
+            pos = await asyncio.to_thread(self.broker.position, stock.code)
+        except Exception as exc:  # noqa: BLE001
+            self._log(
+                f"[{stock.code}] 수동 자동손절 잔고 조회 실패: {type(exc).__name__}",
+                event="manual_stop_error", code=stock.code, stage="position",
+                error_type=type(exc).__name__,
+            )
+            return
+        if pos.quantity <= 0 or pos.avg_price <= 0:
+            return
+
+        stop_price = pos.avg_price * (1 - cfg.manual_stop_pct / 100)
+        if tick.price > stop_price:
+            return
+
+        # 주문 호출 동안 다음 틱이 중복 주문을 내지 못하게 먼저 잠근다.
+        stock.manual_stop_triggered = True
+        try:
+            result = await asyncio.to_thread(self.broker.sell, stock.code, pos.quantity)
+        except Exception as exc:  # noqa: BLE001
+            stock.manual_stop_triggered = False
+            self._log(
+                f"[{stock.code}] ⚠️ 수동 자동손절 주문 오류 — 다음 틱에 재시도",
+                event="manual_stop_error", code=stock.code, stage="sell",
+                price=tick.price, stop_price=stop_price, quantity=pos.quantity,
+                error_type=type(exc).__name__,
+            )
+            return
+        if not result.ok:
+            stock.manual_stop_triggered = False
+            self._log(
+                f"[{stock.code}] ⚠️ 수동 자동손절 주문 실패 — 다음 틱에 재시도",
+                event="manual_stop_error", code=stock.code, stage="sell",
+                price=tick.price, stop_price=stop_price, quantity=pos.quantity,
+            )
+            return
+
+        # 시장가 주문이 미체결인 동안 재시작해도 같은 수량을 다시 팔지 않도록
+        # 성공적으로 전송한 보호 옵션은 일회성으로 해제한다.
+        stock.config = stock.config.model_copy(update={"manual_stop_enabled": False})
+        self.broker.invalidate()
+        self._persist()
+        self._log(
+            f"[{stock.code}] 수동 자동손절: {pos.quantity}주 시장가 매도 전송 "
+            f"(현재가 {tick.price:,.0f} ≤ 기준선 {stop_price:,.0f}, "
+            f"평단 {pos.avg_price:,.0f}, 손절률 {cfg.manual_stop_pct:g}%)",
+            event="manual_stop_triggered", code=stock.code, price=tick.price,
+            stop_price=stop_price, avg_price=pos.avg_price,
+            stop_pct=cfg.manual_stop_pct, quantity=pos.quantity,
+        )
+        await self._refresh_status(stock.code)
+        await self.refresh_orders()
 
     async def _run_engine_tick(self, stock: Stock, tick: Tick) -> None:
         """엔진에 틱 1개를 흘린다.
@@ -429,6 +506,8 @@ class Hub:
         stock = self.stocks.get(code)
         if stock:
             stock.config = config
+            stock.manual_stop_triggered = False
+            stock.manual_stop_checked_at = 0.0
             self._persist()
             self.broadcast_status(code)
 
