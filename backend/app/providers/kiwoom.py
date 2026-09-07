@@ -208,6 +208,10 @@ class KiwoomDataProvider(DataProvider):
                         self._day_open.setdefault(code, op)
         return self._name.get(code)
 
+    def current_upper_limits(self) -> list[dict] | None:
+        """키움 ka10017로 당일 KRX 상한가 종목을 조회한다."""
+        return kw.fetch_upper_limits(self.token, mock=self._mock)
+
     # -- 틱 --------------------------------------------------------------
     def last_tick(self, code: str) -> Optional[Tick]:
         return self._last.get(code)

@@ -30,7 +30,7 @@ export const api = {
   marketReset: () => req('/api/market/reset', { method: 'POST' }),
 
   // 상한가 스크리너 — 시장 전체 데이터라 계좌 스코프가 아니다.
-  // date 생략 시 서버가 가장 최근 거래일을 잡는다.
+  // 오늘은 키움 당일 시세, 과거는 KRX 확정 일별 데이터를 사용한다.
   upperLimit: (date) =>
     req(`/api/screener/upper-limit${date ? `?date=${enc(date)}` : ''}`),
 

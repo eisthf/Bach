@@ -189,6 +189,62 @@ def fetch_stock_name(token: str, code: str, mock: bool = False) -> Optional[str]
 
 
 # ---------------------------------------------------------------------------
+# 당일 상한가 (ka10017)
+# ---------------------------------------------------------------------------
+def fetch_upper_limits(token: str, mock: bool = False) -> Optional[List[dict]]:
+    """ka10017 당일 상한가 종목을 정규화한다.
+
+    ``None``은 호출 실패, 빈 목록은 정상 응답이지만 해당 종목이 없음을 뜻한다.
+    과거 날짜를 받지 않는 API라 과거 스크리닝에는 사용하지 않는다.
+    """
+    url = f"{rest_host(mock)}/api/dostk/stkinfo"
+    headers = {
+        "Content-Type": "application/json;charset=UTF-8",
+        "authorization": f"Bearer {token}",
+        "api-id": "ka10017",
+    }
+    body = {
+        "mrkt_tp": "000",       # 전체 시장
+        "updown_tp": "1",       # 상한
+        "sort_tp": "1",         # 종목코드순
+        "stk_cnd": "0",         # 전체
+        "trde_qty_tp": "0000",
+        "crd_cnd": "0",
+        "trde_gold_tp": "0",
+        "stex_tp": "1",         # KRX
+    }
+    resp = _post(url, headers, body, timeout=10, retries=3)
+    if resp is None or resp.status_code != 200:
+        status = resp.status_code if resp is not None else "—"
+        logger.warning("당일 상한가 조회 실패(HTTP %s)", status)
+        return None
+    try:
+        data = resp.json()
+    except Exception:  # noqa: BLE001
+        logger.warning("당일 상한가 응답 파싱 실패")
+        return None
+    if data.get("return_code") != 0:
+        logger.warning("당일 상한가 조회 거부: %s", data.get("return_msg"))
+        return None
+
+    out: List[dict] = []
+    for row in data.get("updown_pric") or []:
+        code = str(row.get("stk_cd") or "").strip().lstrip("A")
+        price = parse_int(row.get("cur_prc"))
+        change = parse_int(row.get("pred_pre"))
+        if not code or price <= 0:
+            continue
+        out.append({
+            "code": code,
+            "name": str(row.get("stk_nm") or "").strip(),
+            "price": price,
+            "prev_close": max(0, price - change),
+            "change_pct": parse_price(row.get("flu_rt")),
+        })
+    return out
+
+
+# ---------------------------------------------------------------------------
 # 분봉 차트 (ka10080)
 # ---------------------------------------------------------------------------
 def fetch_min_bars(

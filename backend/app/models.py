@@ -155,6 +155,7 @@ class UpperLimitResult(BaseModel):
     prev_date: str                   # 비교 기준이 된 직전 거래일 (YYYY-MM-DD)
     min_pct: float
     max_pct: float
-    source: str                      # "krx"=실데이터 | "mock"=합성 데모 데이터
+    source: str                      # "krx"=확정 일별 | "kiwoom"=당일 | "mock"=데모
+    snapshot: bool = False           # True면 확정 종가가 아닌 당일 시세 스냅샷
     scanned: int                     # D일 조회된 전체 종목 수
     stocks: list[UpperLimitStock] = []

@@ -4,6 +4,8 @@
 """
 from __future__ import annotations
 
+from datetime import date
+
 import pytest
 
 from app.providers.krx_api import DailyQuote, parse_rows
@@ -11,6 +13,8 @@ from app.screener import (
     NotATradingDay,
     ScreenerError,
     _mock_quotes,
+    latest_session_date,
+    screen_current_upper_limits,
     screen_upper_limit,
 )
 
@@ -115,6 +119,48 @@ def test_default_date_is_latest_trading_day(monkeypatch):
     )
     assert res.date == "2026-03-13"       # 금요일로 내려감
     assert res.prev_date == "2026-03-12"
+
+
+def test_latest_session_date_keeps_previous_day_before_open():
+    from datetime import datetime
+
+    assert latest_session_date(datetime(2026, 9, 8, 0, 14)) == date(2026, 9, 7)
+    assert latest_session_date(datetime(2026, 9, 8, 8, 59)) == date(2026, 9, 7)
+    assert latest_session_date(datetime(2026, 9, 8, 9, 0)) == date(2026, 9, 8)
+
+
+def test_latest_session_date_skips_weekend_before_monday_open():
+    from datetime import datetime
+
+    assert latest_session_date(datetime(2026, 9, 7, 8, 0)) == date(2026, 9, 4)
+    assert latest_session_date(datetime(2026, 9, 6, 12, 0)) == date(2026, 9, 4)
+
+
+def test_current_upper_limits_use_today_and_previous_krx_metadata():
+    previous = [q("048770", 3_050, name="TPC로보틱스", cap=46_000_000_000)]
+    res = screen_current_upper_limits(
+        [{"code": "048770", "name": "TPC로보틱스", "price": 3_965,
+          "prev_close": 3_050, "change_pct": 30.0}],
+        fetch=fetcher({"20260904": previous}),
+        today=date(2026, 9, 7),
+    )
+    assert res.date == "2026-09-07"
+    assert res.prev_date == "2026-09-04"
+    assert res.source == "kiwoom"
+    assert res.snapshot is True
+    assert res.scanned == 1
+    assert res.stocks[0].market == "KOSDAQ"
+    assert res.stocks[0].market_cap == 3_965_000
+
+
+def test_current_upper_limits_keep_successful_empty_today():
+    res = screen_current_upper_limits(
+        [], fetch=fetcher({"20260904": [q("A", 1000)]}),
+        today=date(2026, 9, 7),
+    )
+    assert res.date == "2026-09-07"
+    assert res.stocks == []
+    assert res.snapshot is True
 
 
 def test_non_trading_day_raises():

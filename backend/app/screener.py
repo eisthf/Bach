@@ -7,9 +7,11 @@
 D-1은 **달력상 전날이 아니라 직전 거래일**이다. 주말·공휴일·대체휴일은
 데이터가 비어 오는 것으로 판별해 건너뛴다(휴장일 달력을 따로 들고 있지 않다).
 
-데이터 소스 — 환경변수 ``SCREENER_SOURCE``:
+데이터 소스:
 - ``krx``  : KRX Open API 전종목 일별매매정보. ``KRX_OPEN_API_KEY`` 필요.
+- ``kiwoom``: 실전 계좌의 ka10017 당일 상한가(오늘 조회에만 자동 사용).
 - ``mock`` : 합성 데이터. 키 없이 UI/흐름을 확인하기 위한 데모용.
+환경변수 ``SCREENER_SOURCE``는 ``krx|mock`` 중 하나로 데이터 환경을 고른다.
 미지정이면 키가 있을 때 krx, 없으면 mock으로 자동 선택한다. 응답의 ``source``
 필드로 어느 쪽인지 항상 알 수 있고, 프런트는 mock이면 '데모 데이터' 배지를
 띄운다 — 합성값을 실데이터로 오인하는 게 가장 위험하기 때문이다.
@@ -26,7 +28,7 @@ import zlib
 from datetime import date as _date, datetime, timedelta
 from typing import Callable, List, Optional
 
-from .market_clock import now_kst
+from .market_clock import REGULAR_OPEN, now_kst
 from .models import UpperLimitResult, UpperLimitStock
 from .providers.krx_api import DailyQuote, configured, daily_quotes
 
@@ -50,6 +52,10 @@ class NotATradingDay(ScreenerError):
     """지정일에 시세가 없다(휴장일이거나 아직 게시 전)."""
 
 
+class CurrentDataUnavailable(ScreenerError):
+    """실전 계좌의 키움 당일 상한가 조회가 실패했다."""
+
+
 # ---------------------------------------------------------------------------
 # 날짜 유틸
 # ---------------------------------------------------------------------------
@@ -70,6 +76,16 @@ def _compact(d: _date) -> str:
 
 def _iso(d: _date) -> str:
     return d.strftime("%Y-%m-%d")
+
+
+def latest_session_date(at: datetime) -> _date:
+    """현재 시각 기준 가장 최근 정규장 세션 날짜(주말 포함 장전 롤오버 보정)."""
+    d = at.date()
+    if d.weekday() >= 5 or at.time() < REGULAR_OPEN:
+        d -= timedelta(days=1)
+    while d.weekday() >= 5:
+        d -= timedelta(days=1)
+    return d
 
 
 def _walk_back(fetch: Fetch, start: _date) -> tuple[_date, List[DailyQuote]]:
@@ -250,4 +266,50 @@ def screen_upper_limit(
         source=src,
         scanned=len(quotes_d),
         stocks=rows,
+    )
+
+
+def screen_current_upper_limits(
+    current: List[dict],
+    min_pct: float = MIN_PCT_DEFAULT,
+    max_pct: float = MAX_PCT_DEFAULT,
+    fetch: Optional[Fetch] = None,
+    today: Optional[_date] = None,
+) -> UpperLimitResult:
+    """키움 당일 상한가 스냅샷을 KRX 직전 거래일 종목정보로 보완한다."""
+    if min_pct > max_pct:
+        raise ScreenerError(f"min_pct({min_pct})가 max_pct({max_pct})보다 큽니다.")
+    d = today or now_kst().date()
+    get = fetch or daily_quotes
+    prev_d, previous = _walk_back(get, d - timedelta(days=1))
+    metadata = {q.code: q for q in previous}
+
+    rows: List[UpperLimitStock] = []
+    for item in current:
+        code = str(item.get("code") or "").strip()
+        price = int(item.get("price") or 0)
+        pct = round(float(item.get("change_pct") or 0), 2)
+        if not code or price <= 0 or not min_pct <= pct <= max_pct:
+            continue
+        old = metadata.get(code)
+        prev_close = int(item.get("prev_close") or 0)
+        if prev_close <= 0 and old is not None:
+            prev_close = old.close
+        shares = old.listed_shares if old is not None else 0
+        rows.append(UpperLimitStock(
+            code=code,
+            name=str(item.get("name") or (old.name if old else "")),
+            market=old.market if old else "",
+            close=price,
+            prev_close=prev_close,
+            change_pct=pct,
+            market_cap=shares * price,
+        ))
+
+    rows.sort(key=lambda r: (-r.change_pct, -r.market_cap))
+    logger.info("당일 상한가 조회 %s (기준 %s): %d/%d 종목 [kiwoom]",
+                _iso(d), _iso(prev_d), len(rows), len(current))
+    return UpperLimitResult(
+        date=_iso(d), prev_date=_iso(prev_d), min_pct=min_pct, max_pct=max_pct,
+        source="kiwoom", snapshot=True, scanned=len(current), stocks=rows,
     )

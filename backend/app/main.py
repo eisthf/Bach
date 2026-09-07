@@ -22,6 +22,7 @@ configure_event_log()
 record_event("서버 프로세스 시작", event="server_start")
 
 from .hub import Hub, manager  # noqa: E402  (load_dotenv 이후 import)
+from .market_clock import now_kst  # noqa: E402
 from .models import (  # noqa: E402
     AutoConfig,
     BuyOrderReq,
@@ -34,9 +35,14 @@ from .providers.krx_api import KrxAuthError, KrxError  # noqa: E402
 from .screener import (  # noqa: E402
     MAX_PCT_DEFAULT,
     MIN_PCT_DEFAULT,
+    CurrentDataUnavailable,
     NotATradingDay,
     ScreenerError,
+    latest_session_date,
+    parse_date,
+    screen_current_upper_limits,
     screen_upper_limit,
+    source_name,
 )
 
 app = FastAPI(title="Bach 주식 거래 API")
@@ -294,10 +300,34 @@ async def screener_upper_limit(
 ):
     """D일 종가가 직전 거래일 종가 대비 min_pct~max_pct% 오른 종목."""
     try:
+        now = now_kst()
+        session_date = latest_session_date(now)
+        requested = parse_date(date) if date else session_date
+        # KRX 일별 데이터는 당일 게시가 늦을 수 있다. 실전 키움 계좌가 있으면
+        # 가장 최근 세션만 ka10017을 사용한다. 자정~09:00 장전에는 ka10017이
+        # 직전 세션 값을 유지하므로 날짜도 직전 거래일로 롤오버해야 한다.
+        if requested == session_date and source_name() == "krx":
+            live_hub = next(
+                (manager.hubs[c.id] for c in manager.configs
+                 if c.provider == "kiwoom" and not c.kiwoom_mock),
+                None,
+            )
+            if live_hub is not None:
+                current = await asyncio.to_thread(live_hub.data.current_upper_limits)
+                if current is None:
+                    raise CurrentDataUnavailable(
+                        "키움 당일 상한가 조회에 실패했습니다. 잠시 후 다시 조회하세요."
+                    )
+                return await asyncio.to_thread(
+                    screen_current_upper_limits, current, min_pct, max_pct,
+                    today=session_date,
+                )
         # 전종목 조회는 네트워크 블로킹이라 이벤트 루프 밖에서 돌린다.
         return await asyncio.to_thread(screen_upper_limit, date, min_pct, max_pct)
     except NotATradingDay as e:
         raise HTTPException(404, str(e))
+    except CurrentDataUnavailable as e:
+        raise HTTPException(502, str(e))
     except ScreenerError as e:
         raise HTTPException(400, str(e))
     except KrxAuthError as e:

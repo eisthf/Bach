@@ -355,6 +355,10 @@ input:focus { outline: none; border-color: var(--accent); }
   font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 10px;
   background: #fff4e0; color: #b26a00; border: 1px solid #ffd8a1;
 }
+.live-badge {
+  font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 10px;
+  background: #eaf7ef; color: #257942; border: 1px solid #b8e0c5;
+}
 
 .screener-error {
   border: 1px solid #f0b4b4; background: #fdecec; border-radius: 8px;

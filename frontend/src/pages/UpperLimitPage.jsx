@@ -74,13 +74,19 @@ export default function UpperLimitPage() {
       {data && (
         <div className="screener-summary">
           <span className="sum-main">
-            <strong>{data.date}</strong> 종가 기준
+            <strong>{data.date}</strong> {data.snapshot ? '키움 시세 기준' : '종가 기준'}
             <span className="sum-sep">·</span>
             직전 거래일 <strong>{data.prev_date}</strong> 대비
           </span>
           <span className="sum-count">
-            {data.stocks.length}종목 <span className="muted">/ {won(data.scanned)}종목 조회</span>
+            {data.stocks.length}종목
+            {!data.snapshot && <span className="muted"> / {won(data.scanned)}종목 조회</span>}
           </span>
+          {data.source === 'kiwoom' && (
+            <span className="live-badge" title="키움 ka10017 최근 정규장 시세입니다">
+              키움 시세
+            </span>
+          )}
           {data.source === 'mock' && (
             <span className="demo-badge" title="KRX_OPEN_API_KEY 미설정 — 합성 데이터입니다">
               데모 데이터
@@ -122,7 +128,7 @@ export default function UpperLimitPage() {
                 <th>종목명</th>
                 <th>시장</th>
                 <th className="col-num">시가총액</th>
-                <th className="col-num">종가</th>
+                  <th className="col-num">{data.snapshot ? '현재가' : '종가'}</th>
                 <th className="col-num">등락률</th>
               </tr>
             </thead>
