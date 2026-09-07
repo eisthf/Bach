@@ -219,3 +219,20 @@ backend/tests/       pytest 회귀 테스트 (uv run pytest)
 #   smoke.mjs 기본 흐름 | smoke_multi.mjs 다중계좌 | smoke-mobile.mjs 모바일
 #   smoke-restore.mjs 재시작 복원 | smoke-screener.mjs 상한가 종목 페이지
 ```
+
+### 상태 전환 원인 로그
+
+서버 실행 시 `backend/logs/events.log`에 JSON Lines 형식으로 기록한다.
+UTC 시각(한국 시각은 +9시간), 프로세스 ID, 계좌 별칭, 종목 코드,
+전환 전후 상태와 원인을 보관한다. `PUSH`는 상태 버튼/API 조작,
+`AUTO_SETUP_FAILED`는 엔진 셋업 실패, `ENGINE_DONE`은 엔진 종료,
+`SERVER_RESTORE`는 재시작 복원이며 장 시작·종료·초기화도 별도 기록한다.
+셋업 시 X/Z 값, 분봉 보완 결과, 누락 기준가와 조회 예외 단계·종류를 남긴다.
+기존 화면 로그(전략 판단·주문 체결 등)도 함께 저장한다.
+
+새로고침·재시작 후에도 유지되며 파일당 10 MiB, 이전 파일 10개까지 순환 보관한다.
+`BACH_LOG_DIR`로 저장 디렉터리를 변경할 수 있다. 같은 로그 파일을 여러 서버
+프로세스가 동시에 쓰지 않도록 프로세스별 디렉터리를 지정한다.
+기본 로그 디렉터리는 Git에서 제외된다. 인증정보·HTTP 요청 본문은 추가 기록하지 않는다.
+예: 저장 디렉터리에서 `rg '048770' events.log*`로 해당 종목 기록을 찾는다.
+변경 적용 전의 과거 사건은 복원할 수 없다.

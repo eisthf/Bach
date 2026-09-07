@@ -23,6 +23,7 @@ from typing import Dict, List, Optional, Set
 logger = logging.getLogger("bach.hub")
 
 from .accounts import AccountConfig, load_account_configs
+from .event_log import record_event
 from .market_clock import MarketClock, now_kst
 from .models import (
     AutoConfig,
@@ -79,9 +80,19 @@ class Hub:
     def broadcast(self, msg: dict) -> None:
         self.manager.broadcast({**msg, "account": self.account})
 
-    def _log(self, text: str) -> None:
+    def _log(self, text: str, **fields) -> None:
         # 로그는 계좌 라벨을 접두로 달아 한 패널에서 구분 가능하게.
+        record_event(text, account=self.account, **fields)
         self.manager.broadcast({"type": "log", "text": text, "account": self.account})
+
+    def _log_transition(self, stock: Stock, previous, reason: str, **fields) -> None:
+        before = previous.value if isinstance(previous, TradeState) else previous
+        after = stock.machine.state.value
+        self._log(
+            f"[{stock.code}] 상태 전환: {before} → {after} (원인: {reason})",
+            event="state_transition", code=stock.code, from_state=before,
+            to_state=after, reason=reason, market_phase=self.clock.phase.value, **fields,
+        )
 
     # -- 종목 관리 ---------------------------------------------------------
     def add_stock(self, code: str, name: str = "") -> Stock:
@@ -98,6 +109,7 @@ class Hub:
         self._persist()
         if self._restoring:
             return stock
+        self._log_transition(stock, None, "STOCK_ADDED")
         self._log(f"[{code}] 종목 추가됨")
         self.broadcast_status(code)
         lt = self.data.last_tick(code)
@@ -110,7 +122,8 @@ class Hub:
         if stock and stock.task:
             stock.task.cancel()
         self._persist()
-        self._log(f"[{code}] 종목 제거됨")
+        self._log(f"[{code}] 종목 제거됨", event="stock_removed", code=code,
+                  from_state=stock.machine.state.value if stock else None)
 
     def get(self, code: str) -> Optional[Stock]:
         return self.stocks.get(code)
@@ -187,6 +200,7 @@ class Hub:
                     reasons.append("계좌 잔고 확인 실패")
                 stock.machine.state = TradeState.MANUAL_TRADING
                 stock.engine = None
+                self._log_transition(stock, entry.get("state"), "SERVER_RESTORE")
                 stock.recovery_notice = (
                     "재시작 수동 인계: " + "; ".join(reasons)
                     + ". 자동매매 보호 없음. 보유 종목·미체결을 확인하고 수동 관리하세요."
@@ -356,8 +370,14 @@ class Hub:
                 pos = await asyncio.to_thread(self.broker.position, stock.code)
             except Exception:  # noqa: BLE001
                 pos = None
+            previous = stock.machine.state
             stock.machine.on_position_flat()
             stock.engine = None
+            self._log_transition(
+                stock, previous, "ENGINE_DONE",
+                position_quantity=pos.quantity if pos is not None else None,
+                position_verified=pos is not None,
+            )
             if pos is None:
                 stock.recovery_notice = (
                     "자동매매 종료 수동 인계: 계좌 잔고 확인 실패. "
@@ -384,7 +404,9 @@ class Hub:
         stock = self.stocks.get(code)
         if not stock:
             return None
+        previous = stock.machine.state
         new_state = stock.machine.push()
+        self._log_transition(stock, previous, "PUSH", source="push_action")
         if new_state == TradeState.MANUAL_TRADING:
             stock.engine = None
         if new_state == TradeState.MONITOR:
@@ -406,18 +428,23 @@ class Hub:
         for stock in self.stocks.values():
             prev = stock.machine.state
             new = stock.machine.on_market_open()
+            self._log_transition(stock, prev, "MARKET_OPEN")
             if prev == TradeState.MONITOR and new == TradeState.AUTO_TRADING:
                 # 종목별로 격리: 한 종목의 셋업 실패(레이트리밋, 빈 응답 등)가
                 # 나머지 종목의 장 시작 처리까지 삼키지 않게 한다.
                 try:
                     ok = await self._start_auto(stock)
-                except Exception:  # noqa: BLE001
+                except Exception as exc:  # noqa: BLE001
                     logger.exception("[%s] 자동매매 셋업 오류", stock.code)
+                    self._log(f"[{stock.code}] 자동매매 셋업 예외: {type(exc).__name__}",
+                              event="auto_setup_error", code=stock.code, stage="setup",
+                              error_type=type(exc).__name__)
                     ok = False
                 if not ok:
                     # 엔진 없는 AUTO_TRADING 은 "자동매매 중" 착시만 남기므로,
                     # 실패를 정직하게 수동매매로 인계한다.
                     stock.machine.state = TradeState.MANUAL_TRADING
+                    self._log_transition(stock, new, "AUTO_SETUP_FAILED")
                     self._log(
                         f"[{stock.code}] ⚠️ 자동매매 셋업 실패(기준가 미확보) "
                         f"→ 수동매매로 복귀"
@@ -427,15 +454,19 @@ class Hub:
 
     def apply_market_close(self) -> None:
         for stock in self.stocks.values():
+            previous = stock.machine.state
             stock.machine.on_market_close()
             stock.engine = None
+            self._log_transition(stock, previous, "MARKET_CLOSE")
             self.broadcast_status(stock.code)
         self._persist()
 
     def apply_market_reset(self) -> None:
         for stock in self.stocks.values():
+            previous = stock.machine.state
             stock.machine.state = TradeState.MANUAL_TRADING
             stock.engine = None
+            self._log_transition(stock, previous, "MARKET_RESET")
             self.broadcast_status(stock.code)
         self._persist()
 
@@ -459,13 +490,25 @@ class Hub:
         X 는 진입 필터·시나리오 분류·2차 매수가·상한가 매도선을 하루 종일
         조용히 오염시키므로, 그 종목만 수동으로 넘기는 편이 안전하다.
         """
-        x = await asyncio.to_thread(self.data.prev_close, stock.code)
-        z = await asyncio.to_thread(self.data.day_open, stock.code)
+        async def query(stage, fn, *args):
+            try:
+                return await asyncio.to_thread(fn, *args)
+            except Exception as exc:
+                self._log(
+                    f"[{stock.code}] 셋업 조회 실패: {stage} ({type(exc).__name__})",
+                    event="auto_setup_error", code=stock.code, stage=stage,
+                    error_type=type(exc).__name__,
+                )
+                raise
+
+        x = await query("prev_close", self.data.prev_close, stock.code)
+        z = await query("day_open", self.data.day_open, stock.code)
+        self._log(f"[{stock.code}] 셋업 기준가 조회: X={x}, Z={z}",
+                  event="auto_setup_prices", code=stock.code, stage="primary", x=x, z=z)
         if x is None or z is None:
             # 폴백: 분봉에서 날짜 경계로 역산. 엔진은 이평선이 필요 없으므로
             # lookback 은 전일 꼬리 몇 개면 충분(09:00 REST 부하 최소화).
-            bars = await asyncio.to_thread(
-                self.data.get_bars, stock.code, 3, 3)
+            bars = await query("get_bars", self.data.get_bars, stock.code, 3, 3)
             midnight = calendar.timegm(now_kst().date().timetuple())
             if x is None:
                 prev_bars = [b for b in bars if b.time < midnight]
@@ -473,7 +516,13 @@ class Hub:
             if z is None:
                 day_bars = [b for b in bars if b.time >= midnight]
                 z = day_bars[0].open if day_bars else None
+            self._log(f"[{stock.code}] 셋업 분봉 보완: X={x}, Z={z}, 봉={len(bars)}개",
+                      event="auto_setup_prices", code=stock.code, stage="fallback",
+                      x=x, z=z, bar_count=len(bars))
         if not x or not z:
+            self._log(f"[{stock.code}] 셋업 기준가 미확보: X={x}, Z={z}",
+                      event="auto_setup_missing_prices", code=stock.code, x=x, z=z,
+                      missing=[key for key, value in (("X", x), ("Z", z)) if not value])
             return False
 
         async def position_fn():
@@ -545,6 +594,7 @@ class AccountManager:
 
     def _log(self, text: str) -> None:
         """계좌에 속하지 않는 전역 로그(장 이벤트 등)."""
+        record_event(text)
         self.broadcast({"type": "log", "text": text})
 
     # -- 조회 --------------------------------------------------------------

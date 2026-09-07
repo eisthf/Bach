@@ -16,6 +16,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
 
+from .event_log import configure_event_log, record_event  # noqa: E402
+
+configure_event_log()
+record_event("서버 프로세스 시작", event="server_start")
+
 from .hub import Hub, manager  # noqa: E402  (load_dotenv 이후 import)
 from .models import (  # noqa: E402
     AutoConfig,

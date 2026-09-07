@@ -18,6 +18,7 @@ frontend/*.png
 
 # 로그
 *.log
+backend/logs/
 
 # Claude Code (개인 설정 + worktree 사본).
 # '.claude/'가 아니라 '.claude/*'인 이유: 디렉터리 자체를 제외하면 git이 그
