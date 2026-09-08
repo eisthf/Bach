@@ -47,6 +47,7 @@ class Stock:
     config: AutoConfig
     task: Optional[asyncio.Task] = None
     engine: Optional[UlcEngine] = None
+    setup_task: Optional[asyncio.Task] = None
     recovery_notice: str = ""
     manual_stop_triggered: bool = False
     manual_stop_checked_at: float = 0.0
@@ -54,6 +55,9 @@ class Stock:
 
 class Hub:
     """단일 계좌의 종목/매매를 담당. 시계와 WS 버스는 manager에서 공유."""
+
+    AUTO_SETUP_TIMEOUT = 60.0
+    AUTO_SETUP_INTERVAL = 3.0
 
     def __init__(self, cfg: AccountConfig, clock: MarketClock, manager: "AccountManager") -> None:
         self.account = cfg.id
@@ -121,6 +125,8 @@ class Hub:
         return stock
 
     def remove_stock(self, code: str) -> None:
+        if code in self.stocks:
+            self._cancel_setup(self.stocks[code])
         stock = self.stocks.pop(code, None)
         if stock and stock.task:
             stock.task.cancel()
@@ -494,6 +500,7 @@ class Hub:
         new_state = stock.machine.push()
         self._log_transition(stock, previous, "PUSH", source="push_action")
         if new_state == TradeState.MANUAL_TRADING:
+            self._cancel_setup(stock)
             stock.engine = None
         if new_state == TradeState.MONITOR:
             stock.recovery_notice = ""
@@ -512,36 +519,71 @@ class Hub:
             self.broadcast_status(code)
 
     # -- 장 이벤트 적용 (manager가 전 계좌에 대해 호출) --------------------
+    def _cancel_setup(self, stock: Stock) -> None:
+        if stock.setup_task is not None:
+            stock.setup_task.cancel()
+            stock.setup_task = None
+            stock.recovery_notice = ""
+
+    def _setup_allowed(self, stock: Stock) -> bool:
+        return (self.stocks.get(stock.code) is stock
+                and stock.machine.state == TradeState.AUTO_TRADING
+                and self.clock.phase == MarketPhase.OPEN)
+
+    async def _prepare_auto(self, stock: Stock) -> None:
+        """종목별 독립 대기. 조회 시간까지 포함해 제한 시간이 지나면 수동 인계."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.AUTO_SETUP_TIMEOUT
+        try:
+            while self._setup_allowed(stock):
+                try:
+                    remaining = deadline - loop.time()
+                    if remaining <= 0:
+                        break
+                    ok = await asyncio.wait_for(self._start_auto(stock), remaining)
+                except Exception as exc:  # noqa: BLE001
+                    self._log(f"[{stock.code}] 기준가 조회 재시도: {type(exc).__name__}",
+                              event="auto_setup_error", code=stock.code)
+                    ok = False
+                if not self._setup_allowed(stock):
+                    return
+                if ok:
+                    stock.recovery_notice = ""
+                    self.broadcast_status(stock.code)
+                    self._persist()
+                    return
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    break
+                await asyncio.sleep(min(self.AUTO_SETUP_INTERVAL, remaining))
+            if self._setup_allowed(stock):
+                previous = stock.machine.state
+                stock.machine.state = TradeState.MANUAL_TRADING
+                stock.recovery_notice = "기준가 확인 시간 초과 — 자동매매 미시작, 수동 확인 필요"
+                self._log_transition(stock, previous, "AUTO_SETUP_TIMEOUT")
+                self._log(f"[{stock.code}] ⚠️ 자동매매 셋업 실패(기준가 확인 시간 초과) → 수동매매")
+                self.broadcast_status(stock.code)
+                self._persist()
+        finally:
+            if stock.setup_task is asyncio.current_task():
+                stock.setup_task = None
+
     async def apply_market_open(self) -> None:
         for stock in self.stocks.values():
             prev = stock.machine.state
             new = stock.machine.on_market_open()
             self._log_transition(stock, prev, "MARKET_OPEN")
             if prev == TradeState.MONITOR and new == TradeState.AUTO_TRADING:
-                # 종목별로 격리: 한 종목의 셋업 실패(레이트리밋, 빈 응답 등)가
-                # 나머지 종목의 장 시작 처리까지 삼키지 않게 한다.
-                try:
-                    ok = await self._start_auto(stock)
-                except Exception as exc:  # noqa: BLE001
-                    logger.exception("[%s] 자동매매 셋업 오류", stock.code)
-                    self._log(f"[{stock.code}] 자동매매 셋업 예외: {type(exc).__name__}",
-                              event="auto_setup_error", code=stock.code, stage="setup",
-                              error_type=type(exc).__name__)
-                    ok = False
-                if not ok:
-                    # 엔진 없는 AUTO_TRADING 은 "자동매매 중" 착시만 남기므로,
-                    # 실패를 정직하게 수동매매로 인계한다.
-                    stock.machine.state = TradeState.MANUAL_TRADING
-                    self._log_transition(stock, new, "AUTO_SETUP_FAILED")
-                    self._log(
-                        f"[{stock.code}] ⚠️ 자동매매 셋업 실패(기준가 미확보) "
-                        f"→ 수동매매로 복귀"
-                    )
+                stock.recovery_notice = "자동매매 준비: 기준가 확인 대기 중 (최대 60초, 주문 없음)"
+                self._log(f"[{stock.code}] {stock.recovery_notice}",
+                          event="auto_setup_wait", code=stock.code)
+                stock.setup_task = asyncio.create_task(self._prepare_auto(stock))
             self.broadcast_status(stock.code)
         self._persist()
 
     def apply_market_close(self) -> None:
         for stock in self.stocks.values():
+            self._cancel_setup(stock)
             previous = stock.machine.state
             stock.machine.on_market_close()
             stock.engine = None
@@ -551,6 +593,7 @@ class Hub:
 
     def apply_market_reset(self) -> None:
         for stock in self.stocks.values():
+            self._cancel_setup(stock)
             previous = stock.machine.state
             stock.machine.state = TradeState.MANUAL_TRADING
             stock.engine = None
@@ -568,7 +611,7 @@ class Hub:
 
         X(전일 종가)/Z(당일 시가)는 전용 API(prev_close=ka10081, day_open)가
         정상 경로다. 실패 시에만 분봉을 조회해 **날짜 경계**로 역산한다 —
-        전일 마지막 봉의 close = X, 당일 첫 봉의 open = Z. (예전의 고정 인덱스
+        전일 마지막 봉의 close = X, 당일 09:00 봉의 open = Z. (예전의 고정 인덱스
         bars[-131]/[-130] 산술은 "당일 130봉이 꽉 차 있다"를 가정하는데, 이
         코드가 도는 09:00 에는 당일 봉이 0~1개라 항상 어긋났다. 봉 time 은
         KST 벽시계를 UTC 로 간주한 epoch 이라 자정 경계가 86400 배수에
@@ -602,7 +645,7 @@ class Hub:
                 prev_bars = [b for b in bars if b.time < midnight]
                 x = prev_bars[-1].close if prev_bars else None
             if z is None:
-                day_bars = [b for b in bars if b.time >= midnight]
+                day_bars = [b for b in bars if b.time == midnight + 9 * 3600]
                 z = day_bars[0].open if day_bars else None
             self._log(f"[{stock.code}] 셋업 분봉 보완: X={x}, Z={z}, 봉={len(bars)}개",
                       event="auto_setup_prices", code=stock.code, stage="fallback",
@@ -627,6 +670,8 @@ class Hub:
             position_fn=position_fn,
         )
         eng.setup()
+        if not self._setup_allowed(stock):
+            return False
         stock.engine = eng
         self._log(f"[{stock.code}] 자동매매 시작 (X={x:,.0f}, Z={z:,.0f})")
         return True

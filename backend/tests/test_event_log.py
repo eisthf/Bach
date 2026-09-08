@@ -50,11 +50,12 @@ async def test_missing_open_price_is_recorded(mock_hub, event_file, monkeypatch)
     monkeypatch.setattr(hub.data, "get_bars", lambda *args: [])
     clock.open()
     await hub.apply_market_open()
+    await stock.setup_task
     records = events(event_file)
     missing = next(r for r in records if r["event"] == "auto_setup_missing_prices")
     assert missing["missing"] == ["Z"]
     assert missing["x"] == 10000
-    failure = next(r for r in records if r.get("reason") == "AUTO_SETUP_FAILED")
+    failure = next(r for r in records if r.get("reason") == "AUTO_SETUP_TIMEOUT")
     assert failure["from_state"] == "AUTO_TRADING"
     assert failure["to_state"] == "MANUAL_TRADING"
     assert stock.machine.state == TradeState.MANUAL_TRADING
@@ -72,6 +73,7 @@ async def test_setup_exception_records_stage_without_response_body(mock_hub, eve
     monkeypatch.setattr(hub.data, "prev_close", fail)
     clock.open()
     await hub.apply_market_open()
+    await stock.setup_task
     error = next(r for r in events(event_file) if r["event"] == "auto_setup_error")
     assert error["stage"] == "prev_close"
     assert error["error_type"] == "RuntimeError"

@@ -1,4 +1,5 @@
 """재시작은 자동주문 없이 계좌별 수동 인계한다."""
+import asyncio
 import json
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -48,6 +49,7 @@ async def test_restore_final_status_and_real_position(mock_hub, tmp_path, monkey
     assert stock.engine is None
     assert hub.push(stock.code) == TradeState.MANUAL_TRADING
     await hub.apply_market_open()
+    await asyncio.gather(*(s.setup_task for s in hub.stocks.values() if s.setup_task))
     assert stock.engine is None
     statuses = [m["status"] for m in mgr.msgs if m["type"] == "status"]
     assert statuses
@@ -145,6 +147,7 @@ async def test_state_transitions_are_persisted(mock_hub, tmp_path):
     assert state() == "MONITOR"
     clock.open()
     await hub.apply_market_open()
+    await asyncio.gather(*(s.setup_task for s in hub.stocks.values() if s.setup_task))
     assert state() == "AUTO_TRADING"
     hub.push("005930")
     assert state() == "MANUAL_TRADING"

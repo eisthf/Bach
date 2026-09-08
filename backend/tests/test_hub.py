@@ -38,6 +38,7 @@ async def test_tick_path_nonblocking_and_transitions(mock_hub):
     _slow_orders(hub, 0.3)
     stock = _to_auto(hub, clock, "005930", "삼성전자")
     await hub.apply_market_open()
+    await asyncio.gather(*(s.setup_task for s in hub.stocks.values() if s.setup_task))
     assert stock.machine.state == TradeState.AUTO_TRADING
     eng = stock.engine
     assert eng is not None and eng.phase == Phase.ACCUMULATING
@@ -97,6 +98,7 @@ async def test_market_open_setup_nonblocking(mock_hub):
         return orig(*a, **kw)
 
     hub.data.prev_close = slow_prev_close
+    hub.AUTO_SETUP_TIMEOUT = 2.0
     for code in ("005930", "000660", "035720"):
         _to_auto(hub, clock, code)
 
@@ -112,6 +114,7 @@ async def test_market_open_setup_nonblocking(mock_hub):
     await asyncio.sleep(0.05)
     base = beats
     await hub.apply_market_open()
+    await asyncio.gather(*(s.setup_task for s in hub.stocks.values() if s.setup_task))
     during = beats - base
     t.cancel()
 
@@ -124,6 +127,7 @@ async def test_fill_event_routed_to_engine(mock_hub):
     hub, mgr, clock = mock_hub
     stock = _to_auto(hub, clock, "005930", "삼성전자")
     await hub.apply_market_open()
+    await asyncio.gather(*(s.setup_task for s in hub.stocks.values() if s.setup_task))
 
     hub._on_order_fill({"code": "005930", "side": "buy", "qty": 10,
                         "price": 12_345.0, "unfilled": 0, "order_no": "1"})
@@ -143,6 +147,7 @@ async def _run_residual_scenario(mock_hub, residual_qty: int):
     hub, mgr, clock = mock_hub
     stock = _to_auto(hub, clock, "005930", "삼성전자")
     await hub.apply_market_open()
+    await asyncio.gather(*(s.setup_task for s in hub.stocks.values() if s.setup_task))
     eng = stock.engine
     eng.phase = Phase.DONE
     eng.shares = 0

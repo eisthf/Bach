@@ -304,9 +304,10 @@ async def screener_upper_limit(
         session_date = latest_session_date(now)
         requested = parse_date(date) if date else session_date
         # KRX 일별 데이터는 당일 게시가 늦을 수 있다. 실전 키움 계좌가 있으면
-        # 가장 최근 세션만 ka10017을 사용한다. 자정~09:00 장전에는 ka10017이
-        # 직전 세션 값을 유지하므로 날짜도 직전 거래일로 롤오버해야 한다.
-        if requested == session_date and source_name() == "krx":
+        # ka10017은 날짜 지정이 불가능한 당일 스냅샷이다. 다음 날 장전에는
+        # 빈 목록으로 초기화될 수 있어 직전 세션의 종가 자료로 사용할 수 없다.
+        # 오늘 개장 이후 조회에만 사용하고, 과거 세션은 KRX 일별 자료로 조회한다.
+        if requested == session_date == now.date() and source_name() == "krx":
             live_hub = next(
                 (manager.hubs[c.id] for c in manager.configs
                  if c.provider == "kiwoom" and not c.kiwoom_mock),

@@ -67,6 +67,7 @@ def test_kiwoom_provider_routes_daily_requests_to_ka10081(monkeypatch):
     provider.token = "token"
     provider._mock = False
     provider._day_open = {}
+    provider._day_open_day = {}
     day_calls = []
     monkeypatch.setattr(kw, "fetch_day_bars", lambda *args, **kwargs: day_calls.append(kwargs) or [{
         "time": 1, "open": 10, "high": 12, "low": 9, "close": 11,

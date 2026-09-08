@@ -20,24 +20,8 @@ from typing import AsyncIterator, Dict, List
 from ..market_clock import (
     chart_epoch, now_kst, prev_session_close_epoch, session_open_epoch)
 from ..models import Bar, OrderResult, Position, Tick
+from ..pricing import tick_size
 from .base import Broker, DAY_INTERVAL, DataProvider
-
-# KRX 호가 단위
-def tick_size(price: float) -> int:
-    if price < 2_000:
-        return 1
-    if price < 5_000:
-        return 5
-    if price < 20_000:
-        return 10
-    if price < 50_000:
-        return 50
-    if price < 200_000:
-        return 100
-    if price < 500_000:
-        return 500
-    return 1_000
-
 
 def round_to_tick(price: float) -> float:
     t = tick_size(price)

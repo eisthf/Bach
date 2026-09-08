@@ -11,10 +11,9 @@ import logging
 import os
 import threading
 import time
-from datetime import datetime
 from typing import AsyncIterator, Callable, Dict, List, Optional
 
-from ..market_clock import chart_epoch
+from ..market_clock import chart_epoch, now_kst, REGULAR_OPEN, REGULAR_CLOSE
 from ..models import Bar, OrderResult, Position, Tick
 from . import kiwoom_api as kw
 from .base import Broker, DAY_INTERVAL, DataProvider
@@ -40,7 +39,7 @@ FILL_ORDNO = "9203"    # 주문번호
 
 
 def _today() -> str:
-    return datetime.now().strftime("%Y%m%d")
+    return now_kst().strftime("%Y%m%d")
 
 
 class KiwoomDataProvider(DataProvider):
@@ -66,6 +65,7 @@ class KiwoomDataProvider(DataProvider):
         self.token = kw.get_access_token(appkey, secretkey, mock=self._mock)
         self._last: Dict[str, Tick] = {}
         self._day_open: Dict[str, float] = {}    # 당일 시가(Z) 캐시
+        self._day_open_day: Dict[str, str] = {}
         self._prev_close: Dict[str, float] = {}  # 전일 종가(X) 캐시
         self._prev_close_day: Dict[str, str] = {}
         self._name: Dict[str, str] = {}          # 종목명 캐시
@@ -165,9 +165,11 @@ class KiwoomDataProvider(DataProvider):
                 time=r["time"], open=r["open"], high=r["high"],
                 low=r["low"], close=r["close"], volume=r["volume"],
             ))
-            # 당일 첫 봉 시가를 Z(당일 시가)로 보존
-            if r["_date"] >= today and code not in self._day_open:
+            # 조회 범위가 장중부터 시작하면 첫 분봉 시가는 당일 시가가 아니다.
+            if (r["_date"] == today and r["open"] > 0
+                    and (interval == DAY_INTERVAL or r["time"] % 86400 == 9 * 3600)):
                 self._day_open[code] = r["open"]
+                self._day_open_day[code] = today
         return bars
 
     # -- X/Z (자동매매 엔진 셋업용) ---------------------------------------
@@ -182,10 +184,24 @@ class KiwoomDataProvider(DataProvider):
         return x
 
     def day_open(self, code: str) -> Optional[float]:
-        if code in self._day_open:
+        """날짜가 확인된 당일 시가만 반환. 장전 시세표의 시가는 사용하지 않는다."""
+        now = now_kst()
+        if now.weekday() >= 5 or now.time() < REGULAR_OPEN:
+            return None
+        today = _today()
+        if self._day_open_day.get(code) == today:
             return self._day_open[code]
-        lt = self._last.get(code)
-        return lt.open if lt and lt.open else None
+        rows = kw.fetch_day_bars(
+            self.token, code, mock=self._mock, today=today, lookback_extra=1)
+        for row in rows:
+            if row["_date"] == today and row["open"] > 0:
+                self._day_open[code] = row["open"]
+                self._day_open_day[code] = today
+                return row["open"]
+        # REST 조회 중 들어온 정규장 체결이 시가를 확정했을 수도 있다.
+        if self._day_open_day.get(code) == today:
+            return self._day_open[code]
+        return None
 
     def stock_name(self, code: str) -> Optional[str]:
         # 종목 추가 시 1회: 종목명 + 초기 시세(현재가/시고저)를 ka10007로 시드.
@@ -204,8 +220,8 @@ class KiwoomDataProvider(DataProvider):
                         high=q.get("high") or price, low=q.get("low") or price,
                         open=op, volume=0.0, time=chart_epoch(),
                     )
-                    if op:
-                        self._day_open.setdefault(code, op)
+                    # 날짜 없는 시세표는 장전에 전날 값을 반환할 수 있다.
+                    # 화면 초기 표시용일 뿐 자동매매 시가 캐시에는 넣지 않는다.
         return self._name.get(code)
 
     def current_upper_limits(self) -> list[dict] | None:
@@ -316,9 +332,15 @@ class KiwoomDataProvider(DataProvider):
             price = kw.parse_price(v.get(F_PRICE))
             if price <= 0:
                 continue
-            open_ = kw.parse_price(v.get(F_OPEN)) or (self._day_open.get(code) or price)
-            if code not in self._day_open and open_:
+            open_ = kw.parse_price(v.get(F_OPEN))
+            now = now_kst()
+            trade_time = str(v.get("20") or "")  # 체결시간 HHMMSS
+            if (open_ > 0 and now.weekday() < 5
+                    and REGULAR_OPEN <= now.time() <= REGULAR_CLOSE
+                    and len(trade_time) == 6 and trade_time.isdigit()
+                    and "090000" <= trade_time <= "153000"):
                 self._day_open[code] = open_
+                self._day_open_day[code] = now.strftime("%Y%m%d")
             tick = Tick(
                 code=code,
                 price=price,

@@ -37,8 +37,12 @@ def mock_hub():
     mgr = FakeManager()
     hub = Hub(cfg, clock, mgr)
     hub._persist = lambda: None  # 테스트 중 state.json 쓰기 방지
+    hub.AUTO_SETUP_TIMEOUT = 0.3
+    hub.AUTO_SETUP_INTERVAL = 0.01
     yield hub, mgr, clock
     for stock in hub.stocks.values():  # 틱 태스크 정리
+        if stock.setup_task:
+            stock.setup_task.cancel()
         if stock.task:
             stock.task.cancel()
 

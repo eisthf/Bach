@@ -16,10 +16,12 @@ AUTO_TRADING 상태의 종목에 대해 틱마다 ``on_tick``이 호출된다. �
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from decimal import Decimal
 from enum import Enum
 from typing import Awaitable, Callable, List, Optional
 
 from ..models import AutoConfig, Tick
+from ..pricing import buy_trigger
 
 
 class Phase(str, Enum):
@@ -114,26 +116,28 @@ class UlcEngine:
         amt = c.max_buy_amount
         if self.scenario in (1, 2):
             half = amt // 2
-            y = (z * 0)  # placeholder
             if self.scenario == 1:
-                y = x * (1 - c.ulc_q)
+                y = buy_trigger(x, Decimal(1) - Decimal(str(c.ulc_q)))
             else:  # SC2
-                y = x
+                y = buy_trigger(x, Decimal(1))
             self.legs = [BuyLeg(target=z, amount=half), BuyLeg(target=y, amount=amt - half)]
         else:  # SC3
             third = amt // 3
             self.legs = [
                 BuyLeg(target=z, amount=third),
-                BuyLeg(target=z * 0.95, amount=third),
-                BuyLeg(target=z * 0.9025, amount=amt - 2 * third),
+                BuyLeg(target=buy_trigger(z, Decimal('0.95')), amount=third),
+                BuyLeg(target=buy_trigger(z, Decimal('0.9025')), amount=amt - 2 * third),
             ]
 
         if c.ulc_first_buy_only:
             self.legs = self.legs[:1]
 
         self.phase = Phase.ACCUMULATING
-        targets = ", ".join(f"{leg.target:,.0f}" for leg in self.legs)
-        self._emit(f"SC{self.scenario} 진입. 분할매수 목표: [{targets}]")
+        targets = ", ".join(
+            f"{i}차 ≤ {leg.target:,.0f}" for i, leg in enumerate(self.legs[1:], 2))
+        self._emit(
+            f"SC{self.scenario} 진입. 1차: 첫 판단 시 시장가 (당일 시가 {z:,.0f}); "
+            f"추가 매수 조건: {targets or '없음'}")
 
     # ------------------------------------------------------------------
     @property
