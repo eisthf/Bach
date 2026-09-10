@@ -18,6 +18,12 @@ export default function ManualTradePanel({ account, stock, tick }) {
   const verified = stock.position_verified !== false
   const pos = stock.position
   const price = tick?.price
+  const pnlPct = verified && pos.quantity > 0 && pos.avg_price > 0 && price > 0
+    ? (price - pos.avg_price) / pos.avg_price * 100
+    : null
+  const pnlPctLabel = pnlPct != null && Number.isFinite(pnlPct)
+    ? `${pnlPct.toLocaleString('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2, signDisplay: 'exceptZero' })}%`
+    : '—'
   const stopPctNumber = Number(stopPct)
   const validStopPct = Number.isFinite(stopPctNumber) && stopPctNumber > 0 && stopPctNumber <= 100
   // 현재가가 없으면 주식수를 계산할 수 없음 → null(표시는 '—'주)
@@ -58,6 +64,7 @@ export default function ManualTradePanel({ account, stock, tick }) {
         <span>평단 {verified ? fmt(Math.round(pos.avg_price)) : '—'}</span>
         <span className={pos.quantity > 0 && price >= pos.avg_price ? 'up' : 'down'}>
           평가손익 {verified && price ? fmt(Math.round((price - pos.avg_price) * pos.quantity)) : '-'}
+          {' '}<span title="평단 대비 평가수익률 · 수수료·세금 미반영">({pnlPctLabel})</span>
         </span>
       </div>
 
