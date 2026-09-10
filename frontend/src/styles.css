@@ -370,6 +370,12 @@ input:focus { outline: none; border-color: var(--accent); }
 }
 .screener-error strong { color: var(--up); }
 .screener-error p { margin: 6px 0 0; }
+.screener-notice { margin: 12px 0; padding: 14px; border: 1px solid #c8d5ec; border-radius: 10px; background: #f0f5fd; color: #334c75; }
+.screener-notice p { margin: 6px 0 10px; }
+.screener-notice button { min-height: 40px; padding: 8px 14px; border: 1px solid #bccbe3; border-radius: 6px; background: white; color: var(--accent); font: inherit; cursor: pointer; }
+.broker-connection { display: flex; flex-wrap: wrap; gap: 6px 12px; margin: 10px 12px; padding: 10px 12px; border-radius: 8px; background: #eff5f3; color: #32644c; font-size: 12px; }
+.broker-connection.warning { background: #fff4e2; color: #80521d; }
+.broker-last { flex-basis: 100%; color: var(--muted); }
 .screener-error code {
   background: rgba(0, 0, 0, 0.06); border-radius: 4px; padding: 1px 5px;
   font-size: 12px;

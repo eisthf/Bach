@@ -10,6 +10,7 @@ import time
 import pytest
 
 from app.models import Bar
+from app.providers.kiwoom_api import AccessToken
 from app.providers.base import DAY_INTERVAL
 from app.providers.kiwoom import KiwoomDataProvider
 
@@ -17,8 +18,8 @@ from app.providers.kiwoom import KiwoomDataProvider
 @pytest.fixture
 def provider(monkeypatch):
     """네트워크 없이 KiwoomDataProvider 를 만든다(토큰 발급·조회 스텁)."""
-    monkeypatch.setattr("app.providers.kiwoom.kw.get_access_token",
-                        lambda *a, **kw: "test-token")
+    monkeypatch.setattr("app.providers.kiwoom.kw.fetch_access_token",
+                        lambda *a, **kw: AccessToken("test-token", "20990101000000"))
     p = KiwoomDataProvider(appkey="k", secretkey="s", mock=True)
     p.calls = 0
 

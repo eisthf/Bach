@@ -30,7 +30,7 @@ from typing import Callable, List, Optional
 
 from .market_clock import REGULAR_OPEN, now_kst
 from .models import UpperLimitResult, UpperLimitStock
-from .providers.krx_api import DailyQuote, configured, daily_quotes
+from .providers.krx_api import DailyQuote, configured, daily_quotes, publication_time
 
 logger = logging.getLogger("bach.screener")
 
@@ -54,6 +54,19 @@ class NotATradingDay(ScreenerError):
 
 class CurrentDataUnavailable(ScreenerError):
     """실전 계좌의 키움 당일 상한가 조회가 실패했다."""
+
+
+class DataPending(ScreenerError):
+    """최근 거래일 자료 게시 대기. 휴장일 판정과 구분한다."""
+
+    def __init__(self, day: _date) -> None:
+        self.date = _iso(day)
+        self.available_after = publication_time(_compact(day)).isoformat()
+        super().__init__(
+            f"{self.date} KRX 종가 자료가 아직 게시되지 않았습니다. "
+            "영업일 기준 다음 날 오전 8시에 갱신됩니다. "
+            "공휴일이나 게시 지연 시 더 늦어질 수 있습니다."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -224,8 +237,12 @@ def screen_upper_limit(
 
     if date:
         d = parse_date(date)
+        if d > now_kst().date():
+            raise ScreenerError("미래 날짜는 조회할 수 없습니다.")
         quotes_d = get(_compact(d))
         if not quotes_d:
+            if src == "krx" and d.weekday() < 5 and publication_time(_compact(d)).date() >= now_kst().date():
+                raise DataPending(d)
             raise NotATradingDay(
                 f"{_iso(d)}은(는) 장이 서지 않았거나 시세가 아직 게시되지 않았습니다."
             )
@@ -259,6 +276,10 @@ def screen_upper_limit(
     rows.sort(key=lambda r: (-r.change_pct, -r.market_cap))
     logger.info("상한가 스크리닝 %s (기준 %s): %d/%d 종목 [%s]",
                 _iso(d), _iso(prev_d), len(rows), len(quotes_d), src)
+    notice = ""
+    if not date and src == "krx" and d < latest_session_date(now_kst()):
+        notice = (f"최근 거래일 자료가 아직 없거나 휴장일이어서 {_iso(d)} 자료를 표시합니다. "
+                  "KRX 자료는 영업일 기준 다음 날 오전 8시에 갱신됩니다.")
     return UpperLimitResult(
         date=_iso(d),
         prev_date=_iso(prev_d),
@@ -267,6 +288,7 @@ def screen_upper_limit(
         source=src,
         scanned=len(quotes_d),
         stocks=rows,
+        notice=notice,
     )
 
 

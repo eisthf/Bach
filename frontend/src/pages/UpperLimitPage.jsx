@@ -32,7 +32,8 @@ export default function UpperLimitPage() {
       setDate(res.date)   // 서버가 고른 거래일을 입력칸에 반영
     } catch (e) {
       setData(null)
-      setError({ message: String(e.message || e), status: e.status })
+      setError({ message: String(e.message || e), status: e.status,
+        pending: e.code === 'DATA_PENDING', availableAfter: e.availableAfter })
     } finally {
       setLoading(false)
     }
@@ -95,10 +96,13 @@ export default function UpperLimitPage() {
         </div>
       )}
 
+      {data?.notice && <div className="screener-notice" role="status">{data.notice}</div>}
+
       {error && (
-        <div className="screener-error" role="alert">
-          <strong>조회 실패</strong>
+        <div className={error.pending ? 'screener-notice' : 'screener-error'} role={error.pending ? 'status' : 'alert'}>
+          <strong>{error.pending ? 'KRX 자료 게시 대기' : '조회 실패'}</strong>
           <p>{error.message}</p>
+          {error.pending && <button className="ghost" disabled={loading} onClick={() => load(date)}>다시 조회</button>}
           {error.status === 503 && (
             <p className="muted">
               실데이터를 보려면 <code>openapi.krx.co.kr</code>에서 인증키를 발급받고

@@ -71,6 +71,9 @@ class Hub:
         self.stocks: Dict[str, Stock] = {}
         self._lock = asyncio.Lock()
         self._orders_task: Optional[asyncio.Task] = None
+        self._resync_task: Optional[asyncio.Task] = None
+        self._connection_task: Optional[asyncio.Task] = None
+        self._sync_state = "pending"
         # 계좌별 영속화 파일. mock 계좌는 하위호환을 위해 기존 state.json 사용.
         base = Path(__file__).resolve().parent.parent
         self._state_path = Path(
@@ -82,6 +85,7 @@ class Hub:
         # 주문체결(00) 이벤트 → 포지션 즉시 갱신(폴링 대신 이벤트 기반).
         if hasattr(self.data, "on_order_fill"):
             self.data.on_order_fill = self._on_order_fill
+        self.data.set_account(self.account)
 
     # -- 브로드캐스트 (계좌 태그 주입) ------------------------------------
     def broadcast(self, msg: dict) -> None:
@@ -281,7 +285,8 @@ class Hub:
     def _on_order_fill(self, fill: Optional[dict]) -> None:
         self.broker.invalidate()
         if fill is None:
-            asyncio.create_task(self._refresh_all_positions())
+            if self._resync_task is None or self._resync_task.done():
+                self._resync_task = asyncio.create_task(self._refresh_all_positions())
             return
         code = fill.get("code")
         if not code or code not in self.stocks:
@@ -312,10 +317,47 @@ class Hub:
             self.broadcast({"type": "status", "status": st.model_dump()})
 
     async def _refresh_all_positions(self) -> None:
-        await asyncio.to_thread(self.broker.all_positions)
+        self._sync_state = "syncing"
+        try:
+            await asyncio.to_thread(self.broker.all_positions)
+        except Exception as exc:
+            self._sync_state = "error"
+            self._log("재접속 후 잔고 확인 실패",
+                      event="broker_resync", error_type=type(exc).__name__)
+            for code in list(self.stocks):
+                await self._refresh_status(code)
+            return
+        self._sync_state = "ok"
         for code in list(self.stocks.keys()):
-            self.broadcast_status(code)
+            if self.live:
+                try:
+                    name = await asyncio.to_thread(self.data.stock_name, code, refresh=True)
+                    stock = self.stocks.get(code)
+                    if stock is not None and name:
+                        stock.name = name
+                    tick = self.data.last_tick(code)
+                    if stock is not None and tick is not None:
+                        self.broadcast({"type": "tick", "tick": tick.model_dump()})
+                except Exception:
+                    pass  # 잔고 갱신은 시세 조회 실패와 독립적으로 전달한다.
+            await self._refresh_status(code)
         await self.refresh_orders()
+
+    def connection_payload(self) -> dict:
+        if not self.live:
+            return {"auth": "demo", "rest": "demo", "stream": "demo", "sync": "demo"}
+        return {**self.data.connection_status(), "sync": self._sync_state}
+
+    async def _connection_loop(self) -> None:
+        previous = None
+        while True:
+            status = self.connection_payload()
+            if status != previous:
+                self.broadcast({"type": "broker_connection", "status": status})
+                previous = status
+            if self._sync_state == "error" and status["auth"] == "ok" and status["stream"] == "connected":
+                self._on_order_fill(None)
+            await asyncio.sleep(2)
 
     # -- 미체결 주문 ------------------------------------------------------
     async def refresh_orders(self) -> None:
@@ -680,7 +722,19 @@ class Hub:
     def start(self) -> None:
         """live 계좌면 미체결 폴링 루프 기동."""
         if self.live and self._orders_task is None:
+            self.data.start()
             self._orders_task = asyncio.create_task(self._orders_loop())
+            self._connection_task = asyncio.create_task(self._connection_loop())
+
+    async def close(self) -> None:
+        tasks = [self._orders_task, self._resync_task, self._connection_task]
+        for stock in self.stocks.values():
+            tasks.extend([stock.task, stock.setup_task])
+        tasks = [t for t in tasks if t is not None]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await self.data.close()
 
 
 class AccountManager:
@@ -738,7 +792,8 @@ class AccountManager:
         return [
             {"id": c.id, "label": c.label,
              "live": c.provider == "kiwoom", "danger": c.danger,
-             "recovery_notice": self.hubs[c.id].recovery_notice}
+             "recovery_notice": self.hubs[c.id].recovery_notice,
+             "connection": self.hubs[c.id].connection_payload()}
             for c in self.configs
         ]
 

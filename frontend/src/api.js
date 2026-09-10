@@ -12,8 +12,10 @@ async function req(path, opts = {}) {
     // 그대로 화면에 띄운다(원문 JSON을 보여주면 읽기 어렵다).
     let detail = txt
     try { detail = JSON.parse(txt).detail ?? txt } catch { /* 평문이면 그대로 */ }
-    const err = new Error(detail || `HTTP ${res.status}`)
+    const err = new Error(detail?.message || detail || `HTTP ${res.status}`)
     err.status = res.status
+    err.code = detail?.code
+    err.availableAfter = detail?.available_after
     throw err
   }
   return res.status === 204 ? null : res.json()

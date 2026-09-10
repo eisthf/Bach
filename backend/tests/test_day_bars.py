@@ -64,7 +64,7 @@ def test_fetch_day_bars_pages_normalizes_and_deduplicates(monkeypatch):
 
 def test_kiwoom_provider_routes_daily_requests_to_ka10081(monkeypatch):
     provider = KiwoomDataProvider.__new__(KiwoomDataProvider)
-    provider.token = "token"
+    provider._call = lambda fn, *args, **kwargs: fn("token", *args, **kwargs)
     provider._mock = False
     provider._day_open = {}
     provider._day_open_day = {}

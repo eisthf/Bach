@@ -17,6 +17,7 @@ from ..market_clock import chart_epoch, now_kst, REGULAR_OPEN, REGULAR_CLOSE
 from ..models import Bar, OrderResult, Position, Tick
 from . import kiwoom_api as kw
 from .base import Broker, DAY_INTERVAL, DataProvider
+from .kiwoom_auth import TokenManager
 
 logger = logging.getLogger("bach.kiwoom")
 
@@ -62,7 +63,12 @@ class KiwoomDataProvider(DataProvider):
             raise RuntimeError(
                 "kiwoom provider 인데 APPKEY/SECRETKEY 가 없습니다(.env 확인)."
             )
-        self.token = kw.get_access_token(appkey, secretkey, mock=self._mock)
+        self._auth = TokenManager(appkey, secretkey, self._mock)
+        self._rest_state = "pending"
+        self._ws_state = "idle"
+        self._last_received_at = None
+        self._ws_token = ""
+        self._auth_task: Optional[asyncio.Task] = None
         self._last: Dict[str, Tick] = {}
         self._day_open: Dict[str, float] = {}    # 당일 시가(Z) 캐시
         self._day_open_day: Dict[str, str] = {}
@@ -81,6 +87,60 @@ class KiwoomDataProvider(DataProvider):
         self._ws_task: Optional[asyncio.Task] = None
         # 주문체결(00) 이벤트 콜백. Hub가 설정한다. fill dict 또는 None(전체 갱신).
         self.on_order_fill: Optional[Callable[[Optional[dict]], None]] = None
+
+    def connection_status(self) -> dict:
+        return {"auth": self._auth.status(), "rest": self._rest_state,
+                "stream": self._ws_state, "last_received_at": self._last_received_at}
+
+    def set_account(self, account: str) -> None:
+        self._auth.account = account
+
+    def start(self) -> None:
+        self._ensure_ws()
+
+    def _call(self, fn, *args, retry_auth: bool = True, **kwargs):
+        """조회만 인증 복구 후 한 번 재시도. 주문은 재전송하지 않는다."""
+        for attempt in range(2 if retry_auth else 1):
+            try:
+                token = self._auth.get_token()
+            except kw.KiwoomAuthError:
+                self._rest_state = "error"
+                raise
+            try:
+                result = fn(token, *args, **kwargs)
+                self._rest_state = "ok" if result is not None else "error"
+                return result
+            except kw.KiwoomAuthError:
+                self._rest_state = "error"
+                self._auth.reject(token)
+                if attempt or not retry_auth:
+                    self._auth.defer_retry()
+                    raise
+            except Exception:
+                self._rest_state = "error"
+                raise
+
+    async def _maintain_auth(self) -> None:
+        while True:
+            token = None
+            try:
+                token = await asyncio.to_thread(self._auth.get_token)
+            except kw.KiwoomAuthError:
+                self._ws_state = "auth_error"
+            try:
+                if self._ws is not None and token != self._ws_token:
+                    await self._ws.close()
+            except Exception as exc:
+                logger.warning("키움 연결 유지 재시도: %s", type(exc).__name__)
+            await asyncio.sleep(15)
+
+    async def close(self) -> None:
+        tasks = [t for t in (self._ws_task, self._auth_task) if t is not None]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self._ws = None
+        self._ws_state = "disconnected"
 
     # -- 봉 --------------------------------------------------------------
     def get_bars(self, code: str, interval: int, lookback_extra: int = 60) -> List[Bar]:
@@ -143,13 +203,13 @@ class KiwoomDataProvider(DataProvider):
         rows: List[dict] = []
         for attempt in range(2):
             if interval == DAY_INTERVAL:
-                rows = kw.fetch_day_bars(
-                    self.token, code, mock=self._mock,
+                rows = self._call(
+                    kw.fetch_day_bars, code, mock=self._mock,
                     today=_today(), lookback_extra=lookback_extra,
                 )
             else:
-                rows = kw.fetch_min_bars(
-                    self.token, code, interval, mock=self._mock,
+                rows = self._call(
+                    kw.fetch_min_bars, code, interval, mock=self._mock,
                     today=_today(), lookback_extra=lookback_extra,
                 )
             if rows:
@@ -177,7 +237,7 @@ class KiwoomDataProvider(DataProvider):
         today = _today()
         if self._prev_close_day.get(code) == today:
             return self._prev_close.get(code)
-        x = kw.fetch_prev_close(self.token, code, mock=self._mock, today=today)
+        x = self._call(kw.fetch_prev_close, code, mock=self._mock, today=today)
         if x:
             self._prev_close[code] = x
             self._prev_close_day[code] = today
@@ -191,8 +251,7 @@ class KiwoomDataProvider(DataProvider):
         today = _today()
         if self._day_open_day.get(code) == today:
             return self._day_open[code]
-        rows = kw.fetch_day_bars(
-            self.token, code, mock=self._mock, today=today, lookback_extra=1)
+        rows = self._call(kw.fetch_day_bars, code, mock=self._mock, today=today, lookback_extra=1)
         for row in rows:
             if row["_date"] == today and row["open"] > 0:
                 self._day_open[code] = row["open"]
@@ -203,17 +262,18 @@ class KiwoomDataProvider(DataProvider):
             return self._day_open[code]
         return None
 
-    def stock_name(self, code: str) -> Optional[str]:
+    def stock_name(self, code: str, refresh: bool = False) -> Optional[str]:
         # 종목 추가 시 1회: 종목명 + 초기 시세(현재가/시고저)를 ka10007로 시드.
         # 거래가 드문 종목은 첫 0B 틱까지 시간이 걸려 헤더가 '-'로 보이는데,
         # 이 시드로 추가 즉시 값이 표시되고 이후 실시간 틱이 갱신한다.
-        if code not in self._name:
-            q = kw.fetch_quote(self.token, code, mock=self._mock)
+        if refresh or code not in self._name:
+            before = self._last.get(code)
+            q = self._call(kw.fetch_quote, code, mock=self._mock)
             if q:
                 if q.get("name"):
                     self._name[code] = q["name"]
                 price = q.get("price") or 0.0
-                if price > 0 and code not in self._last:
+                if price > 0 and (before is None or refresh) and self._last.get(code) is before:
                     op = q.get("open") or price
                     self._last[code] = Tick(
                         code=code, price=price,
@@ -226,7 +286,7 @@ class KiwoomDataProvider(DataProvider):
 
     def current_upper_limits(self) -> list[dict] | None:
         """키움 ka10017로 당일 KRX 상한가 종목을 조회한다."""
-        return kw.fetch_upper_limits(self.token, mock=self._mock)
+        return self._call(kw.fetch_upper_limits, mock=self._mock)
 
     # -- 틱 --------------------------------------------------------------
     def last_tick(self, code: str) -> Optional[Tick]:
@@ -245,9 +305,12 @@ class KiwoomDataProvider(DataProvider):
         finally:
             self._queues.pop(code, None)
             self._subscribed.discard(code)
+            await self._register()
 
     # -- 단일 공유 WebSocket 관리 -----------------------------------------
     def _ensure_ws(self) -> None:
+        if self._auth_task is None or self._auth_task.done():
+            self._auth_task = asyncio.create_task(self._maintain_auth())
         if self._ws_task is None or self._ws_task.done():
             self._ws_task = asyncio.create_task(self._run_ws())
 
@@ -258,18 +321,18 @@ class KiwoomDataProvider(DataProvider):
         전체 집합을 보낸다(일부만 보내면 나머지 구독이 풀릴 수 있음).
         """
         ws = self._ws
-        if ws is None or not self._subscribed:
+        if ws is None:
             return
         try:
-            await ws.send(json.dumps({
-                "trnm": "REG", "grp_no": "1", "refresh": "1",
-                "data": [
-                    {"item": list(self._subscribed), "type": ["0B"]},
-                    {"item": [], "type": ["00"]},  # 주문체결(계좌 전체)
-                ],
-            }))
+            await ws.send(json.dumps(self._registration()))
         except Exception:  # noqa: BLE001
             pass  # 다음 재연결 시 일괄 등록됨
+
+    def _registration(self) -> dict:
+        data = [{"item": [], "type": ["00"]}]
+        if self._subscribed:
+            data.insert(0, {"item": list(self._subscribed), "type": ["0B"]})
+        return {"trnm": "REG", "grp_no": "1", "refresh": "1", "data": data}
 
     async def _run_ws(self) -> None:
         """앱키당 1개만 허용되는 실시간 소켓. 전 종목을 한 연결로 멀티플렉싱."""
@@ -279,25 +342,26 @@ class KiwoomDataProvider(DataProvider):
         backoff = 1.0
         while True:
             try:
+                token = await asyncio.to_thread(self._auth.get_token)
+                self._ws_state = "connecting"
                 async with websockets.connect(uri, ping_interval=None) as ws:
-                    await ws.send(json.dumps({"trnm": "LOGIN", "token": self.token}))
+                    await ws.send(json.dumps({"trnm": "LOGIN", "token": token}))
                     async for raw in ws:
                         msg = json.loads(raw)
                         trnm = msg.get("trnm")
                         if trnm == "LOGIN":
                             if msg.get("return_code") != 0:
-                                logger.error("WS 로그인 실패: %s", msg.get("return_msg"))
+                                self._ws_state = "auth_error"
+                                if kw.is_auth_error(msg):
+                                    self._auth.reject(token)
+                                logger.error("키움 WS 로그인 거부")
                                 break
                             backoff = 1.0
                             self._ws = ws
+                            self._ws_token = token
                             # 현재 구독 중인 전 종목(0B) + 주문체결(00)을 한 번에 등록
-                            await ws.send(json.dumps({
-                                "trnm": "REG", "grp_no": "1", "refresh": "1",
-                                "data": [
-                                    {"item": list(self._subscribed), "type": ["0B"]},
-                                    {"item": [], "type": ["00"]},
-                                ],
-                            }))
+                            await ws.send(json.dumps(self._registration()))
+                            self._ws_state = "connected"
                             logger.info("WS 등록 0B=%s + 00(주문체결)",
                                         ", ".join(self._subscribed) or "(없음)")
                             # 재접속 시 누락된 체결 보정: 전체 포지션 갱신 요청
@@ -310,9 +374,13 @@ class KiwoomDataProvider(DataProvider):
             except asyncio.CancelledError:
                 self._ws = None
                 raise
+            except kw.KiwoomAuthError:
+                self._ws_state = "auth_error"
             except Exception as e:  # noqa: BLE001
-                logger.warning("WS 재연결 (%.0fs 후): %s", backoff, e)
+                logger.warning("WS 재연결 (%.0fs 후): %s", backoff, type(e).__name__)
             self._ws = None
+            if self._ws_state != "auth_error":
+                self._ws_state = "disconnected"
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 30.0)
 
@@ -351,6 +419,7 @@ class KiwoomDataProvider(DataProvider):
                 time=chart_epoch(),
             )
             self._last[code] = tick
+            self._last_received_at = now_kst().isoformat()
             q = self._queues.get(code)
             if q is not None:
                 try:
@@ -402,18 +471,18 @@ class KiwoomBroker(Broker):
         self._pos_ts = 0.0
 
     def account_summary(self) -> Optional[dict]:
-        return kw.fetch_account_summary(self._data.token, mock=self._mock)
+        return self._data._call(kw.fetch_account_summary, mock=self._mock)
 
     def unfilled_orders(self) -> dict:
         grouped: Dict[str, list] = {}
-        for o in kw.fetch_unfilled(self._data.token, mock=self._mock):
+        for o in self._data._call(kw.fetch_unfilled, mock=self._mock):
             grouped.setdefault(o["code"], []).append(o)
         return grouped
 
     def _positions(self, force: bool = False) -> Dict[str, dict]:
         now = time.time()
         if force or now - self._pos_ts > self._POS_TTL:
-            self._pos_cache = kw.fetch_positions(self._data.token, mock=self._mock)
+            self._pos_cache = self._data._call(kw.fetch_positions, mock=self._mock)
             self._pos_ts = now
         return self._pos_cache
 
@@ -423,8 +492,12 @@ class KiwoomBroker(Broker):
         if qty <= 0:
             return OrderResult(ok=False, code=code, side="buy", filled_qty=0,
                                price=price, message="현재가 없음 또는 금액 부족")
-        order_no = kw.place_order(self._data.token, code, qty, "buy",
-                                  mock=self._mock, order_type="3")
+        try:
+            order_no = self._data._call(kw.place_order, code, qty, "buy",
+                                      mock=self._mock, order_type="3", retry_auth=False)
+        except kw.KiwoomRequestError:
+            return OrderResult(ok=False, code=code, side="buy", filled_qty=0,
+                               price=price, message="주문 요청 실패 — 재주문 전 계좌 접수 내역을 확인하세요.")
         ok = order_no is not None
         if ok:
             self._pos_ts = 0.0  # 다음 조회 시 갱신
@@ -433,8 +506,12 @@ class KiwoomBroker(Broker):
                            message=f"{qty}주 시장가 매수 전송" if ok else "주문 실패")
 
     def sell(self, code: str, qty: int) -> OrderResult:
-        order_no = kw.place_order(self._data.token, code, qty, "sell",
-                                  mock=self._mock, order_type="3")
+        try:
+            order_no = self._data._call(kw.place_order, code, qty, "sell",
+                                      mock=self._mock, order_type="3", retry_auth=False)
+        except kw.KiwoomRequestError:
+            return OrderResult(ok=False, code=code, side="sell", filled_qty=0,
+                               price=self._price(code), message="주문 요청 실패 — 재주문 전 계좌 접수 내역을 확인하세요.")
         ok = order_no is not None
         price = self._price(code)
         if ok:

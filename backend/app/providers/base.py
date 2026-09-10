@@ -18,6 +18,18 @@ DAY_INTERVAL = 1440
 class DataProvider(ABC):
     """시세/봉 데이터 소스."""
 
+    def set_account(self, account: str) -> None:
+        """계좌 식별자를 진단 로그에 연결한다."""
+
+    def start(self) -> None:
+        """필요한 연결·인증 유지 작업을 시작한다."""
+
+    async def close(self) -> None:
+        """연결과 백그라운드 작업을 정리한다."""
+
+    def connection_status(self) -> dict:
+        return {"auth": "demo", "rest": "demo", "stream": "demo"}
+
     @abstractmethod
     def get_bars(self, code: str, interval: int, lookback_extra: int = 60) -> List[Bar]:
         """당일 봉 + 이전 ``lookback_extra``개 봉(SMA 계산용)을 시간순으로 반환.

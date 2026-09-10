@@ -28,7 +28,9 @@ def real_broker(hub, monkeypatch, qty=7):
             ],
         },
     ))
-    hub.broker = KiwoomBroker(SimpleNamespace(token="test", _mock=False, last_tick=lambda c: None))
+    hub.broker = KiwoomBroker(SimpleNamespace(
+        _call=lambda fn, *a, **k: fn("test", *a, **k),
+        _mock=False, last_tick=lambda c: None))
     hub.broker.buy = Mock(side_effect=AssertionError("재시작 주문 금지"))
     hub.broker.sell = Mock(side_effect=AssertionError("재시작 주문 금지"))
 

@@ -43,7 +43,10 @@ export function StoreProvider({ children }) {
   // 초기 스냅샷: 계좌 목록 → 계좌별 종목 + 클라이언트 표시상태(localStorage).
   useEffect(() => {
     api.accounts().then((list) => {
-      setAccounts(list)
+      // 늦게 도착한 HTTP 스냅샷이 WS에서 받은 최신 연결 상태를 덮지 않게 한다.
+      setAccounts((prev) => list.map((a) => ({ ...a,
+        connection: prev.find((p) => p.id === a.id)?.connection || a.connection,
+      })))
       const h = {}, c = {}
       list.forEach((a) => {
         h[a.id] = loadSet(`bach.hidden.${a.id}`)
@@ -73,16 +76,20 @@ export function StoreProvider({ children }) {
       const proto = location.protocol === 'https:' ? 'wss' : 'ws'
       const ws = new WebSocket(`${proto}://${location.host}/ws`)
       wsRef.current = ws
-      ws.onopen = () => setConnected(true)
+      ws.onopen = () => { if (!stopped) setConnected(true) }
       ws.onclose = () => {
+        if (stopped) return
         setConnected(false)
-        if (!stopped) setTimeout(connect, 1000)
+        setTimeout(() => { if (!stopped) connect() }, 1000)
       }
       ws.onmessage = (ev) => {
+        if (stopped) return
         const msg = JSON.parse(ev.data)
         const acc = msg.account
         if (msg.type === 'accounts') {
           setAccounts(msg.accounts || [])
+        } else if (msg.type === 'broker_connection') {
+          setAccounts((prev) => prev.map((a) => a.id === acc ? { ...a, connection: msg.status } : a))
         } else if (msg.type === 'tick') {
           const t = msg.tick
           setIn(setTicks, acc, (m) => ({ ...(m || {}), [t.code]: t }))

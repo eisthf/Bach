@@ -8,6 +8,7 @@ import AccountSummary from './components/AccountSummary'
 import LogPanel from './components/LogPanel'
 import PageNav from './components/PageNav'
 import UpperLimitPage from './pages/UpperLimitPage'
+import BrokerConnection from './components/BrokerConnection'
 
 // 한 계좌(모의/실전)의 종목 입력 + 칩바 + 패널 목록. 실전(danger)은 위험 톤.
 function AccountColumn({ account }) {
@@ -49,6 +50,7 @@ function AccountColumn({ account }) {
         <AccountSummary account={acc} />
       </div>
 
+      <BrokerConnection account={account} />
       {account.recovery_notice && <div className="recovery-notice" role="alert">{account.recovery_notice}</div>}
 
       <div className="toolbar-row">

@@ -165,5 +165,6 @@ class UpperLimitResult(BaseModel):
     max_pct: float
     source: str                      # "krx"=확정 일별 | "kiwoom"=당일 | "mock"=데모
     snapshot: bool = False           # True면 확정 종가가 아닌 당일 시세 스냅샷
+    notice: str = ""                 # 최신 자료 게시 전 이전 결과 표시 안내
     scanned: int                     # D일 조회된 전체 종목 수
     stocks: list[UpperLimitStock] = []

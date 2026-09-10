@@ -26,14 +26,30 @@ from __future__ import annotations
 
 import calendar
 import logging
+import re
 import threading
 import time as _time
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List, Optional
 
 import requests
 
 logger = logging.getLogger("bach.kiwoom")
+
+
+class KiwoomRequestError(RuntimeError):
+    """안전하게 표시할 수 있는 키움 요청 실패."""
+
+
+class KiwoomAuthError(KiwoomRequestError):
+    """토큰 인증 거부. 본문·인증정보 대신 안전한 오류 식별자만 전달한다."""
+
+
+def is_auth_error(data: dict) -> bool:
+    code = str(data.get("return_code", ""))
+    message = str(data.get("return_msg") or "")
+    return code == "8005" or bool(re.search(r"\b8005\b", message))
 
 # ---------------------------------------------------------------------------
 # REST 호출 게이트 (함정: 동시/연속 호출 시 키움이 HTTP 429로 rate-limit)
@@ -66,8 +82,8 @@ def _penalize(seconds: float) -> None:
 
 
 def _post(url: str, headers: dict, body: dict, timeout: float,
-          retries: int = 5) -> Optional[requests.Response]:
-    """게이트를 거친 POST. 429면 백오프 후 재시도. 최종 응답(또는 None) 반환."""
+          retries: int = 5) -> requests.Response:
+    """성공 응답 반환, 실패 시 예외. 주문 호출은 retries=1로 재전송을 금지한다."""
     resp: Optional[requests.Response] = None
     for attempt in range(retries):
         _reserve_slot()
@@ -80,8 +96,18 @@ def _post(url: str, headers: dict, body: dict, timeout: float,
         if resp.status_code == 429:
             _penalize(0.5 * (attempt + 1))
             continue
+        if resp.status_code == 401:
+            raise KiwoomAuthError(f"{headers.get('api-id')}: HTTP 401")
+        try:
+            data = resp.json()
+        except ValueError:
+            raise KiwoomRequestError(f"{headers.get('api-id')}: 응답 파싱 실패") from None
+        if isinstance(data, dict) and is_auth_error(data):
+            raise KiwoomAuthError(f"{headers.get('api-id')}: 토큰 인증 거부")
+        if resp.status_code != 200 or not isinstance(data, dict) or str(data.get("return_code")) != "0":
+            raise KiwoomRequestError(f"{headers.get('api-id')}: 요청 실패(HTTP {resp.status_code})")
         return resp
-    return resp
+    raise KiwoomRequestError(f"{headers.get('api-id')}: 요청 재시도 한도 초과")
 
 # ---------------------------------------------------------------------------
 # 호스트 (mock=모의투자, live=실전)
@@ -133,7 +159,13 @@ def _kst_epoch(yyyymmddhhmmss: str) -> int:
 # ---------------------------------------------------------------------------
 # OAuth 토큰 (au10001)
 # ---------------------------------------------------------------------------
-def get_access_token(appkey: str, secretkey: str, mock: bool = False) -> str:
+@dataclass(repr=False, frozen=True)
+class AccessToken:
+    value: str
+    expires_dt: str
+
+
+def fetch_access_token(appkey: str, secretkey: str, mock: bool = False) -> AccessToken:
     url = f"{rest_host(mock)}/oauth2/token"
     headers = {"Content-Type": "application/json;charset=UTF-8"}
     body = {
@@ -145,9 +177,13 @@ def get_access_token(appkey: str, secretkey: str, mock: bool = False) -> str:
     resp.raise_for_status()
     data = resp.json()
     if data.get("return_code") != 0 or not data.get("token"):
-        raise RuntimeError(f"토큰 발급 실패: {data.get('return_msg')}")
-    logger.info("✅ 키움 토큰 발급 성공 (만료 %s)", data.get("expires_dt"))
-    return data["token"]
+        raise KiwoomAuthError("키움 토큰 발급 실패")
+    return AccessToken(str(data["token"]), str(data.get("expires_dt") or ""))
+
+
+def get_access_token(appkey: str, secretkey: str, mock: bool = False) -> str:
+    """단발성 진단 스크립트용. 장기 실행 제공자는 만료일도 보관한다."""
+    return fetch_access_token(appkey, secretkey, mock).value
 
 
 # ---------------------------------------------------------------------------
@@ -465,7 +501,7 @@ def place_order(
         "trde_tp": order_type,
         "cond_uv": "",
     }
-    resp = _post(url, headers, body, timeout=10, retries=3)
+    resp = _post(url, headers, body, timeout=10, retries=1)
     if resp is None or resp.status_code != 200:
         sc = resp.status_code if resp is not None else "—"
         logger.error("[%s] %s 주문 실패(HTTP %s)", code, side, sc)

@@ -9,8 +9,8 @@ export default function MarketControls() {
   const { phase, marketAuto, connected, actions } = useStore()
   return (
     <div className="market-controls">
-      <span className={`conn ${connected ? 'on' : 'off'}`} title="WebSocket">
-        ● {connected ? '연결됨' : '연결끊김'}
+      <span className={`conn ${connected ? 'on' : 'off'}`} title="앱과 Bach 서버 사이의 연결" aria-label={connected ? '앱 서버 연결됨' : '앱 서버 연결 끊김'}>
+        ● 앱 {connected ? '연결됨' : '연결끊김'}
       </span>
       <span className={`phase phase-${phase.toLowerCase()}`}>장: {PHASE_LABEL[phase]}</span>
       {marketAuto ? (

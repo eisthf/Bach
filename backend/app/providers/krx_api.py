@@ -26,10 +26,13 @@ import logging
 import os
 import threading
 import time as _time
+from datetime import datetime, time, timedelta
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 import requests
+
+from ..market_clock import KST, now_kst
 
 logger = logging.getLogger("bach.krx")
 
@@ -44,6 +47,14 @@ _TIMEOUT = 30.0
 # 확정된 과거 영업일 데이터는 불변이라 영구 캐시한다. 오늘 날짜와 빈 응답
 # (아직 게시 전이거나 휴장일)만 TTL을 두고 다시 물어본다.
 _FRESH_TTL = 300.0
+
+
+def publication_time(date: str) -> datetime:
+    """가장 이른 게시 예상 시각. 공휴일이면 실제 게시일은 더 늦을 수 있다."""
+    day = datetime.strptime(date, "%Y%m%d").date() + timedelta(days=1)
+    while day.weekday() >= 5:
+        day += timedelta(days=1)
+    return datetime.combine(day, time(8), tzinfo=KST)
 
 
 class KrxError(RuntimeError):
@@ -192,7 +203,7 @@ def _fetch_market(date: str, market: str) -> List[DailyQuote]:
     return parse_rows(rows, market)
 
 
-# 날짜별 캐시 + 날짜별 락(동시 요청 병합). kiwoom.py 의 봉 캐시와 같은 방식.
+# 날짜별 캐시: 만료 monotonic 시각과 시세. 두 시장이 모두 게시된 과거 자료만 영구 보관.
 _cache: Dict[str, Tuple[float, List[DailyQuote]]] = {}
 _date_locks: Dict[str, threading.Lock] = {}
 _guard = threading.Lock()
@@ -220,14 +231,14 @@ def daily_quotes(date: str) -> List[DailyQuote]:
     now = _time.monotonic()
     with _guard:
         hit = _cache.get(date)
-    if hit and (hit[1] or now - hit[0] < _FRESH_TTL):
+    if hit and now < hit[0]:
         return hit[1]
 
     with _lock_for(date):
         # 락을 기다리는 동안 다른 스레드가 채웠을 수 있다.
         with _guard:
             hit = _cache.get(date)
-        if hit and (hit[1] or _time.monotonic() - hit[0] < _FRESH_TTL):
+        if hit and _time.monotonic() < hit[0]:
             return hit[1]
 
         by_market = {m: _fetch_market(date, m) for m in _ENDPOINTS}
@@ -241,6 +252,14 @@ def daily_quotes(date: str) -> List[DailyQuote]:
         for rows in by_market.values():
             quotes.extend(rows)
 
+        at = now_kst()
+        publication = publication_time(date)
+        if not empty and at >= publication:
+            ttl = float("inf")
+        else:
+            until_publication = (publication - at).total_seconds()
+            # 8시 직전 캐시가 게시 후까지 남지 않게 경계에서 만료한다.
+            ttl = min(_FRESH_TTL, until_publication) if until_publication > 0 else 30.0
         with _guard:
-            _cache[date] = (_time.monotonic(), quotes)
+            _cache[date] = (_time.monotonic() + ttl, quotes)
         return quotes

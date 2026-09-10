@@ -31,11 +31,13 @@ from .models import (  # noqa: E402
     UpperLimitResult,
 )
 from .providers.base import DAY_INTERVAL, VALID_INTERVALS  # noqa: E402
+from .providers.kiwoom_api import KiwoomRequestError  # noqa: E402
 from .providers.krx_api import KrxAuthError, KrxError  # noqa: E402
 from .screener import (  # noqa: E402
     MAX_PCT_DEFAULT,
     MIN_PCT_DEFAULT,
     CurrentDataUnavailable,
+    DataPending,
     NotATradingDay,
     ScreenerError,
     latest_session_date,
@@ -325,10 +327,15 @@ async def screener_upper_limit(
                 )
         # 전종목 조회는 네트워크 블로킹이라 이벤트 루프 밖에서 돌린다.
         return await asyncio.to_thread(screen_upper_limit, date, min_pct, max_pct)
+    except DataPending as e:
+        raise HTTPException(409, {"code": "DATA_PENDING", "message": str(e),
+                                  "date": e.date, "available_after": e.available_after})
     except NotATradingDay as e:
         raise HTTPException(404, str(e))
     except CurrentDataUnavailable as e:
         raise HTTPException(502, str(e))
+    except KiwoomRequestError:
+        raise HTTPException(502, "키움 시세 연결을 복구 중입니다. 잠시 후 다시 조회하세요.")
     except ScreenerError as e:
         raise HTTPException(400, str(e))
     except KrxAuthError as e:
@@ -341,6 +348,14 @@ async def screener_upper_limit(
 async def _on_startup():
     await manager.restore()  # 계좌별 저장 종목 복원
     manager.start()          # live 계좌 미체결 폴링 + 공유 KST 장 시계 가동
+
+
+@app.on_event("shutdown")
+async def _on_shutdown():
+    if manager._clock_task is not None:
+        manager._clock_task.cancel()
+        await asyncio.gather(manager._clock_task, return_exceptions=True)
+    await asyncio.gather(*(hub.close() for hub in manager.hubs.values()))
 
 
 # ---------------------------------------------------------------------------
@@ -363,8 +378,8 @@ async def ws(websocket: WebSocket):
         "type": "market", "phase": manager.clock.phase.value, "auto": manager.clock.auto,
     })
     for acc, hub in manager.hubs.items():
-        for code in hub.stocks:
-            st = hub.status_of(code)
+        for code in list(hub.stocks):
+            st = await asyncio.to_thread(hub.status_of, code)
             if st:
                 await websocket.send_json(
                     {"type": "status", "account": acc, "status": st.model_dump()})
