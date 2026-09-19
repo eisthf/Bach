@@ -1,6 +1,6 @@
 """키움증권 REST/WebSocket 클라이언트 — self-contained.
 
-`kiwoom_rest_api_full_v3.md` 공식 명세를 기준으로 Bach 내부에 직접 구현했다.
+`docs/kiwoom_rest_api_full_v4.md` 공식 명세를 기준으로 Bach 내부에 직접 구현했다.
 외부 `kiwoom` 프로젝트를 런타임에 import 하지 않는다.
 
 ⚠️ 명세서만 보면 빠지는 함정들(키움 파이썬 코드에서 확인):
@@ -8,6 +8,7 @@
 1. **주문 필드 시프트 (kt10000/kt10001)** — 명세 표에서 "0:보통,3:시장가,6:최유리…"
    설명이 `ord_uv` 행에 붙어 있으나 실제로는 `trde_tp`(매매구분) 값이다.
    시장가 주문 = ``trde_tp="3"``, ``ord_uv=""``. `dmst_stex_tp="KRX"` 필수.
+   (v4 명세에서는 `trde_tp` 행에 바르게 붙어 있다 — v3 문서의 표 추출 결함이었다.)
 2. **0B 실시간 거래량 FID** — 거래량은 FID 15(체결량)/13(누적거래량)이다.
    FID 11은 *전일대비*(가격 변화)이므로 거래량으로 쓰면 안 된다.
    가격=10, 시가=16, 고가=17, 저가=18.
@@ -19,7 +20,8 @@
 6. **WebSocket PING** — 서버가 보내는 ``trnm:"PING"`` 메시지를 그대로 echo 해야
    연결이 유지된다. ``LOGIN`` 응답 ``return_code==0`` 확인 후 ``REG`` 등록.
 7. **분봉 응답** — ``ka10080``은 최신봉부터(newest-first) 반환하며 cont-yn/next-key로
-   페이징한다. 체결일시는 ``cntr_dt``/``cntr_tm``(YYYYMMDDHHMMSS), 종가는 ``cur_prc``
+   페이징한다. 체결일시는 ``cntr_tm``(YYYYMMDDHHMMSS; v4 명세에서 ``cntr_dt``는
+   삭제됐지만 호환을 위해 둘 다 읽는다), 종가는 ``cur_prc``
    (``close_pric`` 아님), 거래량은 ``trde_qty``.
 """
 from __future__ import annotations

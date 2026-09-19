@@ -122,5 +122,6 @@ node smoke-screener.mjs                 # 상한가 종목 페이지
 ## 문서 (`docs/`)
 
 - [trading-strategy.md](docs/trading-strategy.md) — ULC 자동매매 전략 (구현 기준)
-- [kiwoom_rest_api_full_v3.md](docs/kiwoom_rest_api_full_v3.md) — 키움 REST API 명세
+- [kiwoom_rest_api_full_v4.md](docs/kiwoom_rest_api_full_v4.md) — 키움 REST API 명세 (국내·미국주식·실시간·오류코드). PDF + JSON 원문 병합본
+- [kiwoom-rest-api-spec.json](docs/kiwoom-rest-api-spec.json) — 같은 명세의 기계 판독용 JSON 원본 (필수 여부·Header/Body 구분은 없음)
 - [remote-access-proxy-websocket.md](docs/remote-access-proxy-websocket.md) — HTTP 프록시 경유 시 WebSocket 끊김 원인/우회(SSH 포워딩)
