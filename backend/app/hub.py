@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import asyncio
-import calendar
 import json
 import logging
 import os
@@ -25,7 +24,7 @@ logger = logging.getLogger("bach.hub")
 
 from .accounts import AccountConfig, load_account_configs
 from .event_log import record_event
-from .market_clock import MarketClock, now_kst
+from .market_clock import MarketClock
 from .models import (
     AutoConfig,
     MarketPhase,
@@ -471,6 +470,21 @@ class Hub:
         eng = stock.engine
         if eng is None:
             return
+        # 첫 주문 전에만 계획 재검증. 보유 이후에는 분할 계획을 변경하지 않는다.
+        if (self.live and eng.phase == Phase.ACCUMULATING
+                and eng.shares == 0 and not any(leg.filled for leg in eng.legs)):
+            if not tick.open_verified:
+                return
+            if eng.z != tick.open:
+                old_z = eng.z
+                eng.z = tick.open
+                eng.setup()
+                self._log(
+                    f"[{stock.code}] 첫 매수 전 시가 보정: {old_z:,.0f} → {tick.open:,.0f}",
+                    event="auto_open_revalidated", code=stock.code,
+                    old_open=old_z, verified_open=tick.open, source="KRX_0B",
+                    tick_time=tick.time, scenario=eng.scenario,
+                )
         before_shares = eng.shares
 
         async def buy_fn(amount: int) -> float:
@@ -644,24 +658,10 @@ class Hub:
         self._persist()
 
     async def _start_auto(self, stock: Stock) -> bool:
-        """MONITOR → AUTO_TRADING 진입 시 ULC 엔진 셋업. 성공 여부 반환.
+        """전일 종가 REST와 검증된 시가 캐시가 모두 준비되면 엔진을 만든다.
 
-        prev_close/day_open/get_bars 는 live 에서 블로킹 REST 라 to_thread 로
-        내보낸다. 이 경로는 하필 09:00 정각 장 시작 시점에 몰려 실행되므로
-        (_auto_clock_loop, async 태스크) 여기서 막으면 그 순간 전 계좌·전
-        종목의 틱 수신이 멈춘다.
-
-        X(전일 종가)/Z(당일 시가)는 전용 API(prev_close=ka10081, day_open)가
-        정상 경로다. 실패 시에만 분봉을 조회해 **날짜 경계**로 역산한다 —
-        전일 마지막 봉의 close = X, 당일 09:00 봉의 open = Z. (예전의 고정 인덱스
-        bars[-131]/[-130] 산술은 "당일 130봉이 꽉 차 있다"를 가정하는데, 이
-        코드가 도는 09:00 에는 당일 봉이 0~1개라 항상 어긋났다. 봉 time 은
-        KST 벽시계를 UTC 로 간주한 epoch 이라 자정 경계가 86400 배수에
-        정렬되므로 날짜 비교가 안전하다.)
-
-        그래도 X/Z 를 못 구하면 추측하지 않고 셋업을 포기한다(False). 틀린
-        X 는 진입 필터·시나리오 분류·2차 매수가·상한가 매도선을 하루 종일
-        조용히 오염시키므로, 그 종목만 수동으로 넘기는 편이 안전하다.
+        키움 day_open은 0B 콜백이 채운 당일 캐시만 읽는다. 준비 재시도는
+        시가 REST를 호출하지 않으며, 미확정 시가를 분봉으로 보완하지 않는다.
         """
         async def query(stage, fn, *args):
             try:
@@ -678,20 +678,6 @@ class Hub:
         z = await query("day_open", self.data.day_open, stock.code)
         self._log(f"[{stock.code}] 셋업 기준가 조회: X={x}, Z={z}",
                   event="auto_setup_prices", code=stock.code, stage="primary", x=x, z=z)
-        if x is None or z is None:
-            # 폴백: 분봉에서 날짜 경계로 역산. 엔진은 이평선이 필요 없으므로
-            # lookback 은 전일 꼬리 몇 개면 충분(09:00 REST 부하 최소화).
-            bars = await query("get_bars", self.data.get_bars, stock.code, 3, 3)
-            midnight = calendar.timegm(now_kst().date().timetuple())
-            if x is None:
-                prev_bars = [b for b in bars if b.time < midnight]
-                x = prev_bars[-1].close if prev_bars else None
-            if z is None:
-                day_bars = [b for b in bars if b.time == midnight + 9 * 3600]
-                z = day_bars[0].open if day_bars else None
-            self._log(f"[{stock.code}] 셋업 분봉 보완: X={x}, Z={z}, 봉={len(bars)}개",
-                      event="auto_setup_prices", code=stock.code, stage="fallback",
-                      x=x, z=z, bar_count=len(bars))
         if not x or not z:
             self._log(f"[{stock.code}] 셋업 기준가 미확보: X={x}, Z={z}",
                       event="auto_setup_missing_prices", code=stock.code, x=x, z=z,

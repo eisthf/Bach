@@ -218,18 +218,12 @@ class KiwoomDataProvider(DataProvider):
                 label = "일봉" if interval == DAY_INTERVAL else "분봉"
                 logger.warning("[%s] %s 빈 응답 → 재시도", code, label)
                 time.sleep(0.3)
-        today = _today()
         bars: List[Bar] = []
         for r in rows:
             bars.append(Bar(
                 time=r["time"], open=r["open"], high=r["high"],
                 low=r["low"], close=r["close"], volume=r["volume"],
             ))
-            # 조회 범위가 장중부터 시작하면 첫 분봉 시가는 당일 시가가 아니다.
-            if (r["_date"] == today and r["open"] > 0
-                    and (interval == DAY_INTERVAL or r["time"] % 86400 == 9 * 3600)):
-                self._day_open[code] = r["open"]
-                self._day_open_day[code] = today
         return bars
 
     # -- X/Z (자동매매 엔진 셋업용) ---------------------------------------
@@ -244,21 +238,11 @@ class KiwoomDataProvider(DataProvider):
         return x
 
     def day_open(self, code: str) -> Optional[float]:
-        """날짜가 확인된 당일 시가만 반환. 장전 시세표의 시가는 사용하지 않는다."""
+        """검증된 당일 KRX 정규장 체결의 시가만 반환한다. 네트워크 호출 없음."""
         now = now_kst()
         if now.weekday() >= 5 or now.time() < REGULAR_OPEN:
             return None
-        today = _today()
-        if self._day_open_day.get(code) == today:
-            return self._day_open[code]
-        rows = self._call(kw.fetch_day_bars, code, mock=self._mock, today=today, lookback_extra=1)
-        for row in rows:
-            if row["_date"] == today and row["open"] > 0:
-                self._day_open[code] = row["open"]
-                self._day_open_day[code] = today
-                return row["open"]
-        # REST 조회 중 들어온 정규장 체결이 시가를 확정했을 수도 있다.
-        if self._day_open_day.get(code) == today:
+        if self._day_open_day.get(code) == now.strftime("%Y%m%d"):
             return self._day_open[code]
         return None
 
@@ -403,10 +387,14 @@ class KiwoomDataProvider(DataProvider):
             open_ = kw.parse_price(v.get(F_OPEN))
             now = now_kst()
             trade_time = str(v.get("20") or "")  # 체결시간 HHMMSS
-            if (open_ > 0 and now.weekday() < 5
+            verified = (open_ > 0 and now.weekday() < 5
                     and REGULAR_OPEN <= now.time() <= REGULAR_CLOSE
                     and len(trade_time) == 6 and trade_time.isdigit()
-                    and "090000" <= trade_time <= "153000"):
+                    and "090000" <= trade_time <= now.strftime("%H%M%S") <= "153000"
+                    and str(v.get("290")) == "2"
+                    and v.get("9081") == "KRX"
+                    and kw.parse_price(v.get(F_VOL)) > 0)
+            if verified:
                 self._day_open[code] = open_
                 self._day_open_day[code] = now.strftime("%Y%m%d")
             tick = Tick(
@@ -414,7 +402,7 @@ class KiwoomDataProvider(DataProvider):
                 price=price,
                 high=kw.parse_price(v.get(F_HIGH)) or price,
                 low=kw.parse_price(v.get(F_LOW)) or price,
-                open=open_,
+                open=open_, open_verified=verified,
                 volume=kw.parse_price(v.get(F_VOL)),
                 time=chart_epoch(),
             )

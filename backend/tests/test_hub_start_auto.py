@@ -1,11 +1,4 @@
-"""장 시작 엔진 셋업(X/Z 확보) 검증.
-
-- X/Z 폴백은 고정 인덱스가 아니라 **날짜 경계**로 역산한다. 예전의
-  bars[-131]/[-130] 산술은 "당일 130봉이 꽉 차 있다"를 가정했는데, 이 코드가
-  도는 09:00 에는 당일 봉이 0~1개라 항상 어긋났다(X 로 전일 12:30 가격을 집음).
-- X/Z 를 못 구하면 추측하지 않고 그 종목만 수동매매로 인계한다.
-- 한 종목의 셋업 실패·예외가 다른 종목의 장 시작 처리를 삼키지 않는다.
-"""
+"""전일 종가와 이벤트 시가가 모두 준비될 때만 엔진을 생성하는지 검증."""
 import asyncio
 import calendar
 import pytest
@@ -17,7 +10,7 @@ MIDNIGHT = calendar.timegm(now_kst().date().timetuple())  # 봉 축의 당일 00
 
 
 def bar(t: int, o: float, c: float) -> Bar:
-    return Bar(time=t, open=o, high=max(o, c), low=min(o, c), close=c)
+    return Bar(time=t, open=o, high=max(o, c), low=min(o, c), close=c, volume=1)
 
 
 class FakeData:
@@ -75,25 +68,15 @@ async def test_normal_path_skips_bars_fetch(mock_hub):
     assert fake.bars_calls == 0
 
 
-async def test_fallback_uses_date_boundary(mock_hub):
-    """09:00 상황(전일 꼬리 + 당일 1봉)에서 X=전일 마지막 close, Z=당일 첫 open.
-
-    옛 인덱스 산술이라면 len=3 < 131 이라 bars[0](전일 첫 원소)의 close 를
-    X 로 집었을 상황 — 날짜 경계 방식은 전일 '마지막' 봉을 정확히 고른다.
-    """
+async def test_bars_cannot_bypass_missing_verified_open(mock_hub):
     hub, mgr, clock = mock_hub
-    bars = [
-        bar(MIDNIGHT - 360, 9_700.0, 9_800.0),          # 전일 15:24봉
-        bar(MIDNIGHT - 180, 9_800.0, 10_000.0),         # 전일 15:27봉 ← close 가 X
-        bar(MIDNIGHT + 9 * 3600, 10_400.0, 10_450.0),   # 당일 09:00봉 ← open 이 Z
-    ]
-    hub.data = FakeData(bars=bars)
+    hub.data = FakeData(bars=[bar(MIDNIGHT + 9 * 3600, 10400, 10450)], x=10000)
     stock = _arm(hub, clock, "005930")
     await hub.apply_market_open()
-    await asyncio.gather(*(s.setup_task for s in hub.stocks.values() if s.setup_task))
-    assert stock.engine is not None
-    assert stock.engine.x == 10_000.0, "전일 '마지막' 봉의 close 여야 함"
-    assert stock.engine.z == 10_400.0, "당일 '첫' 봉의 open 이어야 함"
+    await stock.setup_task
+    assert stock.engine is None
+    assert stock.machine.state == TradeState.MANUAL_TRADING
+    assert hub.data.bars_calls == 0
 
 
 async def test_unresolvable_gives_up_to_manual(mock_hub):

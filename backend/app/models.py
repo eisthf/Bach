@@ -45,6 +45,7 @@ class Tick(BaseModel):
     high: float            # 장중 고가
     low: float             # 장중 저가
     open: float            # 시가
+    open_verified: bool = False  # KRX 정규장 체결 메시지로 검증된 시가
     volume: float = 0.0
     time: int = 0          # epoch seconds
 
