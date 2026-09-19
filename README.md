@@ -10,10 +10,27 @@
 ## 실행
 
 ### 한 번에 (권장)
+
+Linux/macOS:
+
 ```bash
 ./dev.sh          # .env 설정 그대로 — 백엔드(8000) + 프런트(5173)
 ./dev.sh --demo   # 합성 mock 계좌 1개만. 장 시작/종료를 수동 토글
 ```
+
+Windows PowerShell:
+
+```powershell
+.\dev.ps1          # .env 설정 그대로 — 백엔드(8000) + 프런트(5173)
+.\dev.ps1 --demo   # 합성 mock 계좌 1개만. 장 시작/종료를 수동 토글
+```
+
+PowerShell이 실행 정책 오류를 표시하면 현재 실행에만 허용해 시작할 수 있다:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\dev.ps1 --demo
+```
+
 최초 1회 셋업(venv·npm install·`.env` 복사)도 자동으로 처리하며, Ctrl+C 한 번에
 양쪽을 정리한다.
 
@@ -238,6 +255,7 @@ frontend/src/
                      StockInput, StockPanel, MarketControls, LogPanel, PageNav
 
 dev.sh               개발 서버 일괄 실행 (--demo: 합성 mock 단독)
+dev.ps1              Windows 개발 서버 일괄 실행 (--demo: 합성 mock 단독)
 backend/tests/       pytest 회귀 테스트 (uv run pytest)
 
 # frontend/smoke*.mjs : Playwright 헤드리스 스모크 테스트(개발용)
