@@ -8,6 +8,7 @@ Set-StrictMode -Version Latest
 
 $scriptDir = $PSScriptRoot
 Set-Location -LiteralPath $scriptDir
+$frontendPort = if ($env:BACH_FRONTEND_PORT) { [int]$env:BACH_FRONTEND_PORT } else { 5273 }
 
 $demo = $false
 foreach ($arg in $args) {
@@ -33,7 +34,7 @@ function Assert-Command {
 
 function Assert-PortsAvailable {
     $busy = @()
-    foreach ($port in 8000, 5173) {
+    foreach ($port in 8000, $frontendPort) {
         $listeners = @(Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue)
         foreach ($listener in $listeners) {
             $process = Get-Process -Id $listener.OwningProcess -ErrorAction SilentlyContinue
@@ -167,9 +168,9 @@ try {
     $processes.Add($frontend)
 
     Write-Host "✅ 백엔드 실행 중 (포트 8000, PID: $($backend.Id))"
-    Write-Host "✅ 프론트 실행 중 (포트 5173, PID: $($frontend.Id))"
+    Write-Host "✅ 프론트 실행 중 (포트 $frontendPort, PID: $($frontend.Id))"
     Write-Host ''
-    Write-Host '📱 접속 주소: http://localhost:5173'
+    Write-Host "📱 접속 주소: http://localhost:$frontendPort"
     if ($demo) {
         Write-Host ''
         Write-Host "   데모 흐름: 종목 추가 → 칩 PUSH로 '모니터' → 우상단 '장 시작'"

@@ -20,6 +20,8 @@ function backendToken() {
 // BACH_BACKEND_PORT 로 타깃 포트를 바꿀 수 있다(이미 8000을 쓰는 인스턴스가
 // 떠 있을 때 두 번째 인스턴스를 띄워 검증하는 용도).
 const BACKEND_PORT = process.env.BACH_BACKEND_PORT || '8000'
+// Windows에서는 5173이 시스템 예약 포트 범위에 들어갈 수 있다.
+const FRONTEND_PORT = Number(process.env.BACH_FRONTEND_PORT || (process.platform === 'win32' ? '5273' : '5173'))
 
 export default defineConfig(() => {
   const token = backendToken()
@@ -29,7 +31,8 @@ export default defineConfig(() => {
       // 모든 인터페이스(IPv4 0.0.0.0 포함)에 바인딩. 기본값은 IPv6 ::1 전용이라
       // VSCode 포트포워딩(127.0.0.1 IPv4)이 연결하지 못해 접속이 멈춘다.
       host: true,
-      port: 5173,
+      port: FRONTEND_PORT,
+      strictPort: true,
       proxy: {
         // 이 호스트는 localhost가 IPv6(::1)로만 해석됨 → 백엔드(IPv4)와 불일치.
         // 프록시 타깃을 127.0.0.1로 고정해 IPv4로 연결한다.

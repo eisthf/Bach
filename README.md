@@ -52,14 +52,16 @@ cp .env.example .env          # 기본 PROVIDER=mock
 uv run uvicorn app.main:app --reload
 ```
 
-### 2) 프런트 (포트 5173)
+### 2) 프런트 (Linux 5173, Windows 5273)
 ```bash
 cd frontend
 npm install
 npm run dev
-# http://localhost:5173
+# Linux: http://localhost:5173 / Windows: http://localhost:5273
 ```
 Vite가 `/api`·`/ws`를 백엔드(8000)로 프록시한다.
+Windows에서 5173이 시스템 예약 포트에 포함될 수 있어 5273을 기본값으로 쓴다.
+필요하면 `BACH_FRONTEND_PORT` 환경변수로 변경할 수 있다.
 
 ### 원격 접속 (GCP VM에서 실행 중일 때)
 
