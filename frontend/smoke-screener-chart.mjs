@@ -31,6 +31,7 @@ try {
   await page.getByRole('button', { name: '테스트 종목 차트 보기' }).click()
   await page.waitForFunction(() => !document.querySelector('dialog [role="status"]'))
   assert.equal(await page.locator('dialog canvas').count() > 0, true)
+  assert.match(await page.locator('dialog .chart-volume-value').innerText(), /1,179주/)
   await page.getByRole('button', { name: '일봉', exact: true }).click()
   await page.waitForFunction(() => !document.querySelector('dialog [role="status"]'))
   assert.deepEqual([...new Set(intervals)], [3, 1440])

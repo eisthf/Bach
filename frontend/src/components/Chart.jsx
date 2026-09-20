@@ -31,6 +31,7 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
   const [loadState, setLoadState] = useState('loading')
   const [loadError, setLoadError] = useState('')
   const [retry, setRetry] = useState(0)
+  const [displayVolume, setDisplayVolume] = useState(null)
 
   // 차트 생성 (1회)
   useEffect(() => {
@@ -54,6 +55,7 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
         borderColor: '#ddd',
         scaleMargins: { top: 0.05, bottom: 0.25 },
       },
+      leftPriceScale: { visible: true, borderColor: '#ddd' },
       timeScale: { borderColor: '#ddd', timeVisible: true, secondsVisible: false },
     })
     // 테두리만 있는 캔들: body 투명, border 색만.
@@ -71,11 +73,17 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
     )
     const volume = chart.addHistogramSeries({
       priceFormat: { type: 'volume' },
-      priceScaleId: '',
+      priceScaleId: 'left',
       priceLineVisible: false,
       lastValueVisible: false,
     })
     volume.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } })
+    const showVolumeAtCrosshair = (param) => {
+      const selected = param.seriesData.get(volume)
+      const latest = barsRef.current[barsRef.current.length - 1]
+      setDisplayVolume(Number(selected?.value ?? latest?.volume ?? 0))
+    }
+    chart.subscribeCrosshairMove(showVolumeAtCrosshair)
 
     chartRef.current = chart
     candleRef.current = candle
@@ -83,6 +91,7 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
     maRefs.current = maSeries
 
     return () => {
+      chart.unsubscribeCrosshairMove(showVolumeAtCrosshair)
       chart.remove()
       chartRef.current = null
       candleRef.current = null
@@ -96,6 +105,7 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
     let cancelled = false
     setLoadState('loading')
     barsRef.current = []
+    setDisplayVolume(null)
     candleRef.current?.setData([])
     volumeRef.current?.setData([])
     maRefs.current.forEach((series) => series.setData([]))
@@ -109,6 +119,7 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
       onSessionDate?.(data.session_date)
       setLoadState(bars.length ? 'ready' : 'empty')
       barsRef.current = bars
+      setDisplayVolume(bars.length ? Number(bars[bars.length - 1].volume || 0) : null)
       dayStartRef.current = data.day_start_index
       candleRef.current.setData(bars)
       volumeRef.current?.setData(bars.map(volumePoint))
@@ -162,6 +173,7 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
       const data = await api.getBars(account, code, interval, undefined, sessionOnly && interval !== 1440)
       if (!candleRef.current) return
       barsRef.current = data.bars
+      setDisplayVolume(data.bars.length ? Number(data.bars[data.bars.length - 1].volume || 0) : null)
       dayStartRef.current = data.day_start_index
       candleRef.current.setData(data.bars)
       volumeRef.current?.setData(data.bars.map(volumePoint))
@@ -206,6 +218,7 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
     bars[bars.length - 1] = { ...last, ...updated }
     candleRef.current.update(updated)
     volumeRef.current?.update(volumePoint(updated))
+    setDisplayVolume(updated.volume)
     // 마지막 봉 변동으로 SMA 끝점도 갱신(끝점만 필요 → O(period))
     MA_LINES.forEach((m, i) => {
       const point = lastSma(bars, m.period)
@@ -218,6 +231,12 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
       {loadState === 'loading' && <p role="status">차트 불러오는 중…</p>}
       {loadState === 'empty' && <p role="status">조회 가능한 봉 데이터가 없습니다.</p>}
       {loadState === 'error' && <div role="alert">{loadError} <button onClick={() => setRetry((value) => value + 1)}>다시 시도</button></div>}
+      {loadState === 'ready' && displayVolume !== null && (
+        <div className="chart-volume-value" aria-live="off">
+          거래량 <strong>{displayVolume.toLocaleString('ko-KR')}주</strong>
+          <span>봉에 마우스를 올리면 해당 봉의 수량을 표시합니다.</span>
+        </div>
+      )}
     <div
       ref={containerRef}
       className="chart-canvas"
