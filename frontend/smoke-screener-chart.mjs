@@ -12,6 +12,10 @@ try {
     const url = new URL(route.request().url())
     let data = {}
     if (url.pathname === '/api/accounts') data = [{ id: 'mock', label: '데모', live: false }]
+    else if (url.pathname.endsWith('/trades')) data = { trades: [
+      { id: 'buy', time: 1700000000 + 100 * 180 + 30, side: 'buy', qty: 10, price: 10105 },
+      { id: 'sell', time: 1700000000 + 130 * 180 + 30, side: 'sell', qty: 5, price: 10135 },
+    ] }
     else if (url.pathname.endsWith('/upper-limit')) data = {
       date: '2026-09-18', prev_date: '2026-09-17', source: 'mock', scanned: 1,
       stocks: [{ code: '005930', name: '테스트 종목', market: 'KOSPI', market_cap: 1000000000, volume: 10000, close: 13000, prev_close: 10000, change_pct: 30 }],
@@ -32,6 +36,8 @@ try {
   await page.waitForFunction(() => !document.querySelector('dialog [role="status"]'))
   assert.equal(await page.locator('dialog canvas').count() > 0, true)
   assert.match(await page.locator('dialog .chart-volume-value').innerText(), /1,179주/)
+  await page.locator('dialog .chart-trade-legend').waitFor()
+  if (process.env.BACH_SMOKE_SHOT) await page.screenshot({ path: process.env.BACH_SMOKE_SHOT })
   await page.getByRole('button', { name: '일봉', exact: true }).click()
   await page.waitForFunction(() => !document.querySelector('dialog [role="status"]'))
   assert.deepEqual([...new Set(intervals)], [3, 1440])

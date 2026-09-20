@@ -309,6 +309,7 @@ class MockBroker(Broker):
         new_qty = pos.quantity + qty
         pos.avg_price = (pos.avg_price * pos.quantity + price * qty) / new_qty
         pos.quantity = new_qty
+        self._data.record_trade(code, "buy", qty, price, time_source="execution")
         return OrderResult(ok=True, code=code, side="buy", filled_qty=qty, price=price,
                            order_no=self._next_order_no(),
                            message=f"{qty}주 매수 체결 @ {price:,.0f}")
@@ -323,6 +324,7 @@ class MockBroker(Broker):
         price = self._price(code)
         pos.realized_pnl += (price - pos.avg_price) * qty
         pos.quantity -= qty
+        self._data.record_trade(code, "sell", qty, price, time_source="execution")
         if pos.quantity == 0:
             pos.avg_price = 0.0
         return OrderResult(ok=True, code=code, side="sell", filled_qty=qty, price=price,

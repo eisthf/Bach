@@ -29,8 +29,9 @@ class FakeManager:
 
 
 @pytest.fixture
-def mock_hub():
+def mock_hub(tmp_path, monkeypatch):
     """합성 mock provider 계좌의 (hub, manager, clock)."""
+    monkeypatch.setenv("BACH_STATE_MOCK", str(tmp_path / "state.mock.json"))
     cfg = AccountConfig(id="mock", label="모의투자", provider="mock",
                         appkey=None, secret=None, kiwoom_mock=True, danger=False)
     clock = MarketClock(auto=False)
@@ -40,6 +41,7 @@ def mock_hub():
     hub.AUTO_SETUP_TIMEOUT = 0.3
     hub.AUTO_SETUP_INTERVAL = 0.01
     yield hub, mgr, clock
+    hub.trade_history.close()
     for stock in hub.stocks.values():  # 틱 태스크 정리
         if stock.setup_task:
             stock.setup_task.cancel()

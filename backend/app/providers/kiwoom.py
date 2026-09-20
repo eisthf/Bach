@@ -440,6 +440,20 @@ class KiwoomDataProvider(DataProvider):
             "unfilled": kw.parse_int(v.get(FILL_UNFILLED)),
             "order_no": str(v.get(FILL_ORDNO, "")).strip(),
         }
+        # 공식 00 응답: 908=체결시각(HHmmss), 909=체결번호.
+        received = now_kst()
+        executed = received
+        source = "received"
+        clock = str(v.get("908") or "").strip()
+        if len(clock) == 6 and clock.isdigit():
+            try:
+                executed = received.replace(hour=int(clock[:2]), minute=int(clock[2:4]), second=int(clock[4:]))
+                source = "execution"
+            except ValueError:
+                pass
+        execution_no = str(v.get("909") or "").strip()
+        identity = f"{executed.date()}:{fill['order_no']}:{execution_no}" if execution_no and fill["order_no"] else None
+        self.record_trade(code, side, fill["qty"], fill["price"], time=chart_epoch(executed), time_source=source, identity=identity)
         try:
             self.on_order_fill(fill)
         except Exception:  # noqa: BLE001

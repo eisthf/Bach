@@ -18,6 +18,16 @@ DAY_INTERVAL = 1440
 class DataProvider(ABC):
     """시세/봉 데이터 소스."""
 
+    def record_trade(self, code, side, qty, price, **details):
+        history = getattr(self, "trade_history", None)
+        if history is not None:
+            try:
+                history.record({"code": code, "side": side, "qty": qty, "price": price, **details})
+            except Exception:
+                # 차트 표시 기능의 실패를 주문 실패로 오인해 재전송하지 않도록 격리한다.
+                import logging
+                logging.getLogger(__name__).exception("차트 체결 기록 실패")
+
     def set_account(self, account: str) -> None:
         """계좌 식별자를 진단 로그에 연결한다."""
 

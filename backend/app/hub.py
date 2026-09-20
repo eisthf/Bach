@@ -83,6 +83,9 @@ class Hub:
             or (base / ("state.json" if cfg.id == "mock" else f"state.{cfg.id}.json"))
         )
         self._restoring = False
+        from .trade_history import TradeHistory
+        self.trade_history = TradeHistory(self._state_path.with_suffix(".trades.json"))
+        self.data.trade_history = self.trade_history
         self.recovery_notice = ""
         # 주문체결(00) 이벤트 → 포지션 즉시 갱신(폴링 대신 이벤트 기반).
         if hasattr(self.data, "on_order_fill"):
@@ -763,6 +766,7 @@ class Hub:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         await self.data.close()
+        await asyncio.to_thread(self.trade_history.close)
 
 
 class AccountManager:

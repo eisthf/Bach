@@ -26,6 +26,7 @@ const enc = encodeURIComponent
 export const api = {
   // 전역
   accounts: () => req('/api/accounts'),
+  trades: (account, code) => req(`/api/${enc(account)}/trades?code=${enc(code)}`),
   market: () => req('/api/market'),
   marketOpen: () => req('/api/market/open', { method: 'POST' }),
   marketClose: () => req('/api/market/close', { method: 'POST' }),

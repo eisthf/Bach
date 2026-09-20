@@ -220,6 +220,11 @@ def get_bars(
     }
 
 
+@app.get("/api/{account}/trades")
+def chart_trades(account: str, code: str):
+    return {"trades": _hub(account).trade_history.for_code(code)}
+
+
 # ---------------------------------------------------------------------------
 # 주문 / 포지션
 # ---------------------------------------------------------------------------
