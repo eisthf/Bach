@@ -19,6 +19,7 @@ const BOOLS = [
   { key: 'ulc_manual_on_stop', label: '손절선 도달 시 수동 인계' },
   { key: 'ulc_trailing', label: '트레일링 스탑' },
   { key: 'ulc_first_buy_only', label: '1차 매수만' },
+  { key: 'ulc_first_buy_ask3', label: '1차 매수: 매도 3호가 지정가' },
   { key: 'use_3min_bar_timing', label: '3분봉 종가 타이밍' },
 ]
 

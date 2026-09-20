@@ -137,7 +137,9 @@ class UlcEngine:
         targets = ", ".join(
             f"{i}차 ≤ {leg.target:,.0f}" for i, leg in enumerate(self.legs[1:], 2))
         self._emit(
-            f"SC{self.scenario} 진입. 1차: 첫 판단 시 시장가 (당일 시가 {z:,.0f}); "
+            f"SC{self.scenario} 진입. 1차: 첫 판단 시 "
+            f"{'매도 3호가 지정가' if c.ulc_first_buy_ask3 else '시장가'} "
+            f"(당일 시가 {z:,.0f}); "
             f"추가 매수 조건: {targets or '없음'}")
 
     # ------------------------------------------------------------------
@@ -303,6 +305,10 @@ class UlcEngine:
                             self._avg_synced = False
                             await self._sync_from_account()
                     else:
+                        if i == 0 and c.ulc_first_buy_ask3:
+                            self.phase = Phase.SKIPPED
+                            self._emit("SKIP: 매도 3호가 지정가 1차 매수 실패 — 추가 매수 중단")
+                            return
                         leg.filled = True  # 체결 실패해도 무한루프 방지
                 break  # 한 틱에 한 단계만
             if self.all_filled:

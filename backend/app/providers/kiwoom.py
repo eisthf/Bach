@@ -517,6 +517,28 @@ class KiwoomBroker(Broker):
                            price=price, order_no=order_no,
                            message=f"{qty}주 시장가 매수 전송" if ok else "주문 실패")
 
+    def buy_ask3(self, code: str, amount_krw: int) -> OrderResult:
+        try:
+            price = self._data._call(kw.fetch_ask3, code, mock=self._mock)
+        except (kw.KiwoomRequestError, kw.KiwoomAuthError):
+            price = 0
+        qty = int(amount_krw // price) if price > 0 else 0
+        if qty <= 0:
+            return OrderResult(ok=False, code=code, side="buy", filled_qty=0,
+                               price=price, message="매도 3호가 없음 또는 금액 부족")
+        try:
+            order_no = self._data._call(kw.place_order, code, qty, "buy",
+                mock=self._mock, order_type="0", price=str(int(price)), retry_auth=False)
+        except (kw.KiwoomRequestError, kw.KiwoomAuthError):
+            return OrderResult(ok=False, code=code, side="buy", filled_qty=0,
+                               price=price, message="지정가 주문 요청 실패 — 접수 내역 확인 필요")
+        ok = order_no is not None
+        if ok:
+            self._pos_ts = 0.0
+        return OrderResult(ok=ok, code=code, side="buy", filled_qty=qty if ok else 0,
+                           price=price, order_no=order_no,
+                           message=f"{qty}주 매도 3호가 지정가 {price:,.0f}원 매수 전송" if ok else "주문 실패")
+
     def sell(self, code: str, qty: int) -> OrderResult:
         try:
             order_no = self._data._call(kw.place_order, code, qty, "sell",

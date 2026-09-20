@@ -314,6 +314,10 @@ class MockBroker(Broker):
                            order_no=self._next_order_no(),
                            message=f"{qty}주 매수 체결 @ {price:,.0f}")
 
+    def buy_ask3(self, code: str, amount_krw: int) -> OrderResult:
+        # 모의 데이터에는 호가장이 없으므로 현재가 체결로 주문 경로만 시연한다.
+        return self.buy(code, amount_krw)
+
     def sell(self, code: str, qty: int) -> OrderResult:
         pos = self.position(code)
         if qty > pos.quantity:

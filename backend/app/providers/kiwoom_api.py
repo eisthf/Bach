@@ -231,6 +231,15 @@ def fetch_quote(token: str, code: str, mock: bool = False) -> Optional[dict]:
     }
 
 
+def fetch_ask3(token: str, code: str, mock: bool = False) -> float:
+    """ka10004 KRX 매도 3호가. 유효한 가격이 없으면 0."""
+    url = f"{rest_host(mock)}/api/dostk/mrkcond"
+    headers = {"Content-Type": "application/json;charset=UTF-8",
+               "authorization": f"Bearer {token}", "api-id": "ka10004"}
+    resp = _post(url, headers, {"stk_cd": code}, timeout=10, retries=1)
+    return parse_price(resp.json().get("sel_3th_pre_bid"))
+
+
 def fetch_stock_name(token: str, code: str, mock: bool = False) -> Optional[str]:
     """종목명만 필요할 때의 얇은 래퍼."""
     q = fetch_quote(token, code, mock=mock)

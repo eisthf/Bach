@@ -501,7 +501,12 @@ class Hub:
             result = None
             error_type = None
             try:
-                result = await asyncio.to_thread(self.broker.buy, stock.code, amount)
+                first_leg = not any(leg.filled for leg in eng.legs)
+                buy = (self.broker.buy_ask3 if first_leg and eng.config.ulc_first_buy_ask3
+                       else self.broker.buy)
+                result = await asyncio.to_thread(buy, stock.code, amount)
+                if not result.ok:
+                    self._log(f"[{stock.code}] 자동매수 실패: {result.message}")
                 return result.price if result.ok else 0.0
             except (Exception, asyncio.CancelledError) as exc:
                 error_type = type(exc).__name__

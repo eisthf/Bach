@@ -80,6 +80,11 @@ class Broker(ABC):
     def buy(self, code: str, amount_krw: int) -> OrderResult:
         """금액 기준 매수(현재가로 수량 환산)."""
 
+    def buy_ask3(self, code: str, amount_krw: int) -> OrderResult:
+        """매도 3호가 지정가 매수. 미지원 브로커는 주문하지 않는다."""
+        return OrderResult(ok=False, code=code, side="buy", filled_qty=0,
+                           price=0, message="매도 3호가 주문 미지원")
+
     @abstractmethod
     def sell(self, code: str, qty: int) -> OrderResult:
         """수량 기준 매도."""
