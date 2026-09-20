@@ -82,6 +82,7 @@ class UlcEngine:
     # 확정되므로, 마지막 틱을 보관했다가 그때 전략에 전달한다.
     _bar_bucket: Optional[int] = None
     _bar_close: Optional[Tick] = None
+    decision_tick_received_ns: int = 0  # 3분봉 모드에서는 판단에 사용한 직전 봉 틱
 
     # ------------------------------------------------------------------
     def _emit(self, msg: str) -> None:
@@ -264,6 +265,7 @@ class UlcEngine:
         """틱 또는 확정 3분봉 종가 1개로 매매 조건을 평가한다."""
         if self.phase in (Phase.INIT, Phase.SKIPPED, Phase.DONE):
             return
+        self.decision_tick_received_ns = tick.received_ns
         price = tick.price
         c = self.config
 

@@ -37,6 +37,8 @@ from typing import Dict, List, Optional
 
 import requests
 
+from ..timing import mark
+
 logger = logging.getLogger("bach.kiwoom")
 
 
@@ -88,9 +90,18 @@ def _post(url: str, headers: dict, body: dict, timeout: float,
     """성공 응답 반환, 실패 시 예외. 주문 호출은 retries=1로 재전송을 금지한다."""
     resp: Optional[requests.Response] = None
     for attempt in range(retries):
+        is_order = headers.get("api-id") in ("kt10000", "kt10001")
+        if is_order:
+            mark("gate_start")
         _reserve_slot()
+        if is_order:
+            mark("http_start")
         try:
-            resp = requests.post(url, headers=headers, json=body, timeout=timeout)
+            try:
+                resp = requests.post(url, headers=headers, json=body, timeout=timeout)
+            finally:
+                if is_order:
+                    mark("http_end")
         except requests.RequestException as e:  # 네트워크 오류도 잠깐 백오프 후 재시도
             logger.warning("REST 연결 오류(%s/%s): %s", attempt + 1, retries, e)
             _penalize(0.4 * (attempt + 1))

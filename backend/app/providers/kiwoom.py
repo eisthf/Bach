@@ -14,6 +14,7 @@ import time
 from typing import AsyncIterator, Callable, Dict, List, Optional
 
 from ..market_clock import chart_epoch, now_kst, REGULAR_OPEN, REGULAR_CLOSE
+from ..timing import mark
 from ..models import Bar, OrderResult, Position, Tick
 from . import kiwoom_api as kw
 from .base import Broker, DAY_INTERVAL, DataProvider
@@ -72,6 +73,7 @@ class KiwoomDataProvider(DataProvider):
         self._last: Dict[str, Tick] = {}
         self._day_open: Dict[str, float] = {}    # 당일 시가(Z) 캐시
         self._day_open_day: Dict[str, str] = {}
+        self._open_received_ns: Dict[str, int] = {}
         self._prev_close: Dict[str, float] = {}  # 전일 종가(X) 캐시
         self._prev_close_day: Dict[str, str] = {}
         self._name: Dict[str, str] = {}          # 종목명 캐시
@@ -246,6 +248,9 @@ class KiwoomDataProvider(DataProvider):
             return self._day_open[code]
         return None
 
+    def open_received_ns(self, code: str) -> int:
+        return self._open_received_ns.get(code, 0) if self._day_open_day.get(code) == _today() else 0
+
     def stock_name(self, code: str, refresh: bool = False) -> Optional[str]:
         # 종목 추가 시 1회: 종목명 + 초기 시세(현재가/시고저)를 ka10007로 시드.
         # 거래가 드문 종목은 첫 0B 틱까지 시간이 걸려 헤더가 '-'로 보이는데,
@@ -331,6 +336,7 @@ class KiwoomDataProvider(DataProvider):
                 async with websockets.connect(uri, ping_interval=None) as ws:
                     await ws.send(json.dumps({"trnm": "LOGIN", "token": token}))
                     async for raw in ws:
+                        received_ns = time.perf_counter_ns()
                         msg = json.loads(raw)
                         trnm = msg.get("trnm")
                         if trnm == "LOGIN":
@@ -354,7 +360,7 @@ class KiwoomDataProvider(DataProvider):
                         elif trnm == "PING":
                             await ws.send(raw)  # echo (keepalive)
                         elif trnm == "REAL":
-                            self._dispatch_real(msg)
+                            self._dispatch_real(msg, received_ns)
             except asyncio.CancelledError:
                 self._ws = None
                 raise
@@ -368,8 +374,9 @@ class KiwoomDataProvider(DataProvider):
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 30.0)
 
-    def _dispatch_real(self, msg: dict) -> None:
+    def _dispatch_real(self, msg: dict, received_ns: int | None = None) -> None:
         """REAL 메시지를 라우팅: 0B→틱 큐, 00→주문체결 콜백."""
+        received_ns = received_ns if received_ns is not None else time.perf_counter_ns()
         for d in msg.get("data", []):
             dtype = d.get("type")
             if dtype == "00":
@@ -395,6 +402,8 @@ class KiwoomDataProvider(DataProvider):
                     and v.get("9081") == "KRX"
                     and kw.parse_price(v.get(F_VOL)) > 0)
             if verified:
+                if self._day_open_day.get(code) != now.strftime("%Y%m%d"):
+                    self._open_received_ns[code] = received_ns
                 self._day_open[code] = open_
                 self._day_open_day[code] = now.strftime("%Y%m%d")
             tick = Tick(
@@ -402,7 +411,7 @@ class KiwoomDataProvider(DataProvider):
                 price=price,
                 high=kw.parse_price(v.get(F_HIGH)) or price,
                 low=kw.parse_price(v.get(F_LOW)) or price,
-                open=open_, open_verified=verified,
+                open=open_, open_verified=verified, received_ns=received_ns,
                 volume=kw.parse_price(v.get(F_VOL)),
                 time=chart_epoch(),
             )
@@ -475,6 +484,7 @@ class KiwoomBroker(Broker):
         return self._pos_cache
 
     def buy(self, code: str, amount_krw: int) -> OrderResult:
+        mark("worker_start")
         price = self._price(code)
         qty = int(amount_krw // price) if price > 0 else 0
         if qty <= 0:

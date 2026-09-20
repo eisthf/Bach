@@ -356,6 +356,8 @@ async def _on_shutdown():
         manager._clock_task.cancel()
         await asyncio.gather(manager._clock_task, return_exceptions=True)
     await asyncio.gather(*(hub.close() for hub in manager.hubs.values()))
+    from .event_log import close_event_log
+    await asyncio.to_thread(close_event_log)
 
 
 # ---------------------------------------------------------------------------
@@ -408,4 +410,6 @@ async def ws(websocket: WebSocket):
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "accounts": [c.id for c in manager.configs]}
+    from .event_log import event_log_status
+    return {"ok": True, "accounts": [c.id for c in manager.configs],
+            "event_log": event_log_status()}

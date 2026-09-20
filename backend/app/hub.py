@@ -36,6 +36,7 @@ from .models import (
 from .providers import build_provider
 from .state_machine import StateMachine
 from .strategy.ulc import Phase, UlcEngine
+from .timing import order_trace, durations
 
 
 @dataclass
@@ -50,6 +51,8 @@ class Stock:
     recovery_notice: str = ""
     manual_stop_triggered: bool = False
     manual_stop_checked_at: float = 0.0
+    setup_ready_ns: int = 0
+    open_received_ns: int = 0
 
 
 class Hub:
@@ -488,8 +491,31 @@ class Hub:
         before_shares = eng.shares
 
         async def buy_fn(amount: int) -> float:
-            res = await asyncio.to_thread(self.broker.buy, stock.code, amount)
-            return res.price if res.ok else 0.0
+            trace = {"decision": time.perf_counter_ns(), "tick_received": eng.decision_tick_received_ns,
+                     "open_received": stock.open_received_ns,
+                     "setup_ready": stock.setup_ready_ns}
+            token = order_trace.set(trace)
+            result = None
+            error_type = None
+            try:
+                result = await asyncio.to_thread(self.broker.buy, stock.code, amount)
+                return result.price if result.ok else 0.0
+            except (Exception, asyncio.CancelledError) as exc:
+                error_type = type(exc).__name__
+                raise
+            finally:
+                trace["returned"] = time.perf_counter_ns()
+                order_trace.reset(token)
+                record_event(
+                    f"[{stock.code}] 자동매수 지연 계측",
+                    event="auto_buy_timing", account=self.account, code=stock.code,
+                    trace_id=f"{self.account}:{stock.code}:{trace['decision']}",
+                    scenario=eng.scenario, amount_krw=amount,
+                    order_no=result.order_no if result else None,
+                    ok=result.ok if result else False, error_type=error_type,
+                    http_attempted=bool(trace.get("http_start")),
+                    **durations(trace),
+                )
 
         async def sell_fn(qty: int) -> float:
             res = await asyncio.to_thread(self.broker.sell, stock.code, qty)
@@ -674,7 +700,9 @@ class Hub:
                 )
                 raise
 
+        x_started = time.perf_counter_ns()
         x = await query("prev_close", self.data.prev_close, stock.code)
+        x_finished = time.perf_counter_ns()
         z = await query("day_open", self.data.day_open, stock.code)
         self._log(f"[{stock.code}] 셋업 기준가 조회: X={x}, Z={z}",
                   event="auto_setup_prices", code=stock.code, stage="primary", x=x, z=z)
@@ -700,7 +728,21 @@ class Hub:
         eng.setup()
         if not self._setup_allowed(stock):
             return False
+        stock.setup_ready_ns = time.perf_counter_ns()
+        source_clock = getattr(self.data, "open_received_ns", None)
+        try:
+            stock.open_received_ns = source_clock(stock.code) if source_clock else 0
+        except Exception:
+            # 계측 미지원은 매매 준비 실패 사유가 아니다.
+            stock.open_received_ns = 0
         stock.engine = eng
+        record_event(
+            f"[{stock.code}] 자동매매 준비 시간", event="auto_setup_timing",
+            account=self.account, code=stock.code, scenario=eng.scenario,
+            prev_close_lookup_ms=round((x_finished - x_started) / 1_000_000, 3),
+            **durations({"open_received": stock.open_received_ns,
+                         "setup_ready": stock.setup_ready_ns}),
+        )
         self._log(f"[{stock.code}] 자동매매 시작 (X={x:,.0f}, Z={z:,.0f})")
         return True
 
