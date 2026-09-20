@@ -4,6 +4,7 @@
 // 서버가 prev_date로 돌려주므로 그대로 표시한다(휴장일을 건너뛴 게 보이도록).
 import React, { useCallback, useEffect, useState } from 'react'
 import { api } from '../api'
+import ScreenerChart from '../components/ScreenerChart'
 
 // 시가총액은 원 단위 그대로 보면 자릿수를 셀 수 없다. 조/억으로 접는다.
 function formatMarketCap(won) {
@@ -22,9 +23,11 @@ export default function UpperLimitPage() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [selectedStock, setSelectedStock] = useState(null)
 
   const load = useCallback(async (d) => {
     setLoading(true)
+    setSelectedStock(null)
     setError(null)
     try {
       const res = await api.upperLimit(d)
@@ -141,10 +144,10 @@ export default function UpperLimitPage() {
             </thead>
             <tbody>
               {data.stocks.map((s, i) => (
-                <tr key={s.code}>
+                <tr key={s.code} className="screener-stock-row" onClick={() => setSelectedStock(s)}>
                   <td className="col-num muted">{i + 1}</td>
                   <td className="mono">{s.code}</td>
-                  <td className="col-name">{s.name || '—'}</td>
+                  <td className="col-name"><button className="screener-stock-link" onClick={(e) => { e.stopPropagation(); setSelectedStock(s) }} aria-label={`${s.name || s.code} 차트 보기`}>{s.name || '—'}</button></td>
                   <td>
                     <span className={`mkt mkt-${s.market.toLowerCase()}`}>{s.market}</span>
                   </td>
@@ -160,6 +163,7 @@ export default function UpperLimitPage() {
           </table>
         </div>
       )}
+      {selectedStock && <ScreenerChart stock={selectedStock} source={data.source} onClose={() => setSelectedStock(null)} />}
     </main>
   )
 }

@@ -328,6 +328,20 @@ input:focus { outline: none; border-color: var(--accent); }
 
 /* ── 상한가 종목 페이지 ───────────────────────────────────────────────── */
 .screener { padding: 16px 20px 32px; max-width: 1100px; }
+.screener-stock-row { cursor: pointer; }
+.screener-stock-row:hover { background: #f0f5fd; }
+.screener-stock-link { border: 0; background: transparent; color: var(--accent); font: inherit; font-weight: 600; cursor: pointer; padding: 6px 0; text-align: left; }
+.screener-stock-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.screener-chart { width: min(1000px, calc(100vw - 24px)); max-height: calc(100dvh - 32px); box-sizing: border-box; border: 1px solid #ddd; border-radius: 14px; padding: 20px; color: #333; background: white; overflow: auto; }
+.screener-chart::backdrop { background: rgba(20, 30, 45, .5); }
+.screener-chart-header, .screener-chart-tools { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.screener-chart-header { justify-content: space-between; }
+.screener-chart h2 { font-size: 20px; margin: 0; }
+.screener-chart small { color: #777; font-size: 13px; }
+.screener-chart button { padding: 8px 14px; border: 1px solid #ccc; border-radius: 6px; background: white; cursor: pointer; }
+.screener-chart button[aria-pressed='true'] { color: white; background: var(--accent); border-color: var(--accent); }
+.screener-chart-tools { margin-top: 16px; font-size: 13px; }
+.screener-chart .muted { font-size: 12px; color: #666; }
 .screener-controls {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   background: var(--card); border: 1px solid var(--border);

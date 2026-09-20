@@ -4,7 +4,7 @@
 // - 거래량: 하단 막대. 상승봉 적색 / 하락봉 청색.
 // - 크로스헤어: 내장. 마우스 가격 수평선 + 가격 라벨(손절선 가늠용).
 // - 실시간 틱으로 마지막 봉 갱신. 봉 경계를 넘으면 서버에서 재조회(아래 참고).
-import React, { useCallback, useEffect, useRef } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { createChart, CrosshairMode } from 'lightweight-charts'
 import { api } from '../api'
 import { sma, lastSma, MA_LINES } from '../indicators'
@@ -28,6 +28,9 @@ export default function Chart({ account, code, interval, tick, height = 360 }) {
   const dayStartRef = useRef(0)
   const refreshingRef = useRef(false)
   const lastRefreshRef = useRef(0)
+  const [loadState, setLoadState] = useState('loading')
+  const [loadError, setLoadError] = useState('')
+  const [retry, setRetry] = useState(0)
 
   // 차트 생성 (1회)
   useEffect(() => {
@@ -91,6 +94,11 @@ export default function Chart({ account, code, interval, tick, height = 360 }) {
   // 봉 데이터 로드 (interval 변경 시)
   useEffect(() => {
     let cancelled = false
+    setLoadState('loading')
+    barsRef.current = []
+    candleRef.current?.setData([])
+    volumeRef.current?.setData([])
+    maRefs.current.forEach((series) => series.setData([]))
     chartRef.current?.timeScale().applyOptions({
       timeVisible: interval !== 1440,
       secondsVisible: false,
@@ -98,6 +106,7 @@ export default function Chart({ account, code, interval, tick, height = 360 }) {
     api.getBars(account, code, interval).then((data) => {
       if (cancelled || !candleRef.current || !chartRef.current) return
       const bars = data.bars
+      setLoadState(bars.length ? 'ready' : 'empty')
       barsRef.current = bars
       dayStartRef.current = data.day_start_index
       candleRef.current.setData(bars)
@@ -131,11 +140,15 @@ export default function Chart({ account, code, interval, tick, height = 360 }) {
         }
       }
       requestAnimationFrame(applyView)
+    }).catch((error) => {
+      if (cancelled) return
+      setLoadError(error.message || '차트를 불러오지 못했습니다.')
+      setLoadState('error')
     })
     return () => {
       cancelled = true
     }
-  }, [account, code, interval])
+  }, [account, code, interval, retry])
 
   // 봉 경계를 넘었을 때 서버에서 다시 받는다.
   // 클라이언트가 틱으로 새 봉을 지어내지 않는 이유: 틱은 큐가 차면 드롭될 수
@@ -200,10 +213,15 @@ export default function Chart({ account, code, interval, tick, height = 360 }) {
   }, [tick, interval, refreshBars])
 
   return (
+    <div className="chart-container">
+      {loadState === 'loading' && <p role="status">차트 불러오는 중…</p>}
+      {loadState === 'empty' && <p role="status">조회 가능한 봉 데이터가 없습니다.</p>}
+      {loadState === 'error' && <div role="alert">{loadError} <button onClick={() => setRetry((value) => value + 1)}>다시 시도</button></div>}
     <div
       ref={containerRef}
       className="chart-canvas"
       style={{ width: '100%', '--chart-height': `${height}px` }}
     />
+    </div>
   )
 }
