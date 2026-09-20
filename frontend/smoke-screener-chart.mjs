@@ -20,6 +20,7 @@ try {
       assert.equal(route.request().method(), 'GET')
       const interval = Number(url.searchParams.get('interval'))
       intervals.push(interval)
+      if (interval === 3) assert.equal(url.searchParams.get('session_only'), 'true')
       if (failBars) return route.fulfill({ status: 503, json: { detail: '시세 조회 실패' } })
       data = { day_start_index: 60, bars: Array.from({ length: 180 }, (_, i) => ({ time: 1700000000 + i * interval * 60, open: 10000 + i, high: 10010 + i, low: 9990 + i, close: 10005 + i, volume: 1000 + i })) }
     }

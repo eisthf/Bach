@@ -212,7 +212,7 @@ class KiwoomDataProvider(DataProvider):
             else:
                 rows = self._call(
                     kw.fetch_min_bars, code, interval, mock=self._mock,
-                    today=_today(), lookback_extra=lookback_extra,
+                    lookback_extra=lookback_extra,
                 )
             if rows:
                 break

@@ -18,7 +18,7 @@ const volumePoint = (bar) => ({
   color: bar.close >= bar.open ? 'rgba(211, 47, 47, 0.35)' : 'rgba(21, 101, 192, 0.35)',
 })
 
-export default function Chart({ account, code, interval, tick, height = 360 }) {
+export default function Chart({ account, code, interval, tick, height = 360, sessionOnly = false, onSessionDate }) {
   const containerRef = useRef(null)
   const chartRef = useRef(null)
   const candleRef = useRef(null)
@@ -103,9 +103,10 @@ export default function Chart({ account, code, interval, tick, height = 360 }) {
       timeVisible: interval !== 1440,
       secondsVisible: false,
     })
-    api.getBars(account, code, interval).then((data) => {
+    api.getBars(account, code, interval, undefined, sessionOnly && interval !== 1440).then((data) => {
       if (cancelled || !candleRef.current || !chartRef.current) return
       const bars = data.bars
+      onSessionDate?.(data.session_date)
       setLoadState(bars.length ? 'ready' : 'empty')
       barsRef.current = bars
       dayStartRef.current = data.day_start_index
@@ -126,9 +127,9 @@ export default function Chart({ account, code, interval, tick, height = 360 }) {
           return
         }
         const ts = chartRef.current.timeScale()
-        // 당일 구간으로 시야 이동(이전 60봉은 SMA 계산용이라 살짝만 보이게)
+        // 스크리너는 정규장 하루의 첫 봉부터, 매매 차트는 이전 5봉을 곁들여 보여준다.
         if (bars.length > data.day_start_index) {
-          const fromIndex = interval === 1440
+          const fromIndex = interval === 1440 || sessionOnly
             ? data.day_start_index
             : Math.max(0, data.day_start_index - 5)
           ts.setVisibleRange({
@@ -148,7 +149,7 @@ export default function Chart({ account, code, interval, tick, height = 360 }) {
     return () => {
       cancelled = true
     }
-  }, [account, code, interval, retry])
+  }, [account, code, interval, sessionOnly, retry])
 
   // 봉 경계를 넘었을 때 서버에서 다시 받는다.
   // 클라이언트가 틱으로 새 봉을 지어내지 않는 이유: 틱은 큐가 차면 드롭될 수
@@ -158,7 +159,7 @@ export default function Chart({ account, code, interval, tick, height = 360 }) {
     if (refreshingRef.current) return
     refreshingRef.current = true
     try {
-      const data = await api.getBars(account, code, interval)
+      const data = await api.getBars(account, code, interval, undefined, sessionOnly && interval !== 1440)
       if (!candleRef.current) return
       barsRef.current = data.bars
       dayStartRef.current = data.day_start_index
@@ -171,7 +172,7 @@ export default function Chart({ account, code, interval, tick, height = 360 }) {
     } finally {
       refreshingRef.current = false
     }
-  }, [account, code, interval])
+  }, [account, code, interval, sessionOnly])
 
   // 실시간 틱 → 마지막 봉 갱신 (경계를 넘으면 재조회)
   useEffect(() => {

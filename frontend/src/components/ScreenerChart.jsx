@@ -9,6 +9,7 @@ export default function ScreenerChart({ stock, source, onClose }) {
   const [account, setAccount] = useState(null)
   const [error, setError] = useState('')
   const [retry, setRetry] = useState(0)
+  const [sessionDate, setSessionDate] = useState(null)
 
   useEffect(() => {
     const dialog = dialogRef.current
@@ -49,9 +50,9 @@ export default function ScreenerChart({ stock, source, onClose }) {
         {MA_LINES.map((line) => <span key={line.period} style={{ color: line.color }}>MA{line.period}</span>)}
         <span>거래량</span>
       </div>
-      <p className="muted">{source === 'mock' ? '합성 데모 차트' : '키움 최신 시세 차트'} · 목록 조회일과 별개로 최신 봉을 표시합니다.</p>
+      <p className="muted">{source === 'mock' ? '합성 데모 차트' : '키움 시세 차트'} · {interval === 3 ? `${sessionDate || '최근 거래일'} 정규장 09:00~15:30` : '최근 일봉'} 기준입니다.</p>
       {error ? <p role="alert">{error} <button onClick={() => setRetry((value) => value + 1)}>다시 시도</button></p>
-        : account ? <Chart key={`${stock.code}:${interval}`} account={account.id} code={stock.code} interval={interval} height={460} />
+        : account ? <Chart key={`${stock.code}:${interval}`} account={account.id} code={stock.code} interval={interval} sessionOnly onSessionDate={setSessionDate} height={460} />
           : <p role="status">시세 연결 확인 중…</p>}
     </dialog>
   )

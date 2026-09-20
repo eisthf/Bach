@@ -308,12 +308,15 @@ def fetch_min_bars(
 ) -> List[dict]:
     """분봉을 시간 오름차순(normalized)으로 반환.
 
-    당일 봉 전체 + 당일 첫 봉 이전 ``lookback_extra``개(SMA 계산용)를 포함하도록
-    충분히 페이징한다. 반환 dict: {time(epoch), open, high, low, close, volume, _date}.
+    가장 최근 거래일 봉 전체 + 이전 ``lookback_extra``개(SMA 계산용)를 포함하도록
+    충분히 페이징한다. today가 지정되면 그 날짜를 기준으로 한다.
+    반환 dict: {time(epoch), open, high, low, close, volume, _date}.
     """
     import time as _time
 
-    today = today or datetime.now().strftime("%Y%m%d")
+    # 날짜 미지정 시 첫 응답의 최신 거래일을 사용한다. 주말·휴일에는 오늘 날짜를
+    # 기준으로 찾으면 직전 거래일의 하루치가 아닌 끝 60봉만 남는다.
+    session_date = today
     url = f"{rest_host(mock)}/api/dostk/chart"
     base_hdr = {
         "Content-Type": "application/json;charset=UTF-8",
@@ -349,6 +352,8 @@ def fetch_min_bars(
         for raw in page:
             dt_raw = str(raw.get("cntr_dt") or raw.get("cntr_tm") or "").strip()
             d8 = dt_raw[:8]
+            if session_date is None and len(d8) == 8:
+                session_date = d8
             o = parse_price(raw.get("open_pric"))
             rows.append({
                 "time": _kst_epoch(dt_raw),
@@ -359,7 +364,7 @@ def fetch_min_bars(
                 "volume": parse_price(raw.get("trde_qty")),
                 "_date": d8,
             })
-            if d8 and d8 < today:
+            if session_date and d8 and d8 < session_date:
                 older_seen += 1
         cont_yn = resp.headers.get("cont-yn", "N")
         next_key = resp.headers.get("next-key", "")
@@ -368,8 +373,8 @@ def fetch_min_bars(
         _time.sleep(0.15)
 
     rows.sort(key=lambda r: r["time"])
-    # 당일 첫 봉 인덱스 → 그 앞 lookback_extra개만 남기고 절삭
-    first_today = next((i for i, r in enumerate(rows) if r["_date"] >= today), None)
+    # 기준 거래일 첫 봉 인덱스 → 그 앞 lookback_extra개만 남기고 절삭
+    first_today = next((i for i, r in enumerate(rows) if r["_date"] >= session_date), None) if session_date else None
     if first_today is None:
         return rows[-lookback_extra:] if lookback_extra else rows
     start = max(0, first_today - lookback_extra)

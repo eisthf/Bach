@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import os
 from typing import Optional
+from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
@@ -162,11 +163,15 @@ def get_bars(
     code: str,
     interval: int = Query(3),
     lookback_extra: int = Query(60, ge=0, le=200),
+    session_only: bool = Query(False),
 ):
     if interval not in VALID_INTERVALS:
         raise HTTPException(400, f"interval must be one of {VALID_INTERVALS}")
     hub = _hub(account)
-    bars = hub.data.get_bars(code, interval, lookback_extra)
+    # 장중에는 직전 '완료된' 하루를 고를 수 있도록 3분봉 1일분과
+    # MA60 계산 여유분까지 받는다. 일반 매매 차트의 조회량은 유지한다.
+    fetch_lookback = 200 if session_only and interval == 3 else lookback_extra
+    bars = hub.data.get_bars(code, interval, fetch_lookback)
     if interval == DAY_INTERVAL and bars:
         tick = hub.data.last_tick(code)
         if tick and tick.time // (DAY_INTERVAL * 60) == bars[-1].time // (DAY_INTERVAL * 60):
@@ -176,15 +181,41 @@ def get_bars(
                 "low": min(last.low, tick.low, tick.price),
                 "close": tick.price,
             })]
-    day_start_index = (
-        max(0, len(bars) - 60) if interval == DAY_INTERVAL else lookback_extra
-    )
+    if session_only and interval != DAY_INTERVAL:
+        # 차트 시간축은 KST 벽시각을 UTC epoch로 저장한다.
+        def session_key(bar):
+            dt = datetime.fromtimestamp(bar.time, timezone.utc)
+            return dt.date().isoformat(), dt.hour * 60 + dt.minute
+
+        regular = [(i, session_key(b)) for i, b in enumerate(bars)]
+        regular = [(i, day) for i, (day, minute) in regular if 540 <= minute < 930]
+        if regular:
+            latest_day = max(day for _, day in regular)
+            now = now_kst()
+            if latest_day == now.date().isoformat() and (now.hour, now.minute) < (15, 30):
+                completed = [day for _, day in regular if day < latest_day]
+                latest_day = max(completed) if completed else None
+        if regular and latest_day:
+            first = next(i for i, day in regular if day == latest_day)
+            # 이전 60봉은 SMA 계산용으로 남기고, 장외 봉은 제거한다.
+            warmup = [b for b in bars[:first] if 540 <= session_key(b)[1] < 930][-lookback_extra:]
+            current = [bars[i] for i, day in regular if day == latest_day]
+            bars = warmup + current
+            day_start_index = len(warmup)
+        else:
+            bars = []
+            day_start_index = 0
+    else:
+        day_start_index = (
+            max(0, len(bars) - 60) if interval == DAY_INTERVAL else min(lookback_extra, len(bars))
+        )
     return {
         "code": code,
         "interval": interval,
         "lookback_extra": lookback_extra,
         # 일봉은 계산용 120개 중 최근 60거래일을 화면에 보여준다.
         "day_start_index": day_start_index,
+        "session_date": datetime.fromtimestamp(bars[-1].time, timezone.utc).date().isoformat() if bars else None,
         "bars": [b.model_dump() for b in bars],
     }
 
