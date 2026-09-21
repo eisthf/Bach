@@ -17,6 +17,7 @@ const FIELDS = [
 const BOOLS = [
   { key: 'ulc_allow_lower_open', label: '하락 시가 진입 허용' },
   { key: 'ulc_manual_on_stop', label: '손절선 도달 시 수동 인계' },
+  { key: 'ulc_stop_requires_below_prev_close', label: '손절: 전일 종가 하회도 필요' },
   { key: 'ulc_trailing', label: '트레일링 스탑' },
   { key: 'ulc_first_buy_only', label: '1차 매수만' },
   { key: 'ulc_first_buy_ask3', label: '1차 매수: 매도 3호가 지정가' },

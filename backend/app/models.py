@@ -78,6 +78,8 @@ class AutoConfig(BaseModel):
     ulc_sl: float = Field(0.05, description="손절 비율(평단 대비)")
     ulc_manual_on_stop: bool = Field(
         False, description="분할매수 완료 후 손절선 도달 시 자동매도 없이 수동 인계")
+    ulc_stop_requires_below_prev_close: bool = Field(
+        False, description="손절 조건 강화: 현재가 ≤ 손절선 이고 동시에 현재가 < 전일 종가(X)일 때만 손절")
 
     # 트레일링 스탑
     ulc_trailing: bool = Field(False, description="트레일링 스탑 활성화")

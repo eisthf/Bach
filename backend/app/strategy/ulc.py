@@ -78,6 +78,8 @@ class UlcEngine:
     # 손절선 도달 시 자동매도를 생략하고 Hub에 수동 인계를 요청한 사유.
     # 빈 문자열이면 기존처럼 매도 후 종료한 것이다.
     manual_handoff_reason: str = ""
+    # 전일 종가 조건 때문에 손절을 미룬 적이 있는가(로그를 한 번만 남기기 위함).
+    _stop_deferred: bool = False
     # 3분봉 모드의 현재 봉. 다음 3분 구간의 첫 틱이 들어와야 직전 봉 종가가
     # 확정되므로, 마지막 틱을 보관했다가 그때 전략에 전달한다.
     _bar_bucket: Optional[int] = None
@@ -335,7 +337,7 @@ class UlcEngine:
         if self.phase == Phase.TRAILING:
             self.trail_max = max(self.trail_max, price)
             # 손절 우선
-            if price <= self.avg_cost * (1 - c.ulc_sl):
+            if self._stop_hit(price):
                 await self._handle_stop(sell_fn, "트레일링 중 손절")
                 return
             # 상한가 도달
@@ -359,7 +361,7 @@ class UlcEngine:
         # 에서 익절을 영영 못 한다. 익절이 발동하면 DONE 으로 가므로 남은
         # 분할 leg 는 자연히 소멸한다. 손절은 stop_active 로 계속 게이트.
         if self.phase in (Phase.ACCUMULATING, Phase.HOLDING):
-            if stop_active and price <= self.avg_cost * (1 - c.ulc_sl):
+            if stop_active and self._stop_hit(price):
                 await self._handle_stop(sell_fn, "손절")
                 return
             if price >= self.avg_cost * (1 + c.ulc_tp):
@@ -382,6 +384,25 @@ class UlcEngine:
                 else:
                     await self._exit_all(sell_fn, "익절 전량")
                 return
+
+    def _stop_hit(self, price: float) -> bool:
+        """손절 조건 성립 여부.
+
+        기본: 현재가 ≤ 평단×(1−sl).
+        ``ulc_stop_requires_below_prev_close``: 위 조건과 **동시에** 현재가 <
+        전일 종가(X)여야 손절한다(AND). 손절선 아래라도 X 이상이면 보유한다.
+        """
+        stop_line = self.avg_cost * (1 - self.config.ulc_sl)
+        if price > stop_line:
+            return False
+        if self.config.ulc_stop_requires_below_prev_close and price >= self.x:
+            if not self._stop_deferred:
+                self._stop_deferred = True
+                self._emit(
+                    f"손절선 {stop_line:,.0f} 도달, 현재가 {price:,.0f} ≥ 전일 종가 "
+                    f"{self.x:,.0f} → 손절 대기(두 조건 모두 성립 시 손절)")
+            return False
+        return True
 
     async def _handle_stop(
         self, sell_fn: Callable[[int], Awaitable[float]], reason: str,

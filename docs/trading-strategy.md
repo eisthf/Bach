@@ -56,6 +56,7 @@ X는 전일 종가 REST API, Z는 검증된 정규장 체결 이벤트의 시가
    │
    ▼ [청산] — 익절은 1차 매수 직후부터, 분할 미완료(ACCUMULATING) 중에도 평가
    ├─ 손절: 현재가 ≤ 평단×(1−sl)
+   │        (stop_requires_below_prev_close=true 면 AND 현재가 < X 일 때만)
    │        ├─ manual_on_stop=false → 전량 매도
    │        └─ manual_on_stop=true  → 자동매도 없이 수동매매 인계
    │        (분할매수 전 차수 체결 이후에만 활성 — 익절과 달리 게이트 있음)
@@ -64,7 +65,7 @@ X는 전일 종가 REST API, Z는 검증된 정규장 체결 이벤트의 시가
    │        └─ trailing=true  → 절반 매도 후 TRAILING 진입
    │
    ▼ [TRAILING] (trail_max = 이후 최고가 추적, 판정 우선순위 순)
-   │   ① 손절:       현재가 ≤ 평단×(1−sl)      → 잔량 청산
+   │   ① 손절:       현재가 ≤ 평단×(1−sl)      → 잔량 청산 (전일 종가 하회 조건 동일 적용)
    │   ② 상한가 도달: 현재가 ≥ X×1.295          → 잔량 청산
    │   ③ 보장 익절:   현재가 ≥ 평단×(1+g)       → 잔량 청산
    │   ④ 트레일링 스탑: 현재가 ≤ trail_max×(1−t) → 잔량 청산
@@ -106,6 +107,7 @@ X는 전일 종가 REST API, Z는 검증된 정규장 체결 이벤트의 시가
 | `ulc_tp` | 0.05 | 익절 비율(평단 대비) |
 | `ulc_sl` | 0.05 | 손절 비율(평단 대비) |
 | `ulc_manual_on_stop` | false | true면 분할 완료 후 손절선 도달 시 자동매도 없이 수동 인계 |
+| `ulc_stop_requires_below_prev_close` | false | true면 손절 조건을 `현재가 ≤ 평단×(1−sl)` **AND** `현재가 < X`로 강화. 손절선 아래라도 X 이상이면 보유. 트레일링 스탑·수동매매 자동손절에는 적용 안 됨 |
 | `ulc_trailing` | false | 익절 시 절반 매도 후 트레일링 |
 | `ulc_t` | 0.02 | 트레일링 스탑: trail_max 대비 하락률 |
 | `ulc_g` | 0.15 | 트레일링 중 보장 익절 비율 |
