@@ -16,7 +16,7 @@ import json
 import logging
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
@@ -24,7 +24,7 @@ logger = logging.getLogger("bach.hub")
 
 from .accounts import AccountConfig, load_account_configs
 from .event_log import record_event
-from .market_clock import MarketClock
+from .market_clock import MarketClock, chart_epoch, session_open_epoch
 from .models import (
     AutoConfig,
     MarketPhase,
@@ -53,6 +53,8 @@ class Stock:
     manual_stop_checked_at: float = 0.0
     setup_ready_ns: int = 0
     open_received_ns: int = 0
+    engine_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    startup_tick_ns: int = 0
 
 
 class Hub:
@@ -466,12 +468,47 @@ class Hub:
         await self.refresh_orders()
 
     async def _run_engine_tick(self, stock: Stock, tick: Tick) -> None:
+        async with stock.engine_lock:
+            # 준비 직후 평가한 캐시 틱과 그 이전의 대기열 틱은 재평가하지 않는다.
+            if tick.received_ns and tick.received_ns <= stock.startup_tick_ns:
+                return
+            if stock.machine.state != TradeState.AUTO_TRADING:
+                return
+            await self._evaluate_engine_tick(stock, tick)
+
+    async def _evaluate_startup_tick(self, stock: Stock) -> None:
+        """준비 중 소비된 최근 검증 틱을 재사용. 주문 재시도 루프 밖에서 실행."""
+        async with stock.engine_lock:
+            eng = stock.engine
+            if (not self._setup_allowed(stock) or eng is None
+                    or eng.phase != Phase.ACCUMULATING
+                    or any(leg.filled for leg in eng.legs)
+                    or eng.config.use_3min_bar_timing):
+                return
+            tick = self.data.last_tick(stock.code)
+            age_ns = time.perf_counter_ns() - tick.received_ns if tick else -1
+            valid = (tick is not None and tick.code == stock.code
+                     and tick.open_verified and tick.open > 0 and tick.price > 0
+                     and tick.received_ns > 0 and 0 <= age_ns <= 3_000_000_000
+                     and session_open_epoch() <= tick.time <= chart_epoch())
+            self._log(
+                f"[{stock.code}] 준비 직후 틱 {'평가' if valid else '대기: 최근 검증 틱 없음'}",
+                event="auto_startup_tick", code=stock.code, evaluated=valid,
+                tick_age_ms=round(age_ns / 1_000_000, 3) if tick else None,
+                tick_verified=tick.open_verified if tick else False,
+            )
+            if not valid:
+                return
+            stock.startup_tick_ns = tick.received_ns
+            await self._evaluate_engine_tick(stock, tick)
+
+    async def _evaluate_engine_tick(self, stock: Stock, tick: Tick) -> None:
         """엔진에 틱 1개를 흘린다.
 
         주문(broker.buy/sell)은 블로킹 HTTP + rate-limit 대기라 반드시
         to_thread로 내보낸다. 루프에서 직접 호출하면 주문이 나가는 동안 전
         종목의 틱 수신·WS 브로드캐스트·PING echo가 통째로 멈춘다.
-        종목별 틱 루프가 이 코루틴을 순차로 await 하므로 재진입은 없다.
+        호출자는 engine_lock을 보유해야 한다(준비 직후 평가와 틱 루프 직렬화).
         """
         eng = stock.engine
         if eng is None:
@@ -641,6 +678,8 @@ class Hub:
                     stock.recovery_notice = ""
                     self.broadcast_status(stock.code)
                     self._persist()
+                    # 주문은 셋업의 wait_for/재시도 범위에 포함하지 않는다.
+                    await self._evaluate_startup_tick(stock)
                     return
                 remaining = deadline - loop.time()
                 if remaining <= 0:
@@ -744,6 +783,7 @@ class Hub:
             # 계측 미지원은 매매 준비 실패 사유가 아니다.
             stock.open_received_ns = 0
         stock.engine = eng
+        stock.startup_tick_ns = 0
         record_event(
             f"[{stock.code}] 자동매매 준비 시간", event="auto_setup_timing",
             account=self.account, code=stock.code, scenario=eng.scenario,

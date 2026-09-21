@@ -85,41 +85,43 @@ async def test_tick_path_nonblocking_and_transitions(mock_hub):
 
 
 async def test_market_open_setup_nonblocking(mock_hub):
-    """09:00 장 시작: 종목당 0.3초 REST × 3종목 셋업 중 루프 생존 (5b3e7ba).
-
-    지연 대상은 prev_close — 정상 경로에서 실제 호출되는 REST 다.
-    (get_bars 는 X/Z 폴백에서만 호출되므로 여기 지연을 걸면 무의미.)
-    """
+    """기준가 조회 3개를 막아 둔 동안 루프가 실행되는지 확인 (5b3e7ba)."""
     hub, mgr, clock = mock_hub
-    orig = hub.data.prev_close
+    import threading
 
-    def slow_prev_close(*a, **kw):
-        time.sleep(0.3)
-        return orig(*a, **kw)
+    orig = hub.data.prev_close
+    loop = asyncio.get_running_loop()
+    loop_thread = threading.get_ident()
+    entered = asyncio.Queue()
+    release = threading.Event()
+    codes = ("005930", "000660", "035720")
+
+    def slow_prev_close(code, *a, **kw):
+        # 루프 스레드에서 REST를 직접 실행하는 회귀는 기다리지 않고 실패한다.
+        assert threading.get_ident() != loop_thread, "기준가 조회가 이벤트 루프에서 실행됨"
+        loop.call_soon_threadsafe(entered.put_nowait, code)
+        assert release.wait(10), "테스트가 기준가 조회를 해제하지 못함"
+        return orig(code, *a, **kw)
 
     hub.data.prev_close = slow_prev_close
-    hub.AUTO_SETUP_TIMEOUT = 2.0
-    for code in ("005930", "000660", "035720"):
+    hub.AUTO_SETUP_TIMEOUT = 10.0
+    for code in codes:
         _to_auto(hub, clock, code)
 
-    beats = 0
-
-    async def hb():
-        nonlocal beats
-        while True:
-            beats += 1
-            await asyncio.sleep(0.01)
-
-    t = asyncio.create_task(hb())
-    await asyncio.sleep(0.05)
-    base = beats
     await hub.apply_market_open()
-    await asyncio.gather(*(s.setup_task for s in hub.stocks.values() if s.setup_task))
-    during = beats - base
-    t.cancel()
+    tasks = [s.setup_task for s in hub.stocks.values() if s.setup_task]
+    try:
+        # 세 조회가 모두 대기 중인데도 루프가 콜백을 처리해야 한다.
+        # 제한 시간은 교착 시 테스트 종료용이며 타이머 호출 횟수를 측정하지 않는다.
+        seen = {await asyncio.wait_for(entered.get(), 5) for _ in codes}
+        assert seen == set(codes)
+        assert all(not task.done() for task in tasks)
+        assert all(s.engine is None for s in hub.stocks.values())
+    finally:
+        release.set()
+        await asyncio.gather(*tasks)
 
     assert sum(1 for s in hub.stocks.values() if s.engine) == 3
-    assert during >= 30, f"장 시작 셋업이 루프를 막음 (heartbeat {during}회)"
 
 
 async def test_fill_event_routed_to_engine(mock_hub):
