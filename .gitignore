@@ -5,6 +5,8 @@ __pycache__/
 backend/.env
 backend/state.json
 backend/state.*.json
+# 백테스트 조회 캐시(키움 과거 분봉)
+backend/backtest_data/
 *.egg-info/
 
 # Node

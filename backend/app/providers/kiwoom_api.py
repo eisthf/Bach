@@ -390,6 +390,70 @@ def fetch_min_bars(
     return rows[start:]
 
 
+def fetch_min_bars_on(
+    token: str,
+    code: str,
+    day: str,
+    tic_scope: int = 1,
+    mock: bool = False,
+    max_pages: int = 10,
+) -> List[dict]:
+    """특정 거래일(YYYYMMDD) 하루치 분봉을 시간 오름차순으로 반환(백테스트용).
+
+    ka10080 의 ``base_dt`` 로 그 날짜부터 과거로 페이징하고, 해당 날짜 봉만 남긴다.
+    반환 dict: {time(epoch), open, high, low, close, volume, _date, _hhmm}.
+    """
+    import time as _time
+
+    url = f"{rest_host(mock)}/api/dostk/chart"
+    base_hdr = {
+        "Content-Type": "application/json;charset=UTF-8",
+        "authorization": f"Bearer {token}",
+        "api-id": "ka10080",
+    }
+    body = {"stk_cd": code, "tic_scope": str(tic_scope), "upd_stkpc_tp": "1", "base_dt": day}
+    by_time: dict = {}
+    cont_yn, next_key = "N", ""
+    for _ in range(max_pages):
+        hdr = dict(base_hdr)
+        if cont_yn == "Y" and next_key:
+            hdr["cont-yn"] = "Y"
+            hdr["next-key"] = next_key
+        resp = _post(url, hdr, body, timeout=15)
+        if resp is None or resp.status_code != 200:
+            sc = resp.status_code if resp is not None else "—"
+            raise KiwoomRequestError(f"[{code}] {day} 분봉 조회 실패(HTTP {sc})")
+        data = resp.json()
+        if data.get("return_code") != 0:
+            raise KiwoomRequestError(f"[{code}] {day} 분봉 API 오류: {data.get('return_msg')}")
+        page = data.get("stk_min_pole_chart_qry") or []
+        if isinstance(page, dict):
+            page = [page]
+        older = False
+        for raw in page:
+            dt_raw = str(raw.get("cntr_tm") or "").strip()
+            if dt_raw[:8] != day:
+                older = older or dt_raw[:8] < day
+                continue
+            o = parse_price(raw.get("open_pric"))
+            by_time[dt_raw] = {
+                "time": _kst_epoch(dt_raw),
+                "open": o,
+                "high": parse_price(raw.get("high_pric")) or o,
+                "low": parse_price(raw.get("low_pric")) or o,
+                "close": parse_price(raw.get("cur_prc")) or o,
+                "volume": parse_price(raw.get("trde_qty")),
+                "_date": day,
+                "_hhmm": dt_raw[8:12],
+            }
+        cont_yn = resp.headers.get("cont-yn", "N")
+        next_key = resp.headers.get("next-key", "")
+        if older or cont_yn != "Y" or not next_key:
+            break
+        _time.sleep(0.3)
+    return sorted(by_time.values(), key=lambda r: r["time"])
+
+
 # ---------------------------------------------------------------------------
 # 일봉 차트 (ka10081)
 # ---------------------------------------------------------------------------

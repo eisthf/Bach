@@ -41,6 +41,12 @@ node smoke-screener.mjs                 # 상한가 종목 페이지
 
 `backend/verify_kiwoom.py` — 실제 키움 자격증명/네트워크 환경에서 provider 검증용.
 
+ULC 백테스트(과거 1분봉을 실제 `UlcEngine`에 재생, 차트 조회만·주문 없음):
+```bash
+cd backend && uv run python backtest.py 079650:20260903 --state real     --variant "3분봉:use_3min_bar_timing=true"
+```
+받은 데이터는 `backend/backtest_data/`에 캐시(gitignore). 근사 가정은 `app/backtest.py` 머리말.
+
 ## 아키텍처
 
 ### 백엔드 (`backend/app/`)
@@ -55,6 +61,7 @@ node smoke-screener.mjs                 # 상한가 종목 페이지
 | `models.py` | Pydantic 모델 + enum. 프런트와 주고받는 모든 페이로드의 단일 정의처 |
 | `screener.py` | 상한가 종목 스크리너(D 종가 vs 직전 거래일 +29~30%). 거래일 탐색 + 합성 mock 소스 포함 |
 | `strategy/ulc.py` | 상한가 따라잡기(ULC) 자동매매 엔진. 틱 기반 진입필터·분할매수·익절/손절/트레일링 |
+| `backtest.py` | ULC 백테스트. 1분봉 → 합성 틱으로 운영 엔진을 재생(CLI는 `backend/backtest.py`) |
 | `providers/base.py` | `DataProvider` / `Broker` ABC. `VALID_INTERVALS=(3,5,10,30,60,1440)`, `DAY_INTERVAL=1440` |
 | `providers/mock.py` | 자격증명 없는 합성 시뮬레이터(시드 기반 랜덤워크 봉 + 틱 + 즉시체결 브로커) |
 | `providers/kiwoom_api.py` | 키움 REST/WebSocket **self-contained** 클라이언트. 외부 `kiwoom` 프로젝트를 런타임에 import 하지 않음 |
