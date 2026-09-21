@@ -433,29 +433,32 @@ async def ws(websocket: WebSocket):
             return
     await websocket.accept()
     q = manager.subscribe()
-    # 접속 직후 현재 스냅샷 전송: 계좌 목록 + 장 단계 + 계좌별 종목/틱
-    await websocket.send_json({"type": "accounts", "accounts": manager.accounts_payload()})
-    await websocket.send_json({
-        "type": "market", "phase": manager.clock.phase.value, "auto": manager.clock.auto,
-    })
-    for acc, hub in manager.hubs.items():
-        for code in list(hub.stocks):
-            st = await asyncio.to_thread(hub.status_of, code)
-            if st:
-                await websocket.send_json(
-                    {"type": "status", "account": acc, "status": st.model_dump()})
-            if st and st.recovery_notice:
-                await websocket.send_json({
-                    "type": "log", "account": acc,
-                    "text": f"[{code}] ⚠️ {st.recovery_notice}",
-                })
-            lt = hub.data.last_tick(code)
-            if lt is not None:
-                await websocket.send_json(
-                    {"type": "tick", "account": acc, "tick": lt.model_dump()})
-        # 미체결 주문도 곧 갱신(블로킹 → 백그라운드)
-        asyncio.create_task(hub.refresh_orders())
+    # 스냅샷 전송도 try 안에서 한다 — 전송 중 끊기면(새로고침·탭 닫기) 예외가
+    # 밖으로 새어 ASGI 에러 로그가 찍히고, finally 를 건너뛰어 구독 큐가
+    # _clients 에 영구히 남는다(매 broadcast 마다 쌓이는 누수).
     try:
+        # 접속 직후 현재 스냅샷 전송: 계좌 목록 + 장 단계 + 계좌별 종목/틱
+        await websocket.send_json({"type": "accounts", "accounts": manager.accounts_payload()})
+        await websocket.send_json({
+            "type": "market", "phase": manager.clock.phase.value, "auto": manager.clock.auto,
+        })
+        for acc, hub in manager.hubs.items():
+            for code in list(hub.stocks):
+                st = await asyncio.to_thread(hub.status_of, code)
+                if st:
+                    await websocket.send_json(
+                        {"type": "status", "account": acc, "status": st.model_dump()})
+                if st and st.recovery_notice:
+                    await websocket.send_json({
+                        "type": "log", "account": acc,
+                        "text": f"[{code}] ⚠️ {st.recovery_notice}",
+                    })
+                lt = hub.data.last_tick(code)
+                if lt is not None:
+                    await websocket.send_json(
+                        {"type": "tick", "account": acc, "tick": lt.model_dump()})
+            # 미체결 주문도 곧 갱신(블로킹 → 백그라운드)
+            asyncio.create_task(hub.refresh_orders())
         while True:
             msg = await q.get()
             await websocket.send_json(msg)
