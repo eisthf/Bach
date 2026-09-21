@@ -48,6 +48,9 @@ from .screener import (  # noqa: E402
     source_name,
 )
 
+from .screener_cache import load_snapshot, save_snapshot
+from .screener_collector import run_collector
+
 app = FastAPI(title="Bach 주식 거래 API")
 
 # CORS — 아는 출처만 허용한다.
@@ -357,12 +360,27 @@ async def screener_upper_limit(
                     raise CurrentDataUnavailable(
                         "키움 당일 상한가 조회에 실패했습니다. 잠시 후 다시 조회하세요."
                     )
-                return await asyncio.to_thread(
+                result = await asyncio.to_thread(
                     screen_current_upper_limits, current, min_pct, max_pct,
                     today=session_date,
                 )
+                # 자정을 넘긴 요청 응답은 날짜를 보장할 수 없어 저장하지 않는다.
+                if now_kst().date() == now.date():
+                    await asyncio.to_thread(save_snapshot, result, now)
+                return result
         # 전종목 조회는 네트워크 블로킹이라 이벤트 루프 밖에서 돌린다.
-        return await asyncio.to_thread(screen_upper_limit, date, min_pct, max_pct)
+        saved = None
+        if source_name() == "krx" and requested < now.date():
+            saved = await asyncio.to_thread(load_snapshot, requested, min_pct, max_pct)
+        try:
+            result = await asyncio.to_thread(screen_upper_limit, date, min_pct, max_pct)
+        except (DataPending, NotATradingDay):
+            if saved is not None:
+                return saved
+            raise
+        if saved is not None and result.date < saved.date:
+            return saved
+        return result
     except DataPending as e:
         raise HTTPException(409, {"code": "DATA_PENDING", "message": str(e),
                                   "date": e.date, "available_after": e.available_after})
@@ -384,10 +402,15 @@ async def screener_upper_limit(
 async def _on_startup():
     await manager.restore()  # 계좌별 저장 종목 복원
     manager.start()          # live 계좌 미체결 폴링 + 공유 KST 장 시계 가동
+    app.state.screener_collector = asyncio.create_task(run_collector(manager))
 
 
 @app.on_event("shutdown")
 async def _on_shutdown():
+    collector = getattr(app.state, "screener_collector", None)
+    if collector is not None:
+        collector.cancel()
+        await asyncio.gather(collector, return_exceptions=True)
     if manager._clock_task is not None:
         manager._clock_task.cancel()
         await asyncio.gather(manager._clock_task, return_exceptions=True)

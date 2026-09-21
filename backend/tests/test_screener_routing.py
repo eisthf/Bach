@@ -33,6 +33,8 @@ async def test_snapshot_only_for_current_calendar_session(
     ))
     monkeypatch.setattr(main, "screen_current_upper_limits", snapshot)
     monkeypatch.setattr(main, "screen_upper_limit", historical)
+    monkeypatch.setattr(main, "save_snapshot", Mock())
+    monkeypatch.setattr(main, "load_snapshot", Mock(return_value=None))
 
     result = await main.screener_upper_limit(date=requested, min_pct=29, max_pct=30)
 

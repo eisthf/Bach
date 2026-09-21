@@ -88,7 +88,7 @@ export default function UpperLimitPage() {
           </span>
           {data.source === 'kiwoom' && (
             <span className="live-badge" title="키움 ka10017 최근 정규장 시세입니다">
-              키움 시세
+              {data.cached ? '저장된 키움 시세' : '키움 시세'}
             </span>
           )}
           {data.source === 'mock' && (
@@ -138,7 +138,7 @@ export default function UpperLimitPage() {
                 <th className="col-num" title={data.snapshot ? '현재까지 누적 거래량' : '조회일 거래량'}>
                   거래량{data.snapshot ? ' (누적)' : ''}
                 </th>
-                <th className="col-num">{data.snapshot ? '현재가' : '종가'}</th>
+                <th className="col-num">{data.cached ? '저장 시점 가격' : data.snapshot ? '현재가' : '종가'}</th>
                 <th className="col-num">등락률</th>
               </tr>
             </thead>
