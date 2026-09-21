@@ -14,7 +14,7 @@ from app.providers import kiwoom_api as kw
 
 def saved(hub, tmp_path, entries):
     hub._state_path = tmp_path / f"{hub.account}.json"
-    hub._state_path.write_text(json.dumps({"stocks": entries}))
+    hub._state_path.write_text(json.dumps({"stocks": entries}), encoding="utf-8")
     hub._persist = Hub._persist.__get__(hub)
 
 
@@ -63,7 +63,7 @@ async def test_restore_final_status_and_real_position(mock_hub, tmp_path, monkey
         assert st["position_verified"]
         assert "계좌 잔량 7주" in st["recovery_notice"]
     assert any(stock.recovery_notice in log for log in mgr.logs())
-    assert json.loads(hub._state_path.read_text())["stocks"][0]["recovery_notice"]
+    assert json.loads(hub._state_path.read_text(encoding="utf-8"))["stocks"][0]["recovery_notice"]
     hub.broker.buy.assert_not_called()
     hub.broker.sell.assert_not_called()
 
@@ -80,7 +80,7 @@ async def test_auto_without_position_survives_second_restart(mock_hub, tmp_path)
     clock.reset()
     hub.push("005930")
     assert hub.status_of("005930").recovery_notice == ""
-    assert json.loads(hub._state_path.read_text())["stocks"][0]["state"] == "MONITOR"
+    assert json.loads(hub._state_path.read_text(encoding="utf-8"))["stocks"][0]["state"] == "MONITOR"
 
 
 async def test_no_saved_file_imports_real_holdings(mock_hub, tmp_path, monkeypatch):
@@ -144,7 +144,7 @@ async def test_state_transitions_are_persisted(mock_hub, tmp_path):
     saved(hub, tmp_path, [])
     hub.add_stock("005930")
     def state():
-        return json.loads(hub._state_path.read_text())["stocks"][0]["state"]
+        return json.loads(hub._state_path.read_text(encoding="utf-8"))["stocks"][0]["state"]
     hub.push("005930")
     assert state() == "MONITOR"
     clock.open()

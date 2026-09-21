@@ -20,7 +20,7 @@ def event_file(tmp_path):
 
 def events(path):
     flush_event_log()
-    return [json.loads(line) for line in path.read_text().splitlines()]
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
 async def test_push_and_market_open_are_distinguishable(mock_hub, event_file):
@@ -78,7 +78,7 @@ async def test_setup_exception_records_stage_without_response_body(mock_hub, eve
     error = next(r for r in events(event_file) if r["event"] == "auto_setup_error")
     assert error["stage"] == "prev_close"
     assert error["error_type"] == "RuntimeError"
-    assert "sensitive-response-body" not in event_file.read_text()
+    assert "sensitive-response-body" not in event_file.read_text(encoding="utf-8")
 
 
 def test_reopen_appends_and_rotation_retains_events(event_file):
@@ -134,7 +134,7 @@ async def test_slow_writer_does_not_block_other_tasks_and_overflow_is_counted(tm
     finally:
         release.set()
         handler.close()
-    rows = [json.loads(line) for line in (tmp_path / "slow.log").read_text().splitlines()]
+    rows = [json.loads(line) for line in (tmp_path / "slow.log").read_text(encoding="utf-8").splitlines()]
     assert [r["text"] for r in rows] == ["first", "second"]
     assert rows[-1]["log_dropped_total"] == 1
 
