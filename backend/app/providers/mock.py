@@ -199,13 +199,15 @@ class MockDataProvider(DataProvider):
             opened = previous_close
             high = round_to_tick(max(opened, close) * (1 + rng.uniform(0, 0.018)))
             low = round_to_tick(min(opened, close) * (1 - rng.uniform(0, 0.018)))
+            volume = rng.randint(100_000, 5_000_000)
             bars.append(Bar(
                 time=calendar.timegm(day.timetuple()),
                 open=opened,
                 high=high,
                 low=max(low, tick_size(low)),
                 close=close,
-                volume=rng.randint(100_000, 5_000_000),
+                volume=volume,
+                amount=volume * close,  # 합성 거래대금 ≈ 거래량 × 종가
             ))
             previous_close = close
 
@@ -221,6 +223,7 @@ class MockDataProvider(DataProvider):
                 low=low,
                 close=close,
                 volume=tick.volume if tick else 0,
+                amount=(tick.volume * close) if tick else 0,
             ))
         return bars
 

@@ -448,6 +448,8 @@ def fetch_day_bars(
                 "low": parse_price(raw.get("low_pric")) or o,
                 "close": parse_price(raw.get("cur_prc")) or o,
                 "volume": parse_price(raw.get("trde_qty")),
+                # trde_prica 단위는 백만원 → 원으로 환산.
+                "amount": parse_price(raw.get("trde_prica")) * 1_000_000,
                 "_date": day,
             })
         cont_yn = resp.headers.get("cont-yn", "N")

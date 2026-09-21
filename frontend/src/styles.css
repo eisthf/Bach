@@ -36,6 +36,7 @@ input:focus { outline: none; border-color: var(--accent); }
 .chart-trade-legend { padding: 4px 2px; color: var(--muted); font-size: 11px; }
 .chart-trade-legend .up { color: var(--up); }
 .chart-trade-legend .down { color: var(--down); }
+.chart-trade-legend .amount-stripe-legend { background: rgba(255, 214, 0, 0.35); color: #6d5a00; padding: 0 4px; border-radius: 2px; }
 .chart-volume-value { display: flex; align-items: baseline; gap: 5px; padding: 4px 2px; font-size: 12px; color: var(--muted); }
 .chart-volume-value strong { color: var(--text); font-variant-numeric: tabular-nums; }
 .chart-volume-value span { margin-left: 8px; font-size: 11px; }

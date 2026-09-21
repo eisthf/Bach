@@ -10,6 +10,7 @@ import { api } from '../api'
 import { sma, lastSma, MA_LINES } from '../indicators'
 import { tradeMarkers, tradePoints } from '../tradeMarkers'
 import { TradeCrossPrimitive } from '../tradeCrossPrimitive'
+import { AmountStripePrimitive, amountStripeTimes } from '../amountStripePrimitive'
 
 // 봉 경계를 넘었는데 서버 봉이 아직 안 만들어졌을 때, 매 틱 재조회하지 않도록.
 const REFRESH_COOLDOWN_MS = 10_000
@@ -35,12 +36,17 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
   const [retry, setRetry] = useState(0)
   const tradesRef = useRef([])
   const crossRef = useRef(null)
+  const stripeRef = useRef(null)
   const [tradeError, setTradeError] = useState(false)
 
   // 봉 위/아래 화살표·라벨(봉별 합산) + 캔들 안 체결 건별 X.
   const drawTrades = (bars) => {
     candleRef.current?.setMarkers(tradeMarkers(bars, tradesRef.current, interval))
     crossRef.current?.setPoints(tradePoints(bars, tradesRef.current, interval))
+  }
+  // 거래대금은 일봉에만 있다(분봉 원천엔 없음).
+  const drawStripes = (bars) => {
+    stripeRef.current?.setTimes(interval === 1440 ? amountStripeTimes(bars) : [])
   }
 
   useEffect(() => {
@@ -98,6 +104,8 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
     })
     const cross = new TradeCrossPrimitive()
     candle.attachPrimitive(cross)
+    const stripe = new AmountStripePrimitive()
+    candle.attachPrimitive(stripe)
     const maSeries = MA_LINES.map((m) =>
       chart.addLineSeries({ color: m.color, lineWidth: 1, priceLineVisible: false, title: m.title }),
     )
@@ -118,6 +126,7 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
     chartRef.current = chart
     candleRef.current = candle
     crossRef.current = cross
+    stripeRef.current = stripe
     volumeRef.current = volume
     maRefs.current = maSeries
 
@@ -127,6 +136,7 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
       chartRef.current = null
       candleRef.current = null
       crossRef.current = null
+      stripeRef.current = null
       volumeRef.current = null
       maRefs.current = []
     }
@@ -137,6 +147,7 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
     let cancelled = false
     setLoadState('loading')
     barsRef.current = []
+    stripeRef.current?.setTimes([])
     setDisplayVolume(null)
     candleRef.current?.setData([])
     volumeRef.current?.setData([])
@@ -155,6 +166,7 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
       dayStartRef.current = data.day_start_index
       candleRef.current.setData(bars)
       drawTrades(bars)
+      drawStripes(bars)
       volumeRef.current?.setData(bars.map(volumePoint))
       MA_LINES.forEach((m, i) => {
         maRefs.current[i].setData(sma(bars, m.period))
@@ -210,6 +222,7 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
       dayStartRef.current = data.day_start_index
       candleRef.current.setData(data.bars)
       drawTrades(data.bars)
+      drawStripes(data.bars)
       volumeRef.current?.setData(data.bars.map(volumePoint))
       MA_LINES.forEach((m, i) => maRefs.current[i].setData(sma(data.bars, m.period)))
       // 시야(setVisibleRange)는 건드리지 않는다 — 사용자의 확대/이동 유지.
@@ -249,7 +262,10 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
       close: tick.price,
       volume: Number(last.volume || 0) + Number(tick.volume || 0),
     }
-    bars[bars.length - 1] = { ...last, ...updated }
+    // 일봉 거래대금: 틱의 당일 누적값(0이면 원천 미제공 → 기존 값 유지).
+    const amount = interval === 1440 ? Math.max(Number(last.amount || 0), Number(tick.amount || 0)) : last.amount
+    bars[bars.length - 1] = { ...last, ...updated, amount }
+    if (amount !== last.amount) drawStripes(bars)
     candleRef.current.update(updated)
     volumeRef.current?.update(volumePoint(updated))
     setDisplayVolume(updated.volume)
@@ -262,7 +278,7 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
 
   return (
     <div className="chart-container">
-      <div className="chart-trade-legend"><span className="up">▲ B 매수 체결</span> · <span className="down">▼ S 매도 체결</span> · 캔들 안 ✕ = 체결 건별 체결가 · 수량·평균 체결가 · 시각 미제공 건은 수신 시각 기준</div>
+      <div className="chart-trade-legend"><span className="up">▲ B 매수 체결</span> · <span className="down">▼ S 매도 체결</span> · 캔들 안 ✕ = 체결 건별 체결가 · 수량·평균 체결가 · 시각 미제공 건은 수신 시각 기준{interval === 1440 && <> · <span className="amount-stripe-legend">노란 띠</span> = 거래대금 150억원 이상</>}</div>
       {tradeError && <div role="status">체결 표시를 갱신하지 못했습니다. 재연결 중…</div>}
       {loadState === 'loading' && <p role="status">차트 불러오는 중…</p>}
       {loadState === 'empty' && <p role="status">조회 가능한 봉 데이터가 없습니다.</p>}

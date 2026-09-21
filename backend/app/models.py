@@ -37,6 +37,8 @@ class Bar(BaseModel):
     low: float
     close: float
     volume: float = 0.0
+    # 거래대금(원). 일봉만 채운다(키움 ka10081 trde_prica). 분봉은 원천에 없어 0.
+    amount: float = 0.0
 
 
 class Tick(BaseModel):
@@ -48,6 +50,7 @@ class Tick(BaseModel):
     received_ns: int = Field(0, exclude=True)  # 프로세스 내부 지연 계측 전용
     open_verified: bool = False  # KRX 정규장 체결 메시지로 검증된 시가
     volume: float = 0.0
+    amount: float = 0.0    # 당일 누적 거래대금(원). 0 = 원천 미제공
     time: int = 0          # epoch seconds
 
 

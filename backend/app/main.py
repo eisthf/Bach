@@ -183,6 +183,8 @@ def get_bars(
                 "high": max(last.high, tick.high, tick.price),
                 "low": min(last.low, tick.low, tick.price),
                 "close": tick.price,
+                # 일봉 캐시는 자정까지 재사용되므로 당일 거래대금은 틱 누적값으로 갱신.
+                "amount": max(last.amount, tick.amount),
             })]
     if session_only and interval != DAY_INTERVAL:
         # 차트 시간축은 KST 벽시각을 UTC epoch로 저장한다.

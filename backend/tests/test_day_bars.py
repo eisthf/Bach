@@ -37,7 +37,7 @@ def test_fetch_day_bars_pages_normalizes_and_deduplicates(monkeypatch):
             headers={"cont-yn": "Y", "next-key": "next"},
             json=lambda: {"return_code": 0, "stk_dt_pole_chart_qry": [
                 {"dt": "20260904", "open_pric": "100", "high_pric": "120",
-                 "low_pric": "90", "cur_prc": "110", "trde_qty": "1000"},
+                 "low_pric": "90", "cur_prc": "110", "trde_qty": "1000", "trde_prica": "15200"},
                 {"dt": "20260903", "open_pric": "90", "high_pric": "105",
                  "low_pric": "80", "cur_prc": "100", "trde_qty": "900"},
             ]},
@@ -60,6 +60,8 @@ def test_fetch_day_bars_pages_normalizes_and_deduplicates(monkeypatch):
     assert [row["_date"] for row in rows] == ["20260902", "20260903", "20260904"]
     assert rows[-1]["close"] == 110
     assert rows[-1]["volume"] == 1000
+    assert rows[-1]["amount"] == 15_200_000_000  # 백만원 → 원
+    assert rows[0]["amount"] == 0  # 필드 없으면 0
 
 
 def test_kiwoom_provider_routes_daily_requests_to_ka10081(monkeypatch):

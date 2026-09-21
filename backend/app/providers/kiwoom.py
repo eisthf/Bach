@@ -28,6 +28,7 @@ F_OPEN = "16"    # 시가
 F_HIGH = "17"    # 고가(당일)
 F_LOW = "18"     # 저가(당일)
 F_VOL = "15"     # 체결량
+F_AMOUNT = "14"  # 누적거래대금(백만원)
 
 # 00(주문체결) 실시간 FID 맵 (레퍼런스 검증)
 #  함정: 체결가/체결량은 '단위'(이번 분) 914/915. 911(체결량)은 원주문 누적이라 사용 금지.
@@ -225,6 +226,7 @@ class KiwoomDataProvider(DataProvider):
             bars.append(Bar(
                 time=r["time"], open=r["open"], high=r["high"],
                 low=r["low"], close=r["close"], volume=r["volume"],
+                amount=r.get("amount", 0.0),
             ))
         return bars
 
@@ -413,6 +415,7 @@ class KiwoomDataProvider(DataProvider):
                 low=kw.parse_price(v.get(F_LOW)) or price,
                 open=open_, open_verified=verified, received_ns=received_ns,
                 volume=kw.parse_price(v.get(F_VOL)),
+                amount=kw.parse_price(v.get(F_AMOUNT)) * 1_000_000,
                 time=chart_epoch(),
             )
             self._last[code] = tick
