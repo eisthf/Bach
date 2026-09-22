@@ -58,30 +58,52 @@ def is_auth_error(data: dict) -> bool:
 # ---------------------------------------------------------------------------
 # REST 호출 게이트 (함정: 동시/연속 호출 시 키움이 HTTP 429로 rate-limit)
 # 종목 여러 개를 한꺼번에 추가하면 ka10080가 동시에 날아가 일부가 429 → 빈 봉.
-# 전역 슬롯 예약으로 호출을 MIN_REST_INTERVAL 간격으로 직렬화하고, 429가 보이면
+# 전역 게이트로 호출을 MIN_REST_INTERVAL 간격으로 직렬화하고, 429가 보이면
 # 전역 쿨다운을 늘려 모든 호출자가 함께 백오프하도록 한다.
+#
+# 주문(kt10000/kt10001)은 우선 통과한다. 예전엔 호출마다 미래 슬롯을 순서대로
+# 예약했기 때문에, 차트 봉 조회(ka10080 페이징)가 여러 슬롯을 먼저 잡아 두면
+# 뒤이어 온 손절 매도가 그 줄 끝에서 N×0.35초를 기다렸다. 이제 슬롯은 '보낼
+# 수 있는 시점에 가장 먼저 잡는 쪽'이 가져가고, 주문이 대기 중이면 일반
+# 호출은 양보한다. 주문의 최대 대기 ≈ 직전 호출 후 남은 간격(≤0.35초) + 429 쿨다운.
+# 간격 자체는 주문에도 똑같이 적용한다 — 주문은 재전송하지 않으므로(retries=1)
+# 429를 맞으면 그대로 실패하기 때문이다.
 # ---------------------------------------------------------------------------
-_rest_lock = threading.Lock()
+_rest_cond = threading.Condition()
 _next_allowed = 0.0           # 다음 호출이 허용되는 monotonic 시각
+_orders_waiting = 0           # 게이트 앞에서 대기 중인 주문 수
 MIN_REST_INTERVAL = 0.35      # 초당 ~3건
 
 
-def _reserve_slot() -> None:
-    """전역 직렬화: 자기 슬롯 시각을 예약하고(락은 짧게) 그 시각까지 대기."""
-    global _next_allowed
-    with _rest_lock:
-        now = _time.monotonic()
-        start = max(now, _next_allowed)
-        _next_allowed = start + MIN_REST_INTERVAL
-        wait = start - now
-    if wait > 0:
-        _time.sleep(wait)
+def _reserve_slot(priority: bool = False) -> None:
+    """전역 직렬화: 보낼 수 있는 시각이 되면 슬롯을 잡는다.
+
+    ``priority=True``(주문)는 대기 중인 일반 호출보다 먼저 슬롯을 가져간다.
+    """
+    global _next_allowed, _orders_waiting
+    with _rest_cond:
+        if priority:
+            _orders_waiting += 1
+        try:
+            while True:
+                now = _time.monotonic()
+                wait = _next_allowed - now
+                if wait <= 0 and (priority or _orders_waiting == 0):
+                    _next_allowed = now + MIN_REST_INTERVAL
+                    return
+                # 시각이 안 됐으면 그때까지, 주문에 양보 중이면 주문이 슬롯을
+                # 잡고 깨울 때까지(안전하게 상한을 둔다) 기다린다.
+                _rest_cond.wait(wait if wait > 0 else 1.0)
+        finally:
+            if priority:
+                _orders_waiting -= 1
+                _rest_cond.notify_all()
 
 
 def _penalize(seconds: float) -> None:
     """429 등으로 전역 쿨다운을 늘린다(이후 모든 호출자가 함께 백오프)."""
     global _next_allowed
-    with _rest_lock:
+    with _rest_cond:
         _next_allowed = max(_next_allowed, _time.monotonic() + seconds)
 
 
@@ -93,7 +115,7 @@ def _post(url: str, headers: dict, body: dict, timeout: float,
         is_order = headers.get("api-id") in ("kt10000", "kt10001")
         if is_order:
             mark("gate_start")
-        _reserve_slot()
+        _reserve_slot(priority=is_order)
         if is_order:
             mark("http_start")
         try:

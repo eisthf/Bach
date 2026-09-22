@@ -89,7 +89,7 @@ def test_preemptive_failure_can_use_still_valid_token_but_never_expired_token(mo
 def test_non_auth_api_failure_is_not_marked_as_success_or_reissued(monkeypatch):
     issue = Mock(return_value=grant())
     monkeypatch.setattr(kw, "fetch_access_token", issue)
-    monkeypatch.setattr(kw, "_reserve_slot", lambda: None)
+    monkeypatch.setattr(kw, "_reserve_slot", lambda **_: None)
     monkeypatch.setattr(kw.requests, "post", lambda *a, **k: response({"return_code": 20}))
     provider = KiwoomDataProvider("a", "s", True)
     with pytest.raises(kw.KiwoomRequestError):
@@ -107,7 +107,7 @@ def test_invalid_token_rest_recovers_once(monkeypatch):
     ])
     monkeypatch.setattr(kw, "fetch_access_token", issue)
     monkeypatch.setattr(kw.requests, "post", post)
-    monkeypatch.setattr(kw, "_reserve_slot", lambda: None)
+    monkeypatch.setattr(kw, "_reserve_slot", lambda **_: None)
     broker = KiwoomBroker(KiwoomDataProvider("a", "s", True))
     assert broker.position("046970").quantity == 12
     assert issue.call_count == 2 and post.call_count == 2
@@ -128,7 +128,7 @@ def test_persistent_auth_failure_has_bounded_retry(monkeypatch):
 @pytest.mark.parametrize("failure", ["auth", "timeout", "429"])
 def test_order_is_never_replayed(monkeypatch, failure):
     monkeypatch.setattr(kw, "fetch_access_token", lambda *a: grant())
-    monkeypatch.setattr(kw, "_reserve_slot", lambda: None)
+    monkeypatch.setattr(kw, "_reserve_slot", lambda **_: None)
     monkeypatch.setattr(kw, "_penalize", lambda _: None)
     post = Mock()
     if failure == "timeout":

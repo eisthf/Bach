@@ -13,7 +13,7 @@ from app.strategy.ulc import UlcEngine
 def test_gate_and_http_time_are_separate(monkeypatch):
     readings = iter([1000000, 4000000, 11000000])
     monkeypatch.setattr(timing, "perf_counter_ns", lambda: next(readings))
-    monkeypatch.setattr(kw, "_reserve_slot", lambda: None)
+    monkeypatch.setattr(kw, "_reserve_slot", lambda **_: None)
     response = SimpleNamespace(status_code=200, json=lambda: {"return_code": 0})
     monkeypatch.setattr(kw.requests, "post", lambda *a, **k: response)
     trace = {}
@@ -26,7 +26,7 @@ def test_gate_and_http_time_are_separate(monkeypatch):
 
 
 def test_network_failure_still_has_http_duration(monkeypatch):
-    monkeypatch.setattr(kw, "_reserve_slot", lambda: None)
+    monkeypatch.setattr(kw, "_reserve_slot", lambda **_: None)
     monkeypatch.setattr(kw, "_penalize", lambda seconds: None)
     def fail(*args, **kwargs):
         raise kw.requests.Timeout("timeout")
