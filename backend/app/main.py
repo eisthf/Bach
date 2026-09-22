@@ -27,6 +27,7 @@ from .market_clock import REGULAR_CLOSE, now_kst  # noqa: E402
 from .models import (  # noqa: E402
     AutoConfig,
     BigCandleResult,
+    CloseTradeConfig,
     BuyOrderReq,
     OrderResult,
     SellOrderReq,
@@ -144,7 +145,10 @@ async def add_stock(account: str, payload: dict):
         looked = None
     if not name:
         name = looked or ""
-    stock = hub.add_stock(code, name)
+    try:
+        stock = hub.add_stock(code, name)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
     return hub.status_of(stock.code).model_dump()
 
 
@@ -158,6 +162,81 @@ async def import_held(account: str):
 @app.delete("/api/{account}/stocks/{code}")
 def remove_stock(account: str, code: str):
     _hub(account).remove_stock(code)
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# 종가 매매 (계좌 스코프) — 여러 거래일에 걸친 분할매수·청산. [매매] 목록과 분리.
+# ---------------------------------------------------------------------------
+def _close(account: str):
+    return _hub(account).close_trades
+
+
+def _close_call(fn, *args):
+    try:
+        return fn(*args)
+    except KeyError:
+        raise HTTPException(404, "종가 매매에 없는 종목입니다.")
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
+async def _close_acall(fn, *args):
+    try:
+        return await fn(*args)
+    except KeyError:
+        raise HTTPException(404, "종가 매매에 없는 종목입니다.")
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
+@app.get("/api/{account}/close-trades")
+def list_close_trades(account: str):
+    return _close(account).list_payload()
+
+
+@app.post("/api/{account}/close-trades")
+async def add_close_trade(account: str, payload: dict):
+    """종가 매매 등록(설정 중). 주문은 나가지 않는다."""
+    hub = _hub(account)
+    code = (payload.get("code") or "").strip()
+    name = (payload.get("name") or "").strip()
+    if not code:
+        raise HTTPException(400, "code 필요")
+    if not name:
+        try:
+            name = await asyncio.to_thread(hub.data.stock_name, code) or ""
+        except Exception:
+            name = ""
+    return _close_call(hub.close_trades.add, code, name)
+
+
+@app.put("/api/{account}/close-trades/{code}/config")
+def set_close_trade_config(account: str, code: str, config: CloseTradeConfig):
+    return _close_call(_close(account).set_config, code, config)
+
+
+@app.post("/api/{account}/close-trades/{code}/enter")
+async def enter_close_trade(account: str, code: str):
+    """[1차 매수]. 장중이면 즉시 시장가, 장외면 다음 장 시가로 예약."""
+    return await _close_acall(_close(account).enter, code)
+
+
+@app.post("/api/{account}/close-trades/{code}/cancel")
+def cancel_close_trade(account: str, code: str):
+    """예약된 1차 매수 취소(설정 중으로 되돌림)."""
+    return _close_call(_close(account).cancel, code)
+
+
+@app.post("/api/{account}/close-trades/{code}/handoff")
+async def hand_off_close_trade(account: str, code: str):
+    """수동 전환: 엔진을 멈추고 [매매] 목록(수동매매)으로 옮긴다."""
+    return await _close_acall(_close(account).hand_off, code)
+
+
+@app.delete("/api/{account}/close-trades/{code}")
+async def remove_close_trade(account: str, code: str):
+    await _close_acall(_close(account).remove, code)
     return {"ok": True}
 
 

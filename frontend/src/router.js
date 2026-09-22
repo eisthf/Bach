@@ -9,6 +9,7 @@ export const ROUTES = {
   TRADING: '/',
   UPPER_LIMIT: '/upper-limit',
   BIG_CANDLE: '/big-candle',
+  CLOSE_TRADE: '/close-trade',
 }
 
 function currentPath() {

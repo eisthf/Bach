@@ -7,7 +7,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -178,6 +178,32 @@ class UpperLimitResult(BaseModel):
     notice: str = ""                 # 최신 자료 게시 전 이전 결과 표시 안내
     scanned: int                     # D일 조회된 전체 종목 수
     stocks: list[UpperLimitStock] = []
+
+
+class CloseTradeConfig(BaseModel):
+    """종가 매매 설정. 차수는 1~3개, 비율 합은 100%."""
+    total_krw: int = Field(1_000_000, ge=10_000, description="총 투자액(원)")
+    ratios: list[float] = Field(default_factory=lambda: [20.0, 30.0, 50.0],
+                                description="차수별 투자 비율(%), 합 100")
+    add_drop_pcts: list[float] = Field(default_factory=lambda: [5.0, 5.0],
+                                       description="2·3차 매수 조건: 직전 차수 체결가 대비 하락률(%)")
+    early_tp_pct: float = Field(5.0, gt=0, le=100, description="분할 완료 전 익절(평단 대비 %)")
+    tp_pct: float = Field(5.0, gt=0, le=100, description="분할 완료 후 익절(평단 대비 %)")
+    sl_pct: float = Field(5.0, gt=0, lt=100, description="분할 완료 후 손절(평단 대비 %)")
+
+    @model_validator(mode="after")
+    def _check(self) -> "CloseTradeConfig":
+        if not 1 <= len(self.ratios) <= 3:
+            raise ValueError("분할 차수는 1~3개여야 합니다.")
+        if any(r <= 0 for r in self.ratios):
+            raise ValueError("분할 비율은 0보다 커야 합니다.")
+        if abs(sum(self.ratios) - 100) > 0.01:
+            raise ValueError(f"분할 비율 합이 100%가 아닙니다({sum(self.ratios):g}%).")
+        if len(self.add_drop_pcts) < len(self.ratios) - 1:
+            raise ValueError("추가 차수마다 하락률이 필요합니다.")
+        if any(not 0 < d < 100 for d in self.add_drop_pcts):
+            raise ValueError("하락률은 0~100% 사이여야 합니다.")
+        return self
 
 
 class BigCandleStock(BaseModel):

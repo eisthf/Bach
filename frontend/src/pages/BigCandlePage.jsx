@@ -8,6 +8,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { api } from '../api'
 import ScreenerChart from '../components/ScreenerChart'
+import { ROUTES, navigate } from '../router'
 
 const RISE_KEY = 'bach.bigCandle.minRise'
 const AMOUNT_KEY = 'bach.bigCandle.minAmountEok'
@@ -220,6 +221,14 @@ export default function BigCandlePage() {
           source={data.source === 'mock' ? 'mock' : 'kiwoom'}
           includeToday={live}
           defaultInterval={1440}
+          onRegister={async (account) => {
+            try {
+              await api.addCloseTrade(account.id, selectedStock.code, selectedStock.name)
+              navigate(`${ROUTES.CLOSE_TRADE}`)
+            } catch (e) {
+              window.alert(`종가 매매 등록 실패: ${e.message || e}`)
+            }
+          }}
           onClose={() => setSelectedStock(null)}
         />
       )}

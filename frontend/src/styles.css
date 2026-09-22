@@ -555,3 +555,52 @@ input:focus { outline: none; border-color: var(--accent); }
   .ticker-val { font-size: 13px; }
   .state-btn { min-width: 96px; }
 }
+
+/* 종가 매매 페이지 */
+.close-trade { padding: 16px 20px 32px; display: flex; flex-direction: column; gap: 14px; }
+.close-trade-intro {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 14px; font-size: 13px;
+}
+.close-trade-intro button {
+  margin-left: auto; border: 1px solid var(--border); background: var(--card);
+  border-radius: 6px; padding: 6px 12px; font-size: 13px;
+}
+.close-card.tone-live { border-color: var(--accent); }
+.close-card.tone-end { opacity: 0.85; }
+.ct-phase { font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 999px; background: #eef1f6; color: var(--muted); }
+.ct-phase.ct-wait { background: #fff4e2; color: #80521d; }
+.ct-phase.ct-live { background: var(--accent); color: #fff; }
+.ct-phase.ct-end { background: #eceff3; color: #666; }
+.ct-intervals { margin: 4px 0 6px; }
+.ct-summary { display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; margin: 10px 0 6px; }
+.ct-exit { font-size: 13px; color: var(--muted); margin-top: 6px; }
+.ct-config fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.ct-config label { display: flex; align-items: center; gap: 6px; font-size: 13px; flex-wrap: wrap; }
+.ct-config input, .ct-config select {
+  width: 90px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px; text-align: right;
+}
+.ct-config input[type='number'][min='10000'] { width: 120px; }
+.ct-ratios { display: flex; gap: 10px; flex-wrap: wrap; }
+.ct-ratios input { width: 64px; }
+.ct-error, .ct-msg { font-size: 12px; margin-top: 8px; }
+.ct-error { color: var(--down); }
+.ct-legs { font-size: 13px; }
+.ct-legs th, .ct-legs td { padding: 6px 8px; }
+.ct-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.ct-actions button {
+  border: 1px solid var(--border); background: var(--card); border-radius: 6px;
+  padding: 7px 14px; font-size: 13px; font-weight: 600;
+}
+.ct-actions button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.ct-actions button.warn { border-color: #e53935; color: #e53935; }
+.ct-actions button.ghost { color: var(--muted); }
+.ct-log { list-style: none; margin: 12px 0 0; padding: 8px 10px; background: #f7f8fa; border-radius: 8px; font-size: 12px; max-height: 160px; overflow: auto; }
+.ct-log li { padding: 2px 0; }
+.screener-chart-actions { display: flex; gap: 8px; }
+.screener-chart-actions button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+@media (max-width: 760px) {
+  .close-trade { padding: 10px 8px 28px; }
+  .close-trade-intro button { margin-left: 0; }
+}

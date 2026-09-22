@@ -63,4 +63,15 @@ export const api = {
     req(`/api/${enc(a)}/config/${code}`, { method: 'PUT', body: JSON.stringify(config) }),
 
   push: (a, code) => req(`/api/${enc(a)}/state/${code}/push`, { method: 'POST' }),
+
+  // 종가 매매 (계좌 스코프, [매매] 목록과 분리)
+  closeTrades: (a) => req(`/api/${enc(a)}/close-trades`),
+  addCloseTrade: (a, code, name) =>
+    req(`/api/${enc(a)}/close-trades`, { method: 'POST', body: JSON.stringify({ code, name }) }),
+  setCloseConfig: (a, code, config) =>
+    req(`/api/${enc(a)}/close-trades/${enc(code)}/config`, { method: 'PUT', body: JSON.stringify(config) }),
+  enterClose: (a, code) => req(`/api/${enc(a)}/close-trades/${enc(code)}/enter`, { method: 'POST' }),
+  cancelClose: (a, code) => req(`/api/${enc(a)}/close-trades/${enc(code)}/cancel`, { method: 'POST' }),
+  handoffClose: (a, code) => req(`/api/${enc(a)}/close-trades/${enc(code)}/handoff`, { method: 'POST' }),
+  removeClose: (a, code) => req(`/api/${enc(a)}/close-trades/${enc(code)}`, { method: 'DELETE' }),
 }
