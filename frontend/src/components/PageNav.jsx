@@ -1,10 +1,11 @@
 import React from 'react'
 import { ROUTES, navigate, useRoute } from '../router'
 
-// 매매 ↔ 상한가 종목 페이지 전환. 계좌 필터와 같은 세그먼트 형태.
+// 매매 · 상한가 종목 · 대금 양봉 페이지 전환. 계좌 필터와 같은 세그먼트 형태.
 const PAGES = [
   { path: ROUTES.TRADING, label: '매매' },
   { path: ROUTES.UPPER_LIMIT, label: '상한가 종목' },
+  { path: ROUTES.BIG_CANDLE, label: '대금 양봉' },
 ]
 
 export default function PageNav() {

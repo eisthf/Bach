@@ -326,6 +326,139 @@ def fetch_upper_limits(token: str, mock: bool = False) -> Optional[List[dict]]:
 
 
 # ---------------------------------------------------------------------------
+# 당일 거래대금 상위 양봉 (ka10032 + ka10028)
+#
+# 한 API로는 안 된다: ka10032(거래대금상위)는 거래대금은 주지만 시가가 없고,
+# ka10028(시가대비등락률)은 시가·시가대비는 주지만 거래대금 값이 없다(조건
+# 필터만 있고 150억 단계도 없다). 그래서 ka10032로 거래대금 ≥ 기준 종목을
+# 고르고, ka10028(거래대금 ≥100억, 시가대비 상위)의 시가·현재가를 종목코드로
+# 붙인다. ka10028 '상위'는 시가대비 ≥0 종목만 내려주므로, 기준 이상 종목 중
+# 시가보다 오른 종목은 빠짐없이 들어 있다(없으면 하락/보합 종목).
+# 거래소는 KRX(stex_tp=1) — 차트 일봉 거래대금 띠와 같은 기준이다.
+# ---------------------------------------------------------------------------
+def _paged_rows(url: str, api_id: str, token: str, body: dict, key: str,
+                stop=None, max_pages: int = 30) -> Optional[List[dict]]:
+    """연속조회로 목록을 모은다. ``stop(row)``가 참이면 그 페이지에서 멈춘다.
+
+    ``None``은 호출 실패(부분 결과로 잘못 판단하지 않도록 전체를 버린다).
+    """
+    base = {
+        "Content-Type": "application/json;charset=UTF-8",
+        "authorization": f"Bearer {token}",
+        "api-id": api_id,
+    }
+    rows: List[dict] = []
+    cont_yn, next_key = "N", ""
+    for _ in range(max_pages):
+        hdr = dict(base)
+        if cont_yn == "Y" and next_key:
+            hdr["cont-yn"] = "Y"
+            hdr["next-key"] = next_key
+        try:
+            resp = _post(url, hdr, body, timeout=10, retries=3)
+        except KiwoomAuthError:
+            raise  # 어댑터(_call)가 토큰을 갱신하고 재시도한다
+        except KiwoomRequestError as e:
+            logger.warning("%s 조회 실패: %s", api_id, e)
+            return None
+        if resp is None or resp.status_code != 200:
+            logger.warning("%s 조회 실패(HTTP %s)", api_id,
+                           resp.status_code if resp is not None else "—")
+            return None
+        try:
+            data = resp.json()
+        except Exception:  # noqa: BLE001
+            logger.warning("%s 응답 파싱 실패", api_id)
+            return None
+        if str(data.get("return_code")) != "0":
+            logger.warning("%s 조회 거부: %s", api_id, data.get("return_msg"))
+            return None
+        page = [r for r in (data.get(key) or []) if isinstance(r, dict)]
+        rows.extend(page)
+        headers = getattr(resp, "headers", None) or {}
+        cont_yn, next_key = headers.get("cont-yn", "N"), headers.get("next-key", "")
+        if cont_yn != "Y" or not page or (stop and stop(page[-1])):
+            break
+    return rows
+
+
+def fetch_big_candles(token: str, min_amount_krw: int,
+                      mock: bool = False) -> Optional[dict]:
+    """당일 거래대금 ≥ ``min_amount_krw`` 이면서 현재가 > 시가(양봉)인 종목.
+
+    반환: ``{"scanned": 거래대금 기준 이상 종목 수, "stocks": [...]}``.
+    ``None``은 호출 실패, ``stocks``가 비면 정상 응답이지만 해당 종목이 없음.
+    종목 dict: code, name, open, price(현재가), change_pct(전일대비 %),
+    volume, amount(원).
+    """
+    min_mil = min_amount_krw / 1_000_000   # ka10032 거래대금 단위: 백만원
+    ranked = _paged_rows(
+        f"{rest_host(mock)}/api/dostk/rkinfo", "ka10032", token,
+        {"mrkt_tp": "000", "mang_stk_incls": "1", "stex_tp": "1"},
+        "trde_prica_upper",
+        # 거래대금 내림차순이라 기준 미만이 보이면 더 볼 필요가 없다.
+        stop=lambda r: parse_price(r.get("trde_prica")) < min_mil,
+    )
+    if ranked is None:
+        return None
+    rising = _paged_rows(
+        f"{rest_host(mock)}/api/dostk/stkinfo", "ka10028", token,
+        {
+            "sort_tp": "1",            # 시가 기준
+            "trde_qty_cnd": "0000",
+            "mrkt_tp": "000",
+            "updown_incls": "1",       # 상·하한가 포함
+            "stk_cnd": "0",
+            "crd_cnd": "0",
+            "trde_prica_cnd": "1000",  # 거래대금 100억 이상(150억 단계는 없다)
+            "flu_cnd": "1",            # 시가대비 상위
+            "stex_tp": "1",
+        },
+        "open_pric_pre_flu_rt",
+        # 시가대비 내림차순. 0 이하부터는 양봉이 아니다.
+        stop=lambda r: _signed(r.get("open_pric_pre")) <= 0,
+    )
+    if rising is None:
+        return None
+
+    by_code = {str(r.get("stk_cd") or "").strip().lstrip("A"): r for r in rising}
+    out: List[dict] = []
+    scanned = 0
+    for r in ranked:
+        amount = int(round(parse_price(r.get("trde_prica")) * 1_000_000))
+        if amount < min_amount_krw:
+            continue
+        scanned += 1
+        code = str(r.get("stk_cd") or "").strip().lstrip("A")
+        row = by_code.get(code)
+        if not code or row is None:
+            continue
+        open_ = parse_int(row.get("open_pric"))
+        price = parse_int(row.get("cur_prc"))
+        if open_ <= 0 or price <= open_:
+            continue
+        out.append({
+            "code": code,
+            "name": str(r.get("stk_nm") or row.get("stk_nm") or "").strip(),
+            "open": open_,
+            "price": price,
+            "change_pct": _signed(row.get("flu_rt")),
+            "volume": parse_int(r.get("now_trde_qty")),
+            "amount": amount,
+        })
+    return {"scanned": scanned, "stocks": out}
+
+
+def _signed(val) -> float:
+    """부호를 살리는 백분율 파싱('+1.23' → 1.23, '-0.50' → -0.5)."""
+    s = str(val or "").strip().replace(",", "")
+    try:
+        return float(s) if s else 0.0
+    except ValueError:
+        return 0.0
+
+
+# ---------------------------------------------------------------------------
 # 분봉 차트 (ka10080)
 # ---------------------------------------------------------------------------
 def fetch_min_bars(

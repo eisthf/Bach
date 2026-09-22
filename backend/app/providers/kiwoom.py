@@ -279,6 +279,10 @@ class KiwoomDataProvider(DataProvider):
         """키움 ka10017로 당일 KRX 상한가 종목을 조회한다."""
         return self._call(kw.fetch_upper_limits, mock=self._mock)
 
+    def current_big_candles(self, min_amount_krw: int) -> dict | None:
+        """키움 ka10032+ka10028로 당일 거래대금 상위 양봉을 조회한다."""
+        return self._call(kw.fetch_big_candles, min_amount_krw, mock=self._mock)
+
     # -- 틱 --------------------------------------------------------------
     def last_tick(self, code: str) -> Optional[Tick]:
         return self._last.get(code)

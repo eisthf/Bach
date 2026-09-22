@@ -25,11 +25,12 @@ import logging
 import os
 import random
 import zlib
+from dataclasses import replace
 from datetime import date as _date, datetime, timedelta
 from typing import Callable, List, Optional
 
 from .market_clock import REGULAR_OPEN, now_kst
-from .models import UpperLimitResult, UpperLimitStock
+from .models import BigCandleResult, BigCandleStock, UpperLimitResult, UpperLimitStock
 from .providers.krx_api import DailyQuote, configured, daily_quotes, publication_time
 
 logger = logging.getLogger("bach.screener")
@@ -195,7 +196,8 @@ def _mock_quotes(date: str) -> List[DailyQuote]:
             market_cap=shares * close,
             listed_shares=shares,
         ))
-    return out
+    # 거래대금 ≈ 거래량 × 종가(합성값이라 근사로 충분하다).
+    return [replace(q, amount=q.volume * q.close) for q in out]
 
 
 # ---------------------------------------------------------------------------
@@ -217,6 +219,23 @@ def _fetch_for(source: str) -> Fetch:
 # ---------------------------------------------------------------------------
 # 스크리닝
 # ---------------------------------------------------------------------------
+def _quotes_on(date: Optional[str], src: str, get: Fetch) -> tuple[_date, List[DailyQuote]]:
+    """조회일과 그날 전종목 시세. ``date``가 없으면 가장 최근 거래일."""
+    if not date:
+        return _walk_back(get, now_kst().date())
+    d = parse_date(date)
+    if d > now_kst().date():
+        raise ScreenerError("미래 날짜는 조회할 수 없습니다.")
+    quotes = get(_compact(d))
+    if not quotes:
+        if src == "krx" and d.weekday() < 5 and publication_time(_compact(d)).date() >= now_kst().date():
+            raise DataPending(d)
+        raise NotATradingDay(
+            f"{_iso(d)}은(는) 장이 서지 않았거나 시세가 아직 게시되지 않았습니다."
+        )
+    return d, quotes
+
+
 def screen_upper_limit(
     date: Optional[str] = None,
     min_pct: float = MIN_PCT_DEFAULT,
@@ -234,20 +253,7 @@ def screen_upper_limit(
 
     src = source or source_name()
     get = fetch or _fetch_for(src)
-
-    if date:
-        d = parse_date(date)
-        if d > now_kst().date():
-            raise ScreenerError("미래 날짜는 조회할 수 없습니다.")
-        quotes_d = get(_compact(d))
-        if not quotes_d:
-            if src == "krx" and d.weekday() < 5 and publication_time(_compact(d)).date() >= now_kst().date():
-                raise DataPending(d)
-            raise NotATradingDay(
-                f"{_iso(d)}은(는) 장이 서지 않았거나 시세가 아직 게시되지 않았습니다."
-            )
-    else:
-        d, quotes_d = _walk_back(get, now_kst().date())
+    d, quotes_d = _quotes_on(date, src, get)
 
     prev_d, quotes_prev = _walk_back(get, d - timedelta(days=1))
 
@@ -336,4 +342,133 @@ def screen_current_upper_limits(
     return UpperLimitResult(
         date=_iso(d), prev_date=_iso(prev_d), min_pct=min_pct, max_pct=max_pct,
         source="kiwoom", snapshot=True, scanned=len(current), stocks=rows,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 거래대금 상위 양봉
+#
+# 거래대금이 ``min_amount`` 이상이면서 종가(장중이면 현재가)가 시가보다 높은
+# '양봉'을 찾고, 시가 대비 상승률이 ``min_rise_pct`` 이상인 것만 남긴다.
+# 오늘 장중·장후는 키움 당일 시세(현재가/종가), 과거일은 KRX 확정 일별 자료.
+# ---------------------------------------------------------------------------
+BIG_CANDLE_MIN_AMOUNT = 15_000_000_000   # 150억원
+
+
+def _rise_pct(open_: float, close: float) -> float:
+    # 표시값(소수 2자리)으로 판정한다 — 경계값이 부동소수 오차로 탈락하지 않게.
+    return round((close - open_) / open_ * 100, 2)
+
+
+def _sort_big(rows: List[BigCandleStock]) -> List[BigCandleStock]:
+    rows.sort(key=lambda r: (-r.rise_pct, -r.amount))
+    return rows
+
+
+def _check_big_args(min_rise_pct: float, min_amount: int) -> None:
+    if min_rise_pct < 0:
+        raise ScreenerError("상승률 조건은 0% 이상이어야 합니다.")
+    if min_amount <= 0:
+        raise ScreenerError("거래대금 조건은 0보다 커야 합니다.")
+
+
+def screen_big_candles(
+    date: Optional[str] = None,
+    min_rise_pct: float = 0.0,
+    min_amount: int = BIG_CANDLE_MIN_AMOUNT,
+    fetch: Optional[Fetch] = None,
+    source: Optional[str] = None,
+) -> BigCandleResult:
+    """확정 일별 자료(KRX/mock)로 D일 거래대금 상위 양봉을 찾는다(종가 기준)."""
+    _check_big_args(min_rise_pct, min_amount)
+    src = source or source_name()
+    get = fetch or _fetch_for(src)
+    d, quotes = _quotes_on(date, src, get)
+    try:
+        _, previous = _walk_back(get, d - timedelta(days=1))
+        prev_close = {q.code: q.close for q in previous}
+    except NotATradingDay:
+        prev_close = {}
+
+    heavy = [q for q in quotes if q.amount >= min_amount]
+    rows: List[BigCandleStock] = []
+    for q in heavy:
+        if q.open <= 0 or q.close <= q.open:
+            continue
+        rise = _rise_pct(q.open, q.close)
+        if rise < min_rise_pct:
+            continue
+        base = prev_close.get(q.code, 0)
+        rows.append(BigCandleStock(
+            code=q.code, name=q.name, market=q.market,
+            open=q.open, close=q.close, rise_pct=rise,
+            change_pct=round((q.close - base) / base * 100, 2) if base > 0 else None,
+            volume=q.volume, amount=q.amount, market_cap=q.market_cap,
+        ))
+    logger.info("거래대금 양봉 스크리닝 %s: %d/%d 종목 [%s]",
+                _iso(d), len(rows), len(heavy), src)
+    notice = ""
+    if not date and src == "krx" and d < latest_session_date(now_kst()):
+        notice = (f"최근 거래일 자료가 아직 없거나 휴장일이어서 {_iso(d)} 자료를 표시합니다. "
+                  "KRX 자료는 영업일 기준 다음 날 오전 8시에 갱신됩니다.")
+    return BigCandleResult(
+        date=_iso(d), min_rise_pct=min_rise_pct, min_amount=min_amount,
+        source=src, closed=True, scanned=len(heavy), stocks=_sort_big(rows),
+        notice=notice,
+    )
+
+
+def screen_current_big_candles(
+    current: dict,
+    min_rise_pct: float = 0.0,
+    min_amount: int = BIG_CANDLE_MIN_AMOUNT,
+    *,
+    closed: bool,
+    captured_at: str = "",
+    fetch: Optional[Fetch] = None,
+    today: Optional[_date] = None,
+) -> BigCandleResult:
+    """키움 당일 스냅샷(현재가 또는 장후 종가) 기준 거래대금 상위 양봉.
+
+    시장 구분·시가총액은 KRX 직전 거래일 자료로 보완한다. KRX 키가 없거나
+    조회가 실패해도 목록 자체는 보여준다(보완 필드만 빈 값).
+    """
+    _check_big_args(min_rise_pct, min_amount)
+    d = today or now_kst().date()
+    metadata: dict = {}
+    if fetch is not None or configured():
+        try:
+            _, previous = _walk_back(fetch or daily_quotes, d - timedelta(days=1))
+            metadata = {q.code: q for q in previous}
+        except Exception as e:  # noqa: BLE001 — 보완 실패가 조회를 막지 않게
+            logger.warning("거래대금 양봉: KRX 종목정보 보완 실패: %s", e)
+
+    rows: List[BigCandleStock] = []
+    for item in current.get("stocks") or []:
+        code = str(item.get("code") or "").strip()
+        open_ = int(item.get("open") or 0)
+        price = int(item.get("price") or 0)
+        amount = int(item.get("amount") or 0)
+        if not code or open_ <= 0 or price <= open_ or amount < min_amount:
+            continue
+        rise = _rise_pct(open_, price)
+        if rise < min_rise_pct:
+            continue
+        old = metadata.get(code)
+        change = item.get("change_pct")
+        rows.append(BigCandleStock(
+            code=code,
+            name=str(item.get("name") or (old.name if old else "")),
+            market=old.market if old else "",
+            open=open_, close=price, rise_pct=rise,
+            change_pct=round(float(change), 2) if change is not None else None,
+            volume=int(item.get("volume") or 0), amount=amount,
+            market_cap=old.listed_shares * price if old else 0,
+        ))
+    logger.info("당일 거래대금 양봉 %s: %d/%d 종목 [kiwoom]",
+                _iso(d), len(rows), int(current.get("scanned") or 0))
+    return BigCandleResult(
+        date=_iso(d), min_rise_pct=min_rise_pct, min_amount=min_amount,
+        source="kiwoom", snapshot=True, closed=closed, captured_at=captured_at,
+        scanned=int(current.get("scanned") or 0), stocks=_sort_big(rows),
     )

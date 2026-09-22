@@ -72,6 +72,13 @@ class DataProvider(ABC):
         """당일 상한가 스냅샷. 미지원/조회 실패는 None, 정상 무종목은 빈 목록."""
         return None
 
+    def current_big_candles(self, min_amount_krw: int) -> dict | None:
+        """당일 거래대금 ≥ 기준 양봉(현재가 > 시가) 스냅샷.
+
+        ``{"scanned": int, "stocks": [dict]}``. 미지원/조회 실패는 None.
+        """
+        return None
+
 
 class Broker(ABC):
     """주문 실행 + 포지션 관리."""

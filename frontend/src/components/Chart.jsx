@@ -21,7 +21,7 @@ const volumePoint = (bar) => ({
   color: bar.close >= bar.open ? 'rgba(211, 47, 47, 0.35)' : 'rgba(21, 101, 192, 0.35)',
 })
 
-export default function Chart({ account, code, interval, tick, height = 360, sessionOnly = false, onSessionDate }) {
+export default function Chart({ account, code, interval, tick, height = 360, sessionOnly = false, includeToday = false, onSessionDate }) {
   const containerRef = useRef(null)
   const chartRef = useRef(null)
   const candleRef = useRef(null)
@@ -156,7 +156,7 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
       timeVisible: interval !== 1440,
       secondsVisible: false,
     })
-    api.getBars(account, code, interval, undefined, sessionOnly && interval !== 1440).then((data) => {
+    api.getBars(account, code, interval, undefined, sessionOnly && interval !== 1440, includeToday).then((data) => {
       if (cancelled || !candleRef.current || !chartRef.current) return
       const bars = data.bars
       onSessionDate?.(data.session_date)
@@ -205,7 +205,7 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
     return () => {
       cancelled = true
     }
-  }, [account, code, interval, sessionOnly, retry])
+  }, [account, code, interval, sessionOnly, includeToday, retry])
 
   // 봉 경계를 넘었을 때 서버에서 다시 받는다.
   // 클라이언트가 틱으로 새 봉을 지어내지 않는 이유: 틱은 큐가 차면 드롭될 수
@@ -215,7 +215,7 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
     if (refreshingRef.current) return
     refreshingRef.current = true
     try {
-      const data = await api.getBars(account, code, interval, undefined, sessionOnly && interval !== 1440)
+      const data = await api.getBars(account, code, interval, undefined, sessionOnly && interval !== 1440, includeToday)
       if (!candleRef.current) return
       barsRef.current = data.bars
       setDisplayVolume(data.bars.length ? Number(data.bars[data.bars.length - 1].volume || 0) : null)
@@ -231,7 +231,7 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
     } finally {
       refreshingRef.current = false
     }
-  }, [account, code, interval, sessionOnly])
+  }, [account, code, interval, sessionOnly, includeToday])
 
   // 실시간 틱 → 마지막 봉 갱신 (경계를 넘으면 재조회)
   useEffect(() => {

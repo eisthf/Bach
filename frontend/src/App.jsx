@@ -8,6 +8,7 @@ import AccountSummary from './components/AccountSummary'
 import LogPanel from './components/LogPanel'
 import PageNav from './components/PageNav'
 import UpperLimitPage from './pages/UpperLimitPage'
+import BigCandlePage from './pages/BigCandlePage'
 import BrokerConnection from './components/BrokerConnection'
 
 // 한 계좌(모의/실전)의 종목 입력 + 칩바 + 패널 목록. 실전(danger)은 위험 톤.
@@ -174,11 +175,11 @@ function TradingPage() {
 // StoreProvider가 위에 있어 끊기지 않으므로, 돌아와도 상태/시세는 그대로다.
 function Router() {
   const route = useRoute()
-  if (route === ROUTES.UPPER_LIMIT) {
+  if (route === ROUTES.UPPER_LIMIT || route === ROUTES.BIG_CANDLE) {
     return (
       <>
         <AppHeader />
-        <UpperLimitPage />
+        {route === ROUTES.UPPER_LIMIT ? <UpperLimitPage /> : <BigCandlePage />}
       </>
     )
   }

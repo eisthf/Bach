@@ -366,6 +366,9 @@ input:focus { outline: none; border-color: var(--accent); }
 .screener-controls button:hover:not(:disabled):not(.primary) {
   border-color: var(--accent); color: var(--accent);
 }
+.screener-controls .num-input { width: 72px; text-align: right; }
+.screener-controls .num-input + span { font-size: 13px; color: var(--muted); margin-left: -4px; }
+.data-table .down { color: var(--down); font-weight: 700; }
 .screener-criteria { margin-left: auto; font-size: 13px; color: var(--muted); }
 .screener-criteria strong { color: var(--up); }
 

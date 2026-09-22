@@ -178,3 +178,30 @@ class UpperLimitResult(BaseModel):
     notice: str = ""                 # 최신 자료 게시 전 이전 결과 표시 안내
     scanned: int                     # D일 조회된 전체 종목 수
     stocks: list[UpperLimitStock] = []
+
+
+class BigCandleStock(BaseModel):
+    """거래대금 기준 이상이면서 양봉(현재가/종가 > 시가)인 종목 한 건."""
+    code: str
+    name: str = ""
+    market: str = ""                 # "KOSPI" | "KOSDAQ" (모르면 빈 값)
+    open: int                        # 당일 시가
+    close: int                       # 장중=현재가, 장 이후=종가
+    rise_pct: float                  # 시가 대비 상승률(%)
+    change_pct: Optional[float] = None  # 전일 종가 대비 등락률(%). 모르면 None
+    volume: int = 0
+    amount: int = 0                  # 거래대금(원)
+    market_cap: int = 0              # 시가총액(원). 모르면 0
+
+
+class BigCandleResult(BaseModel):
+    date: str                        # 조회일 (YYYY-MM-DD)
+    min_rise_pct: float              # 시가 대비 최소 상승률(%)
+    min_amount: int                  # 최소 거래대금(원)
+    source: str                      # "kiwoom"=당일 | "krx"=확정 일별 | "mock"=데모
+    snapshot: bool = False           # True면 키움 당일 시세 스냅샷
+    closed: bool = True              # 조회 시점에 정규장이 끝났는가(종가 기준인가)
+    captured_at: str = ""            # 키움 조회 시각 (KST ISO)
+    notice: str = ""
+    scanned: int                     # 거래대금 기준을 넘은 종목 수(양봉 여부 무관)
+    stocks: list[BigCandleStock] = []

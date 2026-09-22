@@ -3,9 +3,11 @@ import { api } from '../api'
 import { MA_LINES } from '../indicators'
 import Chart from './Chart'
 
-export default function ScreenerChart({ stock, source, onClose }) {
+// includeToday: 장중 스냅샷으로 고른 종목이면 진행 중인 오늘 세션을 보여준다.
+// defaultInterval: 처음 열 때의 주기(3=3분봉, 1440=일봉).
+export default function ScreenerChart({ stock, source, includeToday = false, defaultInterval = 3, onClose }) {
   const dialogRef = useRef(null)
-  const [interval, setInterval] = useState(3)
+  const [interval, setInterval] = useState(defaultInterval)
   const [account, setAccount] = useState(null)
   const [error, setError] = useState('')
   const [retry, setRetry] = useState(0)
@@ -50,9 +52,9 @@ export default function ScreenerChart({ stock, source, onClose }) {
         {MA_LINES.map((line) => <span key={line.period} style={{ color: line.color }}>MA{line.period}</span>)}
         <span>거래량</span>
       </div>
-      <p className="muted">{source === 'mock' ? '합성 데모 차트' : '키움 시세 차트'} · {interval === 3 ? `${sessionDate || '최근 거래일'} 정규장 09:00~15:30` : '최근 일봉'} 기준입니다.</p>
+      <p className="muted">{source === 'mock' ? '합성 데모 차트' : '키움 시세 차트'} · {interval === 3 ? `${sessionDate || '최근 거래일'} 정규장 09:00~${includeToday ? '현재' : '15:30'}` : '최근 일봉'} 기준입니다.</p>
       {error ? <p role="alert">{error} <button onClick={() => setRetry((value) => value + 1)}>다시 시도</button></p>
-        : account ? <Chart key={`${stock.code}:${interval}`} account={account.id} code={stock.code} interval={interval} sessionOnly onSessionDate={setSessionDate} height={460} />
+        : account ? <Chart key={`${stock.code}:${interval}`} account={account.id} code={stock.code} interval={interval} sessionOnly includeToday={includeToday} onSessionDate={setSessionDate} height={460} />
           : <p role="status">시세 연결 확인 중…</p>}
     </dialog>
   )

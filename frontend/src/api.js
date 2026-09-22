@@ -36,6 +36,9 @@ export const api = {
   // 오늘은 키움 당일 시세, 과거는 KRX 확정 일별 데이터를 사용한다.
   upperLimit: (date) =>
     req(`/api/screener/upper-limit${date ? `?date=${enc(date)}` : ''}`),
+  // 거래대금 ≥ 기준 양봉. 오늘은 키움 당일 시세(장중 현재가·장후 종가), 과거는 KRX.
+  bigCandle: (date, minRisePct = 0, minAmountEok = 150) =>
+    req(`/api/screener/big-candle?min_rise_pct=${enc(minRisePct)}&min_amount_eok=${enc(minAmountEok)}${date ? `&date=${enc(date)}` : ''}`),
 
   // 계좌 스코프 (a = account id)
   listStocks: (a) => req(`/api/${enc(a)}/stocks`),
@@ -45,8 +48,8 @@ export const api = {
   importHeld: (a) => req(`/api/${enc(a)}/stocks/import-held`, { method: 'POST' }),
 
   // 일봉은 최근 60일 전체에 MA60을 그릴 수 있도록 59일의 계산 여유분을 더 받는다.
-  getBars: (a, code, interval, lookbackExtra = interval === 1440 ? 119 : 60, sessionOnly = false) =>
-    req(`/api/${enc(a)}/bars?code=${enc(code)}&interval=${interval}&lookback_extra=${lookbackExtra}${sessionOnly ? '&session_only=true' : ''}`),
+  getBars: (a, code, interval, lookbackExtra = interval === 1440 ? 119 : 60, sessionOnly = false, includeToday = false) =>
+    req(`/api/${enc(a)}/bars?code=${enc(code)}&interval=${interval}&lookback_extra=${lookbackExtra}${sessionOnly ? '&session_only=true' : ''}${includeToday ? '&include_today=true' : ''}`),
 
   buy: (a, code, amount_krw) =>
     req(`/api/${enc(a)}/orders/buy`, { method: 'POST', body: JSON.stringify({ code, amount_krw }) }),

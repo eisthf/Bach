@@ -78,6 +78,7 @@ class DailyQuote:
     volume: int
     market_cap: int      # 시가총액(원)
     listed_shares: int   # 상장주식수
+    amount: int = 0      # 거래대금(원)
 
 
 def api_key() -> str:
@@ -139,6 +140,7 @@ def _to_quote(row: dict, market: str) -> Optional[DailyQuote]:
         volume=_num(row.get("ACC_TRDVOL")),
         market_cap=cap,
         listed_shares=shares,
+        amount=_num(row.get("ACC_TRDVAL")),
     )
 
 

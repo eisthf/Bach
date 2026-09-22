@@ -64,3 +64,15 @@ def test_kiwoom_uses_latest_response_date_on_weekend(monkeypatch):
     result = kw.fetch_min_bars("token", "001520", 3, today=None, lookback_extra=60)
     assert len([row for row in result if row["_date"] == "20260918"]) == 130
     assert result[-1]["_date"] == "20260918"
+
+
+def test_include_today_shows_running_session(monkeypatch):
+    previous = [bar("2026-09-17", 540 + i * 3) for i in range(130)]
+    today = [bar("2026-09-18", 540 + i * 3) for i in range(10)]
+    monkeypatch.setattr(main, "_hub", lambda account: SimpleNamespace(
+        data=SimpleNamespace(get_bars=lambda code, interval, lookback: previous + today)))
+    monkeypatch.setattr(main, "now_kst", lambda: datetime(2026, 9, 18, 10, 0))
+    result = main.get_bars("real", "001520", 3, 60, True, include_today=True)
+    assert result["session_date"] == "2026-09-18"
+    assert result["day_start_index"] == 60
+    assert len(result["bars"]) == 70

@@ -23,9 +23,10 @@ configure_event_log()
 record_event("서버 프로세스 시작", event="server_start")
 
 from .hub import Hub, manager  # noqa: E402  (load_dotenv 이후 import)
-from .market_clock import now_kst  # noqa: E402
+from .market_clock import REGULAR_CLOSE, now_kst  # noqa: E402
 from .models import (  # noqa: E402
     AutoConfig,
+    BigCandleResult,
     BuyOrderReq,
     OrderResult,
     SellOrderReq,
@@ -35,6 +36,7 @@ from .providers.base import DAY_INTERVAL, VALID_INTERVALS  # noqa: E402
 from .providers.kiwoom_api import KiwoomRequestError  # noqa: E402
 from .providers.krx_api import KrxAuthError, KrxError  # noqa: E402
 from .screener import (  # noqa: E402
+    BIG_CANDLE_MIN_AMOUNT,
     MAX_PCT_DEFAULT,
     MIN_PCT_DEFAULT,
     CurrentDataUnavailable,
@@ -43,6 +45,8 @@ from .screener import (  # noqa: E402
     ScreenerError,
     latest_session_date,
     parse_date,
+    screen_big_candles,
+    screen_current_big_candles,
     screen_current_upper_limits,
     screen_upper_limit,
     source_name,
@@ -167,6 +171,8 @@ def get_bars(
     interval: int = Query(3),
     lookback_extra: int = Query(60, ge=0, le=200),
     session_only: bool = Query(False),
+    # 평범한 기본값: 테스트가 get_bars를 직접 부를 때 Query 객체(참)로 평가되지 않게.
+    include_today: bool = False,
 ):
     if interval not in VALID_INTERVALS:
         raise HTTPException(400, f"interval must be one of {VALID_INTERVALS}")
@@ -197,7 +203,10 @@ def get_bars(
         if regular:
             latest_day = max(day for _, day in regular)
             now = now_kst()
-            if latest_day == now.date().isoformat() and (now.hour, now.minute) < (15, 30):
+            # 기본은 '완료된' 세션만 보여준다(상한가 스크리너). 장중 스냅샷으로
+            # 고른 종목(거래대금 양봉)은 진행 중인 오늘을 봐야 하므로 예외.
+            if (not include_today and latest_day == now.date().isoformat()
+                    and (now.hour, now.minute) < (15, 30)):
                 completed = [day for _, day in regular if day < latest_day]
                 latest_day = max(completed) if completed else None
         if regular and latest_day:
@@ -383,6 +392,63 @@ async def screener_upper_limit(
         if saved is not None and result.date < saved.date:
             return saved
         return result
+    except DataPending as e:
+        raise HTTPException(409, {"code": "DATA_PENDING", "message": str(e),
+                                  "date": e.date, "available_after": e.available_after})
+    except NotATradingDay as e:
+        raise HTTPException(404, str(e))
+    except CurrentDataUnavailable as e:
+        raise HTTPException(502, str(e))
+    except KiwoomRequestError:
+        raise HTTPException(502, "키움 시세 연결을 복구 중입니다. 잠시 후 다시 조회하세요.")
+    except ScreenerError as e:
+        raise HTTPException(400, str(e))
+    except KrxAuthError as e:
+        raise HTTPException(503, str(e))
+    except KrxError as e:
+        raise HTTPException(502, str(e))
+
+
+def _live_kiwoom_hub():
+    """실전 키움 계좌의 Hub(당일 시세 스냅샷 조회용). 없으면 None."""
+    return next(
+        (manager.hubs[c.id] for c in manager.configs
+         if c.provider == "kiwoom" and not c.kiwoom_mock),
+        None,
+    )
+
+
+@app.get("/api/screener/big-candle", response_model=BigCandleResult)
+async def screener_big_candle(
+    date: Optional[str] = Query(None, description="조회일 (YYYY-MM-DD). 생략 시 가장 최근 거래일"),
+    min_rise_pct: float = Query(0.0, ge=0, le=100, description="시가 대비 최소 상승률(%)"),
+    min_amount_eok: int = Query(BIG_CANDLE_MIN_AMOUNT // 100_000_000, ge=1, le=1_000_000,
+                                description="최소 거래대금(억원)"),
+):
+    """거래대금 ≥ 기준이면서 양봉(현재가/종가 > 시가)이고 시가 대비 상승률 ≥ 기준인 종목.
+
+    오늘 세션이면 실전 키움 계좌의 당일 시세를 쓴다 — 장중엔 현재가, 장 마감
+    후엔 종가 기준이다. 과거일(또는 키움 계좌가 없을 때)은 KRX 확정 일별 자료.
+    """
+    min_amount = min_amount_eok * 100_000_000
+    try:
+        now = now_kst()
+        session_date = latest_session_date(now)
+        requested = parse_date(date) if date else session_date
+        live_hub = _live_kiwoom_hub()
+        if requested == session_date == now.date() and live_hub is not None:
+            current = await asyncio.to_thread(live_hub.data.current_big_candles, min_amount)
+            if current is None:
+                raise CurrentDataUnavailable(
+                    "키움 당일 거래대금 상위 조회에 실패했습니다. 잠시 후 다시 조회하세요."
+                )
+            return await asyncio.to_thread(
+                screen_current_big_candles, current, min_rise_pct, min_amount,
+                closed=now.time() >= REGULAR_CLOSE,
+                captured_at=now.isoformat(timespec="seconds"),
+                today=session_date,
+            )
+        return await asyncio.to_thread(screen_big_candles, date, min_rise_pct, min_amount)
     except DataPending as e:
         raise HTTPException(409, {"code": "DATA_PENDING", "message": str(e),
                                   "date": e.date, "available_after": e.available_after})

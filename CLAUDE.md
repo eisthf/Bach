@@ -59,7 +59,7 @@ cd backend && uv run python backtest.py 079650:20260903 --state real     --varia
 | `state_machine.py` | 종목별 상태머신. `MANUAL_TRADING`/`MONITOR`/`AUTO_TRADING` + 장전/장중 가드 |
 | `market_clock.py` | 장 단계(PRE_OPEN/OPEN/CLOSED). mock=수동 토글, live=실제 KST 시계 자동 판정. 차트 시간축 epoch 변환 헬퍼 |
 | `models.py` | Pydantic 모델 + enum. 프런트와 주고받는 모든 페이로드의 단일 정의처 |
-| `screener.py` | 상한가 종목 스크리너(D 종가 vs 직전 거래일 +29~30%). 거래일 탐색 + 합성 mock 소스 포함 |
+| `screener.py` | 상한가 종목 스크리너(D 종가 vs 직전 거래일 +29~30%) + 거래대금 상위 양봉 스크리너(거래대금 ≥150억 & 현재가/종가 > 시가, 시가 대비 상승률 필터). 거래일 탐색 + 합성 mock 소스 포함 |
 | `strategy/ulc.py` | 상한가 따라잡기(ULC) 자동매매 엔진. 틱 기반 진입필터·분할매수·익절/손절/트레일링 |
 | `backtest.py` | ULC 백테스트. 1분봉 → 합성 틱으로 운영 엔진을 재생(CLI는 `backend/backtest.py`) |
 | `providers/base.py` | `DataProvider` / `Broker` ABC. `VALID_INTERVALS=(3,5,10,30,60,1440)`, `DAY_INTERVAL=1440` |
@@ -75,9 +75,9 @@ cd backend && uv run python backtest.py 079650:20260903 --state real     --varia
 | `store.jsx` | 전역 상태(Context) + WebSocket. 메시지의 `account` 필드로 계좌별 슬라이스에 라우팅 |
 | `api.js` | REST 래퍼. 계좌 스코프는 `/api/{account}/...`, 전역은 `/api/market*`·`/api/screener/*` |
 | `indicators.js` | SMA 계산(전체 재계산 `sma`, 틱 갱신용 O(period) `lastSma`) |
-| `router.js` | 최소 해시 라우터(`#/`, `#/upper-limit`). react-router 의존 없음 |
+| `router.js` | 최소 해시 라우터(`#/`, `#/upper-limit`, `#/big-candle`). react-router 의존 없음 |
 | `App.jsx` | 라우팅 + 공통 헤더, 계좌 컬럼 레이아웃, 계좌 필터 세그먼트 |
-| `pages/` | UpperLimitPage — 상한가 종목 조회/표 |
+| `pages/` | UpperLimitPage — 상한가 종목 조회/표, BigCandlePage — 거래대금 상위 양봉 조회/표 |
 | `components/` | Chart, PriceTicker, StateButton, ManualTradePanel, AutoConfigForm, IntervalSelector, StockInput, StockPanel, MarketControls, AccountSummary, LogPanel, PageNav |
 
 ## 핵심 개념
@@ -99,6 +99,11 @@ cd backend && uv run python backtest.py 079650:20260903 --state real     --varia
   키움에 전종목 일별시세 API가 없어 KRX Open API를 별도 소스로 쓴다. 키가 없으면
   합성 mock으로 자동 대체되며, 응답의 `source` 필드로 항상 구분되고 UI에 '데모
   데이터' 배지가 붙는다 — 합성값을 실데이터로 오인하는 게 가장 위험하다.
+- **거래대금 양봉 스크리너**(`/api/screener/big-candle`): 오늘 세션은 실전 키움 계좌의
+  ka10032(거래대금 상위, 시가 없음) + ka10028(시가대비 등락률, 거래대금 값 없음)을
+  종목코드로 결합한다 — 장중엔 현재가, 15:30 이후엔 종가 기준. 과거일은 KRX 확정
+  일별 자료(`ACC_TRDVAL`). 장중 스냅샷 종목의 차트는 `include_today`로 진행 중인
+  오늘 세션을 보여준다(상한가 스크리너는 완료된 세션만).
 
 ## 규칙 / 관례
 
