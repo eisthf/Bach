@@ -218,6 +218,7 @@ class BigCandleStock(BaseModel):
     volume: int = 0
     amount: int = 0                  # 거래대금(원)
     market_cap: int = 0              # 시가총액(원). 모르면 0
+    etp: bool = False                # ETF·ETN 여부(KRX 일별 주식 자료에는 애초에 없다)
 
 
 class BigCandleResult(BaseModel):
@@ -227,6 +228,7 @@ class BigCandleResult(BaseModel):
     source: str                      # "kiwoom"=당일 | "krx"=확정 일별 | "mock"=데모
     snapshot: bool = False           # True면 키움 당일 시세 스냅샷
     closed: bool = True              # 조회 시점에 정규장이 끝났는가(종가 기준인가)
+    etp_known: bool = True           # 종목별 etp 구분이 유효한가(ETF·ETN 목록 조회 실패 시 False)
     captured_at: str = ""            # 키움 조회 시각 (KST ISO)
     notice: str = ""
     scanned: int                     # 거래대금 기준을 넘은 종목 수(양봉 여부 무관)

@@ -193,6 +193,74 @@ def test_current_big_candles_survive_metadata_failure():
 
 
 # ---------------------------------------------------------------------------
+# ETF·ETN 구분 (ka10099 시장별 종목 목록)
+# ---------------------------------------------------------------------------
+def test_fetch_etp_codes_collects_every_etp_market(monkeypatch):
+    seen = []
+
+    def post(url, headers, body, **kwargs):
+        assert headers["api-id"] == "ka10099"
+        seen.append(body["mrkt_tp"])
+        rows = {"8": [{"code": "252670"}, {"code": "0197X0"}], "60": [{"code": "Q520057"}]}
+        return Resp({"return_code": 0, "list": rows.get(body["mrkt_tp"], [])})
+
+    monkeypatch.setattr(kw, "_post", post)
+    assert kw.fetch_etp_codes("t") == {"252670", "0197X0", "520057"}
+    assert seen == list(kw.ETP_MARKETS)
+
+
+def test_fetch_etp_codes_partial_failure_is_none(monkeypatch):
+    def post(url, headers, body, **kwargs):
+        if body["mrkt_tp"] == "60":
+            raise kw.KiwoomRequestError("ka10099: 요청 실패")
+        return Resp({"return_code": 0, "list": [{"code": "252670"}]})
+
+    monkeypatch.setattr(kw, "_post", post)
+    assert kw.fetch_etp_codes("t") is None
+
+
+def _kiwoom_provider(monkeypatch, etp):
+    from app.providers import kiwoom as module
+    monkeypatch.setattr(kw, "fetch_access_token", lambda *a, **k: kw.AccessToken("t", "20990101000000"))
+    monkeypatch.setattr(kw, "fetch_big_candles", lambda *a, **k: {"scanned": 2, "stocks": [
+        {"code": "252670", "open": 68, "price": 73, "amount": 200 * EOK},
+        {"code": "303810", "open": 2830, "price": 3310, "amount": 200 * EOK},
+    ]})
+    calls = []
+
+    def fetch_etp(*a, **k):
+        calls.append(1)
+        return etp
+
+    monkeypatch.setattr(kw, "fetch_etp_codes", fetch_etp)
+    return module.KiwoomDataProvider("t", "t", mock=True), calls
+
+
+def test_current_big_candles_marks_etp_and_caches_list(monkeypatch):
+    provider, calls = _kiwoom_provider(monkeypatch, {"252670"})
+    got = provider.current_big_candles(150 * EOK)
+    assert got["etp_known"] is True
+    assert [s["etp"] for s in got["stocks"]] == [True, False]
+    provider.current_big_candles(150 * EOK)
+    assert len(calls) == 1  # ETF·ETN 목록은 하루 한 번만 조회
+
+    res = screen_current_big_candles(got, 0, 150 * EOK, closed=True,
+                                     fetch=fetcher({}), today=date(2026, 9, 28))
+    assert res.etp_known and {s.code: s.etp for s in res.stocks} == {"252670": True, "303810": False}
+
+
+def test_current_big_candles_etp_failure_is_reported_and_retried(monkeypatch):
+    provider, calls = _kiwoom_provider(monkeypatch, None)
+    got = provider.current_big_candles(150 * EOK)
+    assert got["etp_known"] is False and not any(s["etp"] for s in got["stocks"])
+    provider.current_big_candles(150 * EOK)
+    assert len(calls) == 2  # 실패는 캐시하지 않는다
+    res = screen_current_big_candles(got, 0, 150 * EOK, closed=True,
+                                     fetch=fetcher({}), today=date(2026, 9, 28))
+    assert res.etp_known is False
+
+
+# ---------------------------------------------------------------------------
 # 라우팅: 오늘 세션만 키움, 그 외는 KRX
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("at, requested, use_live, closed", [

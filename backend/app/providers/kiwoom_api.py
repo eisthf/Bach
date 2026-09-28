@@ -382,6 +382,24 @@ def _paged_rows(url: str, api_id: str, token: str, body: dict, key: str,
     return rows
 
 
+# ka10099 시장구분 중 상장지수상품(ETF·ETN). 거래대금·등락률 순위 API(ka10032 등)에는
+# ETF 제외 조건이 없거나 API마다 달라, 종목 목록으로 코드를 모아 직접 가른다.
+ETP_MARKETS = ("8", "60", "70", "90")   # ETF, ETN, 손실제한 ETN, 변동성 ETN
+
+
+def fetch_etp_codes(token: str, mock: bool = False) -> Optional[set]:
+    """ETF·ETN 종목코드 집합. ``None``은 호출 실패(일부 시장만 받은 결과도 버린다)."""
+    codes: set = set()
+    for market in ETP_MARKETS:
+        rows = _paged_rows(f"{rest_host(mock)}/api/dostk/stkinfo", "ka10099", token,
+                           {"mrkt_tp": market}, "list", max_pages=50)
+        if rows is None:
+            return None
+        codes.update(str(r.get("code") or "").strip().lstrip("AQ") for r in rows)
+    codes.discard("")
+    return codes
+
+
 def fetch_big_candles(token: str, min_amount_krw: int,
                       mock: bool = False) -> Optional[dict]:
     """당일 거래대금 ≥ ``min_amount_krw`` 이면서 현재가 > 시가(양봉)인 종목.

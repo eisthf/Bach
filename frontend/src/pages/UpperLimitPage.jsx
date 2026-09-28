@@ -2,9 +2,10 @@
 // 지정일 D의 종가가 직전 거래일 종가 대비 +29~30%인 종목을 표로 보여준다.
 // D-1은 달력상 전날이 아니라 '직전 거래일'이며, 어느 날이 기준이 됐는지는
 // 서버가 prev_date로 돌려주므로 그대로 표시한다(휴장일을 건너뛴 게 보이도록).
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
 import ScreenerChart from '../components/ScreenerChart'
+import SortHeader, { sortDesc } from '../components/SortHeader'
 
 // 시가총액은 원 단위 그대로 보면 자릿수를 셀 수 없다. 조/억으로 접는다.
 function formatMarketCap(won) {
@@ -18,12 +19,20 @@ function formatMarketCap(won) {
 
 const won = (n) => Number(n || 0).toLocaleString()
 
+// 큰 값이 위로 오는 정렬 기준. 동률이면 다른 기준으로 한 번 더 가른다.
+const SORT_KEYS = {
+  volume: ['volume', 'market_cap'],
+  market_cap: ['market_cap', 'volume'],
+}
+
 export default function UpperLimitPage() {
   const [date, setDate] = useState('')       // '' = 가장 최근 거래일(서버가 결정)
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [selectedStock, setSelectedStock] = useState(null)
+  const [sortKey, setSortKey] = useState('volume')
+  const stocks = useMemo(() => (data ? sortDesc(data.stocks, SORT_KEYS[sortKey]) : []), [data, sortKey])
 
   const load = useCallback(async (d) => {
     setLoading(true)
@@ -134,16 +143,19 @@ export default function UpperLimitPage() {
                 <th>종목코드</th>
                 <th>종목명</th>
                 <th>시장</th>
-                <th className="col-num">시가총액</th>
-                <th className="col-num" title={data.snapshot ? '현재까지 누적 거래량' : '조회일 거래량'}>
+                <SortHeader sortKey="market_cap" active={sortKey} onSort={setSortKey} title="시가총액 큰 순으로 정렬">
+                  시가총액
+                </SortHeader>
+                <SortHeader sortKey="volume" active={sortKey} onSort={setSortKey}
+                  title={`${data.snapshot ? '현재까지 누적 거래량' : '조회일 거래량'} — 큰 순으로 정렬`}>
                   거래량{data.snapshot ? ' (누적)' : ''}
-                </th>
+                </SortHeader>
                 <th className="col-num">{data.cached ? '저장 시점 가격' : data.snapshot ? '현재가' : '종가'}</th>
                 <th className="col-num">등락률</th>
               </tr>
             </thead>
             <tbody>
-              {data.stocks.map((s, i) => (
+              {stocks.map((s, i) => (
                 <tr key={s.code} className="screener-stock-row" onClick={() => setSelectedStock(s)}>
                   <td className="col-num muted">{i + 1}</td>
                   <td className="mono">{s.code}</td>

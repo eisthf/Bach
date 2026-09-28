@@ -5,13 +5,15 @@
 // - 오늘 장 마감 후: 키움 당일 시세의 '종가' 기준
 // - 과거일: KRX 확정 일별 자료의 종가 기준
 // 종목을 누르면 상한가 페이지와 같은 차트 대화상자를 띄운다(일봉이 기본).
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
 import ScreenerChart from '../components/ScreenerChart'
+import SortHeader, { sortDesc } from '../components/SortHeader'
 import { ROUTES, navigate } from '../router'
 
 const RISE_KEY = 'bach.bigCandle.minRise'
 const AMOUNT_KEY = 'bach.bigCandle.minAmountEok'
+const EXCLUDE_ETP_KEY = 'bach.bigCandle.excludeEtp'
 
 const loadNum = (key, fallback) => {
   try {
@@ -39,6 +41,13 @@ const pctClass = (v) => (v > 0 ? 'up' : v < 0 ? 'down' : '')
 
 const timeOf = (iso) => (iso ? iso.slice(11, 16) : '')
 
+// 큰 값이 위로 오는 정렬 기준. 동률이면 뒤 키로 한 번 더 가른다.
+const SORT_KEYS = {
+  volume: ['volume', 'market_cap'],
+  market_cap: ['market_cap', 'volume'],
+  amount: ['amount', 'volume'],
+}
+
 export default function BigCandlePage() {
   const [date, setDate] = useState('')        // '' = 가장 최근 거래일(서버가 결정)
   const [minRise, setMinRise] = useState(() => loadNum(RISE_KEY, 0))
@@ -47,6 +56,19 @@ export default function BigCandlePage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [selectedStock, setSelectedStock] = useState(null)
+  const [sortKey, setSortKey] = useState('amount')
+  // 저가 ETF·ETN이 거래량 상위를 차지해 개별 종목이 묻힌다. 기본은 제외(화면 필터).
+  const [excludeEtp, setExcludeEtp] = useState(() => loadNum(EXCLUDE_ETP_KEY, 1) !== 0)
+  const toggleEtp = (on) => {
+    setExcludeEtp(on)
+    saveNum(EXCLUDE_ETP_KEY, on ? 1 : 0)
+  }
+  const etpCount = useMemo(() => (data ? data.stocks.filter((s) => s.etp).length : 0), [data])
+  const stocks = useMemo(() => {
+    if (!data) return []
+    const rows = excludeEtp ? data.stocks.filter((s) => !s.etp) : data.stocks
+    return sortDesc(rows, SORT_KEYS[sortKey])
+  }, [data, sortKey, excludeEtp])
 
   const load = useCallback(async (d, rise, amount) => {
     setLoading(true)
@@ -123,6 +145,10 @@ export default function BigCandlePage() {
         <button type="button" className="ghost" disabled={loading} onClick={() => submit('')}>
           최근 거래일
         </button>
+        <label className="check-label">
+          <input type="checkbox" checked={excludeEtp} onChange={(e) => toggleEtp(e.target.checked)} />
+          ETF·ETN 제외
+        </label>
       </form>
 
       {data && (
@@ -137,7 +163,8 @@ export default function BigCandlePage() {
             시가 대비 <strong>+{Number(data.min_rise_pct).toFixed(2)}%</strong> 이상
           </span>
           <span className="sum-count">
-            {data.stocks.length}종목
+            {stocks.length}종목
+            {excludeEtp && etpCount > 0 && <span className="muted"> (ETF·ETN {etpCount}종목 제외)</span>}
             <span className="muted"> / 거래대금 기준 {won(data.scanned)}종목</span>
           </span>
           {data.source === 'kiwoom' && (
@@ -150,6 +177,11 @@ export default function BigCandlePage() {
       )}
 
       {data?.notice && <div className="screener-notice" role="status">{data.notice}</div>}
+      {data && excludeEtp && data.etp_known === false && (
+        <div className="screener-notice" role="status">
+          ETF·ETN 목록을 불러오지 못해 이번 결과에는 ETF·ETN 제외가 적용되지 않았습니다. 잠시 후 다시 조회하세요.
+        </div>
+      )}
 
       {error && (
         <div className={error.pending ? 'screener-notice' : 'screener-error'} role={error.pending ? 'status' : 'alert'}>
@@ -161,13 +193,13 @@ export default function BigCandlePage() {
 
       {loading && !data && <div className="screener-empty">불러오는 중…</div>}
 
-      {data && data.stocks.length === 0 && !loading && (
+      {data && stocks.length === 0 && !loading && (
         <div className="screener-empty">
           {data.date}에는 조건을 만족하는 종목이 없습니다.
         </div>
       )}
 
-      {data && data.stocks.length > 0 && (
+      {data && stocks.length > 0 && (
         <div className="table-wrap">
           <table className="data-table">
             <thead>
@@ -176,9 +208,17 @@ export default function BigCandlePage() {
                 <th>종목코드</th>
                 <th>종목명</th>
                 <th>시장</th>
-                <th className="col-num" title={live ? '현재까지 누적 거래대금' : '당일 거래대금'}>
+                <SortHeader sortKey="market_cap" active={sortKey} onSort={setSortKey} title="시가총액 큰 순으로 정렬">
+                  시가총액
+                </SortHeader>
+                <SortHeader sortKey="volume" active={sortKey} onSort={setSortKey}
+                  title={`${live ? '현재까지 누적 거래량' : '당일 거래량'} — 큰 순으로 정렬`}>
+                  거래량{live ? ' (누적)' : ''}
+                </SortHeader>
+                <SortHeader sortKey="amount" active={sortKey} onSort={setSortKey}
+                  title={`${live ? '현재까지 누적 거래대금' : '당일 거래대금'} — 큰 순으로 정렬`}>
                   거래대금{live ? ' (누적)' : ''}
-                </th>
+                </SortHeader>
                 <th className="col-num">시가</th>
                 <th className="col-num">{priceLabel}</th>
                 <th className="col-num" title={`${priceLabel} ÷ 시가 − 1`}>시가 대비</th>
@@ -186,7 +226,7 @@ export default function BigCandlePage() {
               </tr>
             </thead>
             <tbody>
-              {data.stocks.map((s, i) => (
+              {stocks.map((s, i) => (
                 <tr key={s.code} className="screener-stock-row" onClick={() => setSelectedStock(s)}>
                   <td className="col-num muted">{i + 1}</td>
                   <td className="mono">{s.code}</td>
@@ -204,6 +244,8 @@ export default function BigCandlePage() {
                       ? <span className={`mkt mkt-${s.market.toLowerCase()}`}>{s.market}</span>
                       : <span className="muted">—</span>}
                   </td>
+                  <td className="col-num">{formatEok(s.market_cap)}</td>
+                  <td className="col-num">{won(s.volume)}</td>
                   <td className="col-num">{formatEok(s.amount)}</td>
                   <td className="col-num">{won(s.open)}</td>
                   <td className="col-num strong">{won(s.close)}</td>

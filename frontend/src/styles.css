@@ -368,6 +368,8 @@ input:focus { outline: none; border-color: var(--accent); }
 }
 .screener-controls .num-input { width: 72px; text-align: right; }
 .screener-controls .num-input + span { font-size: 13px; color: var(--muted); margin-left: -4px; }
+.screener-controls .check-label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.screener-controls .check-label input { margin: 0; }
 .data-table .down { color: var(--down); font-weight: 700; }
 .screener-criteria { margin-left: auto; font-size: 13px; color: var(--muted); }
 .screener-criteria strong { color: var(--up); }
@@ -424,6 +426,14 @@ input:focus { outline: none; border-color: var(--accent); }
   position: sticky; top: 0; background: #fafbfc; z-index: 1;
   font-size: 12px; font-weight: 700; color: var(--muted);
 }
+.th-sort {
+  border: 0; background: transparent; padding: 0; cursor: pointer;
+  font: inherit; color: inherit; display: inline-flex; align-items: center; gap: 4px;
+}
+.th-sort:hover, .th-sort.active { color: var(--accent); }
+.th-sort:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.th-sort-mark { font-size: 10px; opacity: .6; }
+.th-sort.active .th-sort-mark { opacity: 1; }
 .data-table tbody tr:last-child td { border-bottom: none; }
 .data-table tbody tr:hover { background: var(--accent-soft); }
 .data-table .col-num { text-align: right; }

@@ -464,11 +464,13 @@ def screen_current_big_candles(
             change_pct=round(float(change), 2) if change is not None else None,
             volume=int(item.get("volume") or 0), amount=amount,
             market_cap=old.listed_shares * price if old else 0,
+            etp=bool(item.get("etp")),
         ))
     logger.info("당일 거래대금 양봉 %s: %d/%d 종목 [kiwoom]",
                 _iso(d), len(rows), int(current.get("scanned") or 0))
     return BigCandleResult(
         date=_iso(d), min_rise_pct=min_rise_pct, min_amount=min_amount,
         source="kiwoom", snapshot=True, closed=closed, captured_at=captured_at,
+        etp_known=bool(current.get("etp_known", False)),
         scanned=int(current.get("scanned") or 0), stocks=_sort_big(rows),
     )

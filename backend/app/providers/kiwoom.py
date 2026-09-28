@@ -117,6 +117,8 @@ class KiwoomDataProvider(DataProvider):
         self._prev_close: Dict[str, float] = {}  # 전일 종가(X) 캐시
         self._prev_close_day: Dict[str, str] = {}
         self._name: Dict[str, str] = {}          # 종목명 캐시
+        self._etp: set = set()                   # ETF·ETN 코드(거래대금 양봉 필터용)
+        self._etp_day = ""
         # 봉 조회 단기 캐시: {(code, interval, lookback, bucket): (조회시각, bars)}
         self._bars_cache: Dict[tuple, tuple] = {}
         self._bars_locks: Dict[tuple, threading.Lock] = {}
@@ -365,8 +367,33 @@ class KiwoomDataProvider(DataProvider):
         return self._call(kw.fetch_upper_limits, mock=self._mock)
 
     def current_big_candles(self, min_amount_krw: int) -> dict | None:
-        """키움 ka10032+ka10028로 당일 거래대금 상위 양봉을 조회한다."""
-        return self._call(kw.fetch_big_candles, min_amount_krw, mock=self._mock)
+        """키움 ka10032+ka10028로 당일 거래대금 상위 양봉을 조회한다.
+
+        종목마다 ``etp``(ETF·ETN 여부)를 붙인다. ETF·ETN 목록을 못 얻으면
+        ``etp_known=False``로 알려 화면이 필터를 적용하지 못했음을 표시하게 한다.
+        """
+        result = self._call(kw.fetch_big_candles, min_amount_krw, mock=self._mock)
+        if result is None:
+            return None
+        etp = self._etp_codes()
+        result["etp_known"] = etp is not None
+        for item in result.get("stocks") or []:
+            item["etp"] = bool(etp) and item.get("code") in etp
+        return result
+
+    def _etp_codes(self) -> Optional[set]:
+        """ETF·ETN 코드(하루 1회 조회 후 캐시). 실패는 캐시하지 않고 다음 조회에 재시도."""
+        today = _today()
+        if self._etp_day != today:
+            try:
+                codes = self._call(kw.fetch_etp_codes, mock=self._mock)
+            except Exception:  # noqa: BLE001 — 구분 실패가 목록 조회를 막지 않게
+                logger.warning("ETF·ETN 목록 조회 실패", exc_info=True)
+                codes = None
+            if codes is None:
+                return None
+            self._etp, self._etp_day = codes, today
+        return self._etp
 
     # -- 틱 --------------------------------------------------------------
     def last_tick(self, code: str) -> Optional[Tick]:
