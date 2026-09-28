@@ -6,6 +6,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
 import ScreenerChart from '../components/ScreenerChart'
 import SortHeader, { sortDesc } from '../components/SortHeader'
+import { ROUTES, navigate } from '../router'
 
 // 시가총액은 원 단위 그대로 보면 자릿수를 셀 수 없다. 조/억으로 접는다.
 function formatMarketCap(won) {
@@ -175,7 +176,25 @@ export default function UpperLimitPage() {
           </table>
         </div>
       )}
-      {selectedStock && <ScreenerChart stock={selectedStock} source={data.source} onClose={() => setSelectedStock(null)} />}
+      {selectedStock && (
+        <ScreenerChart
+          stock={selectedStock}
+          source={data.source}
+          register={{
+            label: '매매 등록',
+            title: (account) => `${account.label} 계좌의 [매매] 목록에 수동매매로 추가합니다(주문은 나가지 않음)`,
+            run: async (account) => {
+              try {
+                await api.addStock(account.id, selectedStock.code, selectedStock.name)
+                navigate(ROUTES.TRADING)
+              } catch (e) {
+                window.alert(`매매 등록 실패: ${e.message || e}`)
+              }
+            },
+          }}
+          onClose={() => setSelectedStock(null)}
+        />
+      )}
     </main>
   )
 }

@@ -5,8 +5,9 @@ import Chart from './Chart'
 
 // includeToday: 장중 스냅샷으로 고른 종목이면 진행 중인 오늘 세션을 보여준다.
 // defaultInterval: 처음 열 때의 주기(3=3분봉, 1440=일봉).
-// onRegister(account): 있으면 헤더에 [종가 매매 등록] 버튼을 띄운다(차트 조회 계좌로 등록).
-export default function ScreenerChart({ stock, source, includeToday = false, defaultInterval = 3, onRegister, onClose }) {
+// register: 있으면 헤더에 등록 버튼을 띄운다(차트 조회 계좌로 등록).
+//   { label, title(account) → 툴팁, run(account) → Promise }
+export default function ScreenerChart({ stock, source, includeToday = false, defaultInterval = 3, register, onClose }) {
   const dialogRef = useRef(null)
   const [interval, setInterval] = useState(defaultInterval)
   const [account, setAccount] = useState(null)
@@ -47,10 +48,10 @@ export default function ScreenerChart({ stock, source, includeToday = false, def
       <header className="screener-chart-header">
         <h2 id="screener-chart-title">{stock.name || stock.code} <small>{stock.code}</small></h2>
         <div className="screener-chart-actions">
-          {onRegister && (
-            <button className="primary" disabled={!account} onClick={() => onRegister(account)}
-              title={account ? `${account.label} 계좌의 종가 매매 목록에 추가합니다(주문은 나가지 않음)` : ''}>
-              종가 매매 등록
+          {register && (
+            <button className="primary" disabled={!account} onClick={() => register.run(account)}
+              title={account ? register.title(account) : ''}>
+              {register.label}
             </button>
           )}
           <button onClick={onClose} aria-label="차트 닫기" autoFocus>닫기</button>

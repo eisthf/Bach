@@ -263,13 +263,17 @@ export default function BigCandlePage() {
           source={data.source === 'mock' ? 'mock' : 'kiwoom'}
           includeToday={live}
           defaultInterval={1440}
-          onRegister={async (account) => {
-            try {
-              await api.addCloseTrade(account.id, selectedStock.code, selectedStock.name)
-              navigate(`${ROUTES.CLOSE_TRADE}`)
-            } catch (e) {
-              window.alert(`종가 매매 등록 실패: ${e.message || e}`)
-            }
+          register={{
+            label: '종가 매매 등록',
+            title: (account) => `${account.label} 계좌의 종가 매매 목록에 추가합니다(주문은 나가지 않음)`,
+            run: async (account) => {
+              try {
+                await api.addCloseTrade(account.id, selectedStock.code, selectedStock.name)
+                navigate(ROUTES.CLOSE_TRADE)
+              } catch (e) {
+                window.alert(`종가 매매 등록 실패: ${e.message || e}`)
+              }
+            },
           }}
           onClose={() => setSelectedStock(null)}
         />
