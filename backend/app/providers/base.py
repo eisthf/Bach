@@ -4,6 +4,7 @@ mock 과 kiwoom(live) 구현이 동일한 계약을 따르게 한다.
 """
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
 from typing import AsyncIterator, Callable, List
 
@@ -63,6 +64,17 @@ class DataProvider(ABC):
     def day_open(self, code: str) -> float | None:
         """당일 시가(Z). 제공 못 하면 None → 호출측이 봉/틱으로 추정."""
         return None
+
+    async def wait_day_open(self, code: str, timeout: float) -> None:
+        """당일 시가(Z)가 확보되거나 ``timeout``초가 지날 때까지 대기.
+
+        시가 이벤트를 알릴 수 없는 소스는 단순 대기한다(= 기존 폴링 간격).
+        """
+        await asyncio.sleep(timeout)
+
+    def open_diagnostics(self, code: str) -> dict:
+        """시가 검증 진단(장 시작 직후 수신·탈락 틱 집계). 미지원이면 빈 dict."""
+        return {}
 
     def stock_name(self, code: str) -> str | None:
         """종목명. 제공 못 하면 None → 호출측이 코드로 대체."""

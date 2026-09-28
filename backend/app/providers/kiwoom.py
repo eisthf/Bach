@@ -11,8 +11,10 @@ import logging
 import os
 import threading
 import time
+from datetime import time as dtime
 from typing import AsyncIterator, Callable, Dict, List, Optional
 
+from ..event_log import record_event
 from ..market_clock import chart_epoch, now_kst, REGULAR_OPEN, REGULAR_CLOSE
 from ..timing import mark
 from ..models import Bar, OrderResult, Position, Tick
@@ -45,6 +47,41 @@ def _today() -> str:
     return now_kst().strftime("%Y%m%d")
 
 
+# 시가(Z) 검증 진단 구간. 장 시작 직후 걸러진 0B 틱의 사유를 남겨 Z 확보 지연이
+# 거래소 쪽(랜덤엔드·VI로 첫 체결이 늦음)인지 우리 필터 쪽인지 가린다.
+OPEN_DIAG_START = dtime(8, 59, 30)
+OPEN_DIAG_END = dtime(9, 3)
+OPEN_DIAG_SAMPLES = 5  # 종목·일별로 원본 필드를 남길 탈락 틱 수
+OPEN_DIAG_FIELDS = ("10", "16", "15", "20", "290", "9081")
+
+
+def _open_rejections(v: dict, open_: float, now) -> list[str]:
+    """0B 틱이 당일 KRX 정규장 시가로 검증되지 못한 사유. 빈 목록이면 통과."""
+    reasons = []
+    local = now.strftime("%H%M%S")
+    trade_time = str(v.get("20") or "")  # 체결시간 HHMMSS
+    if open_ <= 0:
+        reasons.append("open_zero")
+    if now.weekday() >= 5:
+        reasons.append("weekend")
+    if not (REGULAR_OPEN <= now.time() <= REGULAR_CLOSE) or local > "153000":
+        reasons.append("local_outside_session")
+    if len(trade_time) != 6 or not trade_time.isdigit():
+        reasons.append("trade_time_invalid")
+    else:
+        if trade_time < "090000":
+            reasons.append("trade_time_before_open")
+        if trade_time > local:
+            reasons.append("trade_time_ahead_of_local")
+    if str(v.get("290")) != "2":
+        reasons.append(f"session_{v.get('290')}")
+    if v.get("9081") != "KRX":
+        reasons.append(f"exchange_{v.get('9081')}")
+    if kw.parse_price(v.get(F_VOL)) <= 0:
+        reasons.append("volume_zero")
+    return reasons
+
+
 class KiwoomDataProvider(DataProvider):
     # 봉 캐시 유효시간(초). 동시·연속 요청을 합치는 것이 목적이라 짧게 잡는다.
     _BARS_TTL = 3.0
@@ -75,6 +112,8 @@ class KiwoomDataProvider(DataProvider):
         self._day_open: Dict[str, float] = {}    # 당일 시가(Z) 캐시
         self._day_open_day: Dict[str, str] = {}
         self._open_received_ns: Dict[str, int] = {}
+        self._open_waiters: Dict[str, asyncio.Event] = {}  # 시가 대기 중인 셋업 깨우기
+        self._open_diag: Dict[str, dict] = {}    # 장 시작 직후 시가 검증 진단
         self._prev_close: Dict[str, float] = {}  # 전일 종가(X) 캐시
         self._prev_close_day: Dict[str, str] = {}
         self._name: Dict[str, str] = {}          # 종목명 캐시
@@ -253,6 +292,52 @@ class KiwoomDataProvider(DataProvider):
     def open_received_ns(self, code: str) -> int:
         return self._open_received_ns.get(code, 0) if self._day_open_day.get(code) == _today() else 0
 
+    async def wait_day_open(self, code: str, timeout: float) -> None:
+        """검증된 당일 첫 체결이 들어오는 즉시 깨어난다(폴링 간격만큼 늦지 않게)."""
+        if self.day_open(code) is not None:
+            return
+        waiter = self._open_waiters.get(code)
+        if waiter is None:
+            waiter = self._open_waiters[code] = asyncio.Event()
+        try:
+            await asyncio.wait_for(waiter.wait(), timeout)
+        except asyncio.TimeoutError:
+            pass
+
+    def open_diagnostics(self, code: str) -> dict:
+        diag = self._open_diag.get(code)
+        if not diag or diag["day"] != _today():
+            return {}
+        return {k: (dict(v) if isinstance(v, dict) else v) for k, v in diag.items() if k != "samples"}
+
+    def _diagnose_open(self, code: str, now, v: dict, rejections: list[str]) -> None:
+        """시가 확보 전 틱을 집계하고, 탈락 샘플과 첫 검증 통과를 이벤트 로그에 남긴다."""
+        today = now.strftime("%Y%m%d")
+        stamp = now.strftime("%H:%M:%S.%f")[:-3]
+        diag = self._open_diag.get(code)
+        if diag is None or diag["day"] != today:
+            diag = self._open_diag[code] = {"day": today, "first_0b_at": stamp,
+                                            "ticks": 0, "rejected": {}, "samples": 0}
+        diag["ticks"] += 1
+        fields = {k: v.get(k) for k in OPEN_DIAG_FIELDS}
+        account = getattr(self._auth, "account", "")
+        if rejections:
+            for reason in rejections:
+                diag["rejected"][reason] = diag["rejected"].get(reason, 0) + 1
+            if diag["samples"] < OPEN_DIAG_SAMPLES:
+                diag["samples"] += 1
+                record_event(f"[{code}] 시가 검증 탈락 틱: {', '.join(rejections)}",
+                             event="open_tick_rejected", account=account, code=code,
+                             local_time=stamp, reasons=rejections, fields=fields)
+            return
+        diag["verified_at"] = stamp
+        record_event(
+            f"[{code}] 시가 검증 통과: 첫 0B {diag['first_0b_at']} → 검증 {stamp} "
+            f"(앞선 탈락 {diag['ticks'] - 1}건)",
+            event="open_verified", account=account, code=code,
+            first_0b_at=diag["first_0b_at"], verified_at=stamp,
+            rejected_ticks=diag["ticks"] - 1, rejected=dict(diag["rejected"]), fields=fields)
+
     def stock_name(self, code: str, refresh: bool = False) -> Optional[str]:
         # 종목 추가 시 1회: 종목명 + 초기 시세(현재가/시고저)를 ka10007로 시드.
         # 거래가 드문 종목은 첫 0B 틱까지 시간이 걸려 헤더가 '-'로 보이는데,
@@ -399,19 +484,24 @@ class KiwoomDataProvider(DataProvider):
                 continue
             open_ = kw.parse_price(v.get(F_OPEN))
             now = now_kst()
-            trade_time = str(v.get("20") or "")  # 체결시간 HHMMSS
-            verified = (open_ > 0 and now.weekday() < 5
-                    and REGULAR_OPEN <= now.time() <= REGULAR_CLOSE
-                    and len(trade_time) == 6 and trade_time.isdigit()
-                    and "090000" <= trade_time <= now.strftime("%H%M%S") <= "153000"
-                    and str(v.get("290")) == "2"
-                    and v.get("9081") == "KRX"
-                    and kw.parse_price(v.get(F_VOL)) > 0)
+            rejections = _open_rejections(v, open_, now)
+            verified = not rejections
+            first_today = self._day_open_day.get(code) != now.strftime("%Y%m%d")
+            if (first_today and now.weekday() < 5
+                    and OPEN_DIAG_START <= now.time() <= OPEN_DIAG_END):
+                try:
+                    self._diagnose_open(code, now, v, rejections)
+                except Exception:  # 진단 실패가 시세 처리를 막지 않게 격리
+                    logger.exception("시가 진단 기록 실패")
             if verified:
-                if self._day_open_day.get(code) != now.strftime("%Y%m%d"):
+                if first_today:
                     self._open_received_ns[code] = received_ns
                 self._day_open[code] = open_
                 self._day_open_day[code] = now.strftime("%Y%m%d")
+                if first_today:
+                    waiter = self._open_waiters.pop(code, None)
+                    if waiter is not None:
+                        waiter.set()
             tick = Tick(
                 code=code,
                 price=price,

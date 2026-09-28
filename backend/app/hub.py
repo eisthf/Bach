@@ -48,6 +48,7 @@ class Stock:
     task: Optional[asyncio.Task] = None
     engine: Optional[UlcEngine] = None
     setup_task: Optional[asyncio.Task] = None
+    setup_missing: tuple = ()  # 직전 셋업 시도에서 못 얻은 기준가("X"/"Z")
     recovery_notice: str = ""
     manual_stop_triggered: bool = False
     manual_stop_checked_at: float = 0.0
@@ -60,8 +61,10 @@ class Stock:
 class Hub:
     """단일 계좌의 종목/매매를 담당. 시계와 WS 버스는 manager에서 공유."""
 
-    AUTO_SETUP_TIMEOUT = 60.0
-    AUTO_SETUP_INTERVAL = 3.0
+    # 시가 단일가가 정적 VI(예상 시가 ±10%)로 2분 연장되면 첫 체결이 09:02 이후다.
+    # 랜덤엔드(최대 30초) 여유까지 더해 그 경우에도 셋업이 시간 초과되지 않게 한다.
+    AUTO_SETUP_TIMEOUT = 180.0
+    AUTO_SETUP_INTERVAL = 3.0  # 재확인 상한. 시가는 검증 이벤트가 오면 즉시 깨어난다.
 
     def __init__(self, cfg: AccountConfig, clock: MarketClock, manager: "AccountManager") -> None:
         self.account = cfg.id
@@ -677,6 +680,7 @@ class Hub:
         """종목별 독립 대기. 조회 시간까지 포함해 제한 시간이 지나면 수동 인계."""
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.AUTO_SETUP_TIMEOUT
+        stock.setup_missing = ()
         try:
             while self._setup_allowed(stock):
                 try:
@@ -688,6 +692,9 @@ class Hub:
                     self._log(f"[{stock.code}] 기준가 조회 재시도: {type(exc).__name__}",
                               event="auto_setup_error", code=stock.code)
                     ok = False
+                    if not isinstance(exc, asyncio.TimeoutError):
+                        # 조회 예외면 무엇이 없는지 모르므로 폴링 간격으로 재시도한다.
+                        stock.setup_missing = ()
                 if not self._setup_allowed(stock):
                     return
                 if ok:
@@ -700,13 +707,25 @@ class Hub:
                 remaining = deadline - loop.time()
                 if remaining <= 0:
                     break
-                await asyncio.sleep(min(self.AUTO_SETUP_INTERVAL, remaining))
+                wait = min(self.AUTO_SETUP_INTERVAL, remaining)
+                wait_open = getattr(self.data, "wait_day_open", None)
+                if stock.setup_missing == ("Z",) and wait_open is not None:
+                    # 시가만 없으면 검증된 첫 체결이 들어오는 즉시 깨어난다.
+                    await wait_open(stock.code, wait)
+                else:
+                    await asyncio.sleep(wait)
             if self._setup_allowed(stock):
                 previous = stock.machine.state
                 stock.machine.state = TradeState.MANUAL_TRADING
                 stock.recovery_notice = "기준가 확인 시간 초과 — 자동매매 미시작, 수동 확인 필요"
                 self._log_transition(stock, previous, "AUTO_SETUP_TIMEOUT")
-                self._log(f"[{stock.code}] ⚠️ 자동매매 셋업 실패(기준가 확인 시간 초과) → 수동매매")
+                try:
+                    diag = self.data.open_diagnostics(stock.code)
+                except Exception:  # noqa: BLE001 — 진단 실패가 수동 인계를 막지 않게
+                    diag = {}
+                self._log(f"[{stock.code}] ⚠️ 자동매매 셋업 실패(기준가 확인 시간 초과) → 수동매매",
+                          event="auto_setup_timeout", code=stock.code,
+                          missing=list(stock.setup_missing), open_diag=diag)
                 self.broadcast_status(stock.code)
                 self._persist()
         finally:
@@ -719,7 +738,8 @@ class Hub:
             new = stock.machine.on_market_open()
             self._log_transition(stock, prev, "MARKET_OPEN")
             if prev == TradeState.MONITOR and new == TradeState.AUTO_TRADING:
-                stock.recovery_notice = "자동매매 준비: 기준가 확인 대기 중 (최대 60초, 주문 없음)"
+                stock.recovery_notice = (
+                    f"자동매매 준비: 기준가 확인 대기 중 (최대 {self.AUTO_SETUP_TIMEOUT:g}초, 주문 없음)")
                 self._log(f"[{stock.code}] {stock.recovery_notice}",
                           event="auto_setup_wait", code=stock.code)
                 stock.setup_task = asyncio.create_task(self._prepare_auto(stock))
@@ -770,9 +790,10 @@ class Hub:
         self._log(f"[{stock.code}] 셋업 기준가 조회: X={x}, Z={z}",
                   event="auto_setup_prices", code=stock.code, stage="primary", x=x, z=z)
         if not x or not z:
+            stock.setup_missing = tuple(key for key, value in (("X", x), ("Z", z)) if not value)
             self._log(f"[{stock.code}] 셋업 기준가 미확보: X={x}, Z={z}",
                       event="auto_setup_missing_prices", code=stock.code, x=x, z=z,
-                      missing=[key for key, value in (("X", x), ("Z", z)) if not value])
+                      missing=list(stock.setup_missing))
             return False
 
         async def position_fn():
