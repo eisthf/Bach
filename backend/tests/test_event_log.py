@@ -1,5 +1,7 @@
 """브라우저 접속 없이도 전환 원인·기준가 실패를 파일에서 판별할 수 있다."""
 import json
+from pathlib import Path
+
 from app.event_log import AsyncEventHandler, flush_event_log
 
 import pytest
@@ -152,3 +154,14 @@ def test_writer_failure_is_counted_without_stopping_writer(tmp_path):
         assert handler.worker.is_alive()
     finally:
         handler.close()
+
+
+def test_test_run_never_writes_production_event_log():
+    import app.main  # noqa: F401 — import 시점에 configure_event_log()가 불린다
+    import app.event_log as module
+
+    production = (Path(module.__file__).resolve().parent.parent / "logs").resolve()
+    paths = [Path(h.baseFilename).resolve() for h in logger.handlers
+             if isinstance(h, AsyncEventHandler)]
+    assert paths, "app.main 이 이벤트 로그를 설정하지 않았다"
+    assert all(production not in p.parents for p in paths)

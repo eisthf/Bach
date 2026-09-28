@@ -6,7 +6,15 @@ mock provider 계좌의 Hub 를 실제로 조립하되, WS 버스는 FakeManager
 """
 from __future__ import annotations
 
-import pytest
+import os
+import tempfile
+
+# app.main 은 import 시점에 이벤트 로그 파일을 연다(configure_event_log). 테스트가
+# 운영 로그(backend/logs/events.log)에 섞이지 않도록 app 을 import 하기 전에
+# 임시 디렉터리로 돌린다. 개발자가 설정한 BACH_LOG_DIR 도 테스트에서는 덮어쓴다.
+os.environ["BACH_LOG_DIR"] = tempfile.mkdtemp(prefix="bach-test-logs-")
+
+import pytest  # noqa: E402
 
 from app.accounts import AccountConfig
 from app.hub import Hub
