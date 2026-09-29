@@ -76,13 +76,32 @@ class DataProvider(ABC):
         """시가 검증 진단(장 시작 직후 수신·탈락 틱 집계). 미지원이면 빈 dict."""
         return {}
 
+    def price_limits(self, code: str) -> dict | None:
+        """당일 공식 가격제한 ``{"base", "upper", "lower"}``(기준가·상한가·하한가).
+
+        제공 못 하면 None → 호출측이 전일 종가로 근사한다.
+        """
+        return None
+
+    def integrated_code(self, code: str) -> str:
+        """KRX+NXT 통합 시세(프리·애프터마켓 포함) 조회용 종목코드. 없으면 그대로."""
+        return code
+
     def stock_name(self, code: str) -> str | None:
         """종목명. 제공 못 하면 None → 호출측이 코드로 대체."""
         return None
 
-    def current_upper_limits(self) -> list[dict] | None:
-        """당일 상한가 스냅샷. 미지원/조회 실패는 None, 정상 무종목은 빈 목록."""
+    def current_upper_limits(self, krx_only: bool = False) -> list[dict] | None:
+        """당일 상한가 스냅샷. 미지원/조회 실패는 None, 정상 무종목은 빈 목록.
+
+        기본은 KRX+NXT 통합 현재가(시간외 포함), ``krx_only``면 KRX만.
+        """
         return None
+
+    def last_price(self, code: str) -> float | None:
+        """시간외까지 포함한 마지막 거래 가격. 모르면 None."""
+        tick = self.last_tick(code)
+        return tick.price if tick else None
 
     def current_big_candles(self, min_amount_krw: int) -> dict | None:
         """당일 거래대금 ≥ 기준 양봉(현재가 > 시가) 스냅샷.

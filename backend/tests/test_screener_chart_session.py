@@ -76,3 +76,41 @@ def test_include_today_shows_running_session(monkeypatch):
     assert result["session_date"] == "2026-09-18"
     assert result["day_start_index"] == 60
     assert len(result["bars"]) == 70
+
+
+def test_regular_session_keeps_closing_auction_bar(monkeypatch):
+    day = [bar("2026-09-18", 540 + i * 3) for i in range(130)]  # 09:00~15:27
+    closing = bar("2026-09-18", 930)                              # 15:30 종가 단일가
+    after = [bar("2026-09-18", 933), bar("2026-09-18", 19 * 60 + 57)]
+    monkeypatch.setattr(main, "_hub", lambda account: SimpleNamespace(
+        data=SimpleNamespace(get_bars=lambda code, interval, lookback: day + [closing] + after)))
+    monkeypatch.setattr(main, "now_kst", lambda: datetime(2026, 9, 18, 23, 0))
+    result = main.get_bars("real", "338220", 3, 60, True)
+    assert result["bars"][-1]["time"] == closing.time
+
+
+def test_extended_uses_integrated_code_and_keeps_pre_and_after_market(monkeypatch):
+    pre = [bar("2026-09-18", 480 + i * 3) for i in range(17)]     # 08:00~08:48 NXT 프리마켓
+    regular = [bar("2026-09-18", 540 + i * 3) for i in range(131)]
+    after = [bar("2026-09-18", 933 + i * 3) for i in range(89)]    # ~19:57
+    calls = []
+
+    def get_bars(code, interval, lookback):
+        calls.append(code)
+        return pre + regular + after
+
+    monkeypatch.setattr(main, "_hub", lambda account: SimpleNamespace(data=SimpleNamespace(
+        get_bars=get_bars, integrated_code=lambda code: f"{code}_AL")))
+    monkeypatch.setattr(main, "now_kst", lambda: datetime(2026, 9, 18, 23, 0))
+    result = main.get_bars("real", "338220", 3, 60, True, extended=True)
+    assert calls == ["338220_AL"]
+    assert len(result["bars"]) == 17 + 131 + 89
+    assert result["bars"][-1]["time"] == after[-1].time
+
+    # 일봉은 통합 코드로 바꾸지 않는다.
+    calls.clear()
+    monkeypatch.setattr(main, "_hub", lambda account: SimpleNamespace(data=SimpleNamespace(
+        get_bars=get_bars, integrated_code=lambda code: f"{code}_AL",
+        last_tick=lambda code: None)))
+    main.get_bars("real", "338220", 1440, 60, False, extended=True)
+    assert calls == ["338220"]

@@ -10,6 +10,11 @@ def tick_size(price: float) -> int:
     return 1_000
 
 
+def upper_limit(base: float) -> float:
+    """기준가의 상한가: 기준가 × 1.3 을 그 가격대 호가 단위로 절사(뷰노 6,820 → 8,860)."""
+    return buy_trigger(base, Decimal("1.3"))
+
+
 def buy_trigger(base: float, ratio: Decimal) -> float:
     """원래의 '현재가 <= 계산값' 조건을 보존하도록 유효 호가로 내림."""
     price = Decimal(str(base)) * ratio

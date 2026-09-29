@@ -11,6 +11,7 @@ import logging
 import os
 import threading
 import time
+from datetime import datetime, timezone
 from datetime import time as dtime
 from typing import AsyncIterator, Callable, Dict, List, Optional
 
@@ -45,6 +46,12 @@ FILL_ORDNO = "9203"    # 주문번호
 
 def _today() -> str:
     return now_kst().strftime("%Y%m%d")
+
+
+def _minute_of(epoch: int) -> int:
+    """차트 epoch(KST 벽시계를 UTC로 저장)의 하루 중 분."""
+    dt = datetime.fromtimestamp(epoch, timezone.utc)
+    return dt.hour * 60 + dt.minute
 
 
 # 시가(Z) 검증 진단 구간. 장 시작 직후 걸러진 0B 틱의 사유를 남겨 Z 확보 지연이
@@ -116,6 +123,7 @@ class KiwoomDataProvider(DataProvider):
         self._open_diag: Dict[str, dict] = {}    # 장 시작 직후 시가 검증 진단
         self._prev_close: Dict[str, float] = {}  # 전일 종가(X) 캐시
         self._prev_close_day: Dict[str, str] = {}
+        self._limits: Dict[str, tuple] = {}      # 당일 가격제한 캐시: code -> (날짜, dict)
         self._name: Dict[str, str] = {}          # 종목명 캐시
         self._etp: set = set()                   # ETF·ETN 코드(거래대금 양봉 필터용)
         self._etp_day = ""
@@ -362,9 +370,53 @@ class KiwoomDataProvider(DataProvider):
                     # 화면 초기 표시용일 뿐 자동매매 시가 캐시에는 넣지 않는다.
         return self._name.get(code)
 
-    def current_upper_limits(self) -> list[dict] | None:
-        """키움 ka10017로 당일 KRX 상한가 종목을 조회한다."""
-        return self._call(kw.fetch_upper_limits, mock=self._mock)
+    def integrated_code(self, code: str) -> str:
+        return f"{code}_AL"
+
+    def price_limits(self, code: str) -> Optional[dict]:
+        """당일 기준가·상한가(ka10001). 하루 동안 변하지 않으므로 날짜별로 캐시."""
+        today = _today()
+        cached = self._limits.get(code)
+        if cached and cached[0] == today:
+            return cached[1]
+        limits = self._call(kw.fetch_price_limits, code, mock=self._mock)
+        if limits:
+            self._limits[code] = (today, limits)
+        return limits
+
+    def last_price(self, code: str) -> Optional[float]:
+        """현재가(ka10007) — 시간외 체결까지 반영된 마지막 거래 가격."""
+        quote = self._call(kw.fetch_quote, code, mock=self._mock)
+        return (quote.get("price") or None) if quote else None
+
+    def current_upper_limits(self, krx_only: bool = False) -> list[dict] | None:
+        """키움 ka10017(기본 통합, ``krx_only``면 KRX)로 당일 상한가 종목을 조회한다.
+
+        정규장 마감 후엔 현재가에 시간외 체결이 섞이므로, 종목마다 정규장 종가
+        (KRX 3분봉의 15:30 종가 단일가 봉)를 ``regular_close``로 붙인다.
+        """
+        rows = self._call(kw.fetch_upper_limits, mock=self._mock,
+                          exchange="1" if krx_only else "3")
+        if rows is None:
+            return None
+        now = now_kst()
+        if now.weekday() < 5 and now.time() >= REGULAR_CLOSE:
+            for row in rows:
+                row["regular_close"] = self._regular_close(row["code"], now)
+        return rows
+
+    def _regular_close(self, code: str, now) -> int:
+        """오늘 정규장 종가(15:30 봉까지의 마지막 봉 종가). 모르면 0."""
+        try:
+            bars = self.get_bars(code, 3, 0)
+        except Exception:  # noqa: BLE001 — 구분 실패가 목록 조회를 막지 않게
+            logger.warning("[%s] 정규장 종가 조회 실패", code, exc_info=True)
+            return 0
+        today = now.date()
+        regular = [b for b in bars
+                   if datetime.fromtimestamp(b.time, timezone.utc).date() == today
+                   and 540 <= _minute_of(b.time) <= 930]
+        return int(regular[-1].close) if regular else 0
 
     def current_big_candles(self, min_amount_krw: int) -> dict | None:
         """키움 ka10032+ka10028로 당일 거래대금 상위 양봉을 조회한다.

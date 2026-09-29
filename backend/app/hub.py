@@ -766,6 +766,19 @@ class Hub:
             self.broadcast_status(stock.code)
         self._persist()
 
+    async def _price_limits(self, stock: Stock) -> Optional[dict]:
+        """당일 기준가·상한가. 미지원·실패는 None(엔진이 X*1.295로 근사)."""
+        fetch = getattr(self.data, "price_limits", None)
+        if fetch is None:
+            return None
+        try:
+            return await asyncio.to_thread(fetch, stock.code)
+        except Exception as exc:  # noqa: BLE001 — 상한가 조회 실패가 매매 준비를 막지 않게
+            self._log(f"[{stock.code}] 상한가 조회 실패({type(exc).__name__}) — X*1.295로 근사",
+                      event="auto_setup_limits_error", code=stock.code,
+                      error_type=type(exc).__name__)
+            return None
+
     async def _start_auto(self, stock: Stock) -> bool:
         """전일 종가 REST와 검증된 시가 캐시가 모두 준비되면 엔진을 만든다.
 
@@ -786,6 +799,9 @@ class Hub:
         x_started = time.perf_counter_ns()
         x = await query("prev_close", self.data.prev_close, stock.code)
         x_finished = time.perf_counter_ns()
+        # 상한가는 X가 아니라 공식 기준가로 정해진다. 제공자가 당일 캐시하므로
+        # 첫 시도(대개 시가 대기 중)에만 REST가 나간다. 실패해도 셋업은 막지 않는다.
+        limits = await self._price_limits(stock)
         z = await query("day_open", self.data.day_open, stock.code)
         self._log(f"[{stock.code}] 셋업 기준가 조회: X={x}, Z={z}",
                   event="auto_setup_prices", code=stock.code, stage="primary", x=x, z=z)
@@ -808,7 +824,14 @@ class Hub:
             z=float(z),
             log=self._log,
             position_fn=position_fn,
+            limit_up=float(limits["upper"]) if limits else 0.0,
         )
+        if limits and abs(limits["base"] - float(x)) >= 1:
+            # 시간외(KRX·NXT)에서 가격이 움직여 마지막 거래가(X) ≠ 공식 기준가.
+            self._log(f"[{stock.code}] X(전일 마지막 거래가) {float(x):,.0f} ≠ 기준가 "
+                      f"{limits['base']:,.0f} — 상한가 도달 판단은 실제 상한가 "
+                      f"{limits['upper']:,.0f}", event="auto_setup_after_hours_x",
+                      code=stock.code, x=x, base=limits["base"], upper=limits["upper"])
         eng.setup()
         if not self._setup_allowed(stock):
             return False

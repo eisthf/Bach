@@ -23,6 +23,11 @@
    페이징한다. 체결일시는 ``cntr_tm``(YYYYMMDDHHMMSS; v4 명세에서 ``cntr_dt``는
    삭제됐지만 호환을 위해 둘 다 읽는다), 종가는 ``cur_prc``
    (``close_pric`` 아님), 거래량은 ``trde_qty``.
+8. **시간외 체결이 '현재가·종가'에 섞인다** (2026-09-28 뷰노로 확인) — KRX 코드로
+   조회해도 15:30 이후 체결(~19:57)이 분봉·일봉·현재가(ka10001/ka10081 ``cur_prc``)에
+   반영된다. 정규장 종가는 분봉의 15:30 봉(종가 단일가)이다. 거래소별 코드는
+   ``338220``(KRX) / ``338220_NX``(NXT, 08:00 프리마켓부터) / ``338220_AL``(통합,
+   거래량 합산)이고, 순위 API는 ``stex_tp``(1 KRX, 2 NXT, 3 통합)로 고른다.
 """
 from __future__ import annotations
 
@@ -253,6 +258,30 @@ def fetch_quote(token: str, code: str, mock: bool = False) -> Optional[dict]:
     }
 
 
+def fetch_price_limits(token: str, code: str, mock: bool = False) -> Optional[dict]:
+    """ka10001 당일 공식 기준가·상한가·하한가. 실패하거나 값이 없으면 None.
+
+    기준가는 전일 정규장 종가(함정 8 — 일봉 종가와 다를 수 있다). 장전(08시대)에도
+    당일 값으로 채워져 있다(2026-09-29 확인).
+    """
+    url = f"{rest_host(mock)}/api/dostk/stkinfo"
+    headers = {"Content-Type": "application/json;charset=UTF-8",
+               "authorization": f"Bearer {token}", "api-id": "ka10001"}
+    resp = _post(url, headers, {"stk_cd": code}, timeout=10, retries=3)
+    if resp is None or resp.status_code != 200:
+        return None
+    try:
+        data = resp.json()
+    except Exception:  # noqa: BLE001
+        return None
+    if data.get("return_code") != 0:
+        return None
+    base, upper = parse_price(data.get("base_pric")), parse_price(data.get("upl_pric"))
+    if base <= 0 or upper <= base:
+        return None
+    return {"base": base, "upper": upper, "lower": parse_price(data.get("lst_pric"))}
+
+
 def fetch_ask3(token: str, code: str, mock: bool = False) -> float:
     """ka10004 KRX 매도 3호가. 유효한 가격이 없으면 0."""
     url = f"{rest_host(mock)}/api/dostk/mrkcond"
@@ -271,7 +300,12 @@ def fetch_stock_name(token: str, code: str, mock: bool = False) -> Optional[str]
 # ---------------------------------------------------------------------------
 # 당일 상한가 (ka10017)
 # ---------------------------------------------------------------------------
-def fetch_upper_limits(token: str, mock: bool = False) -> Optional[List[dict]]:
+def base_code(raw) -> str:
+    """거래소별 종목코드(``A338220``, ``338220_AL``, ``338220_NX``) → 6자리 코드."""
+    return str(raw or "").strip().lstrip("A").split("_")[0]
+
+
+def fetch_upper_limits(token: str, mock: bool = False, exchange: str = "3") -> Optional[List[dict]]:
     """ka10017 당일 상한가 종목을 정규화한다.
 
     ``None``은 호출 실패, 빈 목록은 정상 응답이지만 해당 종목이 없음을 뜻한다.
@@ -291,7 +325,8 @@ def fetch_upper_limits(token: str, mock: bool = False) -> Optional[List[dict]]:
         "trde_qty_tp": "0000",
         "crd_cnd": "0",
         "trde_gold_tp": "0",
-        "stex_tp": "1",         # KRX
+        # 기본 3=통합(KRX+NXT): 시간외에 상한가에 닿은 종목도 잡는다. 1=KRX.
+        "stex_tp": exchange,
     }
     resp = _post(url, headers, body, timeout=10, retries=3)
     if resp is None or resp.status_code != 200:
@@ -309,7 +344,7 @@ def fetch_upper_limits(token: str, mock: bool = False) -> Optional[List[dict]]:
 
     out: List[dict] = []
     for row in data.get("updown_pric") or []:
-        code = str(row.get("stk_cd") or "").strip().lstrip("A")
+        code = base_code(row.get("stk_cd"))
         price = parse_int(row.get("cur_prc"))
         change = parse_int(row.get("pred_pre"))
         if not code or price <= 0:
@@ -703,7 +738,12 @@ def fetch_day_bars(
 
 def fetch_prev_close(token: str, code: str, mock: bool = False,
                      today: Optional[str] = None) -> Optional[float]:
-    """직전 거래일 종가를 반환(없으면 None)."""
+    """직전 거래일 '마지막 거래 가격'을 반환(없으면 None) — ULC의 X.
+
+    일봉 ``cur_prc``는 시간외(KRX·NXT) 체결까지 반영하므로 공식 기준가(정규장 종가)와
+    다를 수 있다(함정 8). ULC는 의도적으로 이 값을 X로 쓴다 — 가격제한폭이 필요하면
+    ``fetch_price_limits``를 쓸 것.
+    """
     today = today or datetime.now().strftime("%Y%m%d")
     url = f"{rest_host(mock)}/api/dostk/chart"
     headers = {

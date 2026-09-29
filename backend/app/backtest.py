@@ -10,8 +10,10 @@
 - ``ulc_first_buy_ask3`` 1차 매수는 현재가 + 2호가(매도 3호가 근사)에 체결로 본다.
 - 장 마감까지 청산되지 않은 잔량은 당일 종가로 평가한다(실제로는 수동 인계).
 
-X(전일 종가)와 Z(당일 시가)는 일봉에서 얻는다. 운영에서는 Z 를 검증된 정규장
-체결 이벤트로 얻지만, 과거 날짜에는 그 이벤트가 없어 일봉 시가로 대신한다.
+X(전일 마지막 거래가 — 시간외 포함)와 Z(당일 시가)는 일봉에서 얻는다. 운영에서는 Z 를
+검증된 정규장 체결 이벤트로 얻지만, 과거 날짜에는 그 이벤트가 없어 일봉 시가로 대신한다.
+실제 상한가('상한가 도달' 청산)는 공식 기준가(전일 정규장 종가 = 전일 1분봉의 15:30
+종가 단일가 봉)로 계산한다. 운영의 ka10001 ``upl_pric`` 에 해당한다.
 """
 from __future__ import annotations
 
@@ -23,7 +25,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from .models import AutoConfig, Tick
-from .pricing import tick_size
+from .pricing import tick_size, upper_limit
 from .strategy.ulc import UlcEngine
 
 ORDERS = ("auto", "high_first", "low_first")
@@ -36,9 +38,11 @@ LAST_BAR = "1530"     # 정규장 종가 단일가 봉. 이후(시간외)는 재
 class DayData:
     code: str
     date: str               # YYYYMMDD
-    x: float                # 전일 종가
+    x: float                # 전일 마지막 거래가(시간외 포함)
     z: float                # 당일 시가
     bars: List[dict]        # 당일 1분봉 {_hhmm, time, open, high, low, close, volume}
+    base: float = 0.0       # 공식 기준가(전일 정규장 종가). 0 = 모름
+    limit_up: float = 0.0   # 실제 상한가. 0 = 모름 → 엔진이 X*1.295로 근사
 
     @property
     def close(self) -> float:
@@ -109,7 +113,8 @@ def bar_prices(bar: dict, order: str = "auto") -> List[float]:
 async def replay(day: DayData, config: AutoConfig, order: str = "auto",
                  commission: float = COMMISSION, sell_tax: float = SELL_TAX) -> BacktestResult:
     result = BacktestResult(day=day, order=order, commission=commission, sell_tax=sell_tax)
-    engine = UlcEngine(code=day.code, config=config, x=day.x, z=day.z, log=result.logs.append)
+    engine = UlcEngine(code=day.code, config=config, x=day.x, z=day.z, log=result.logs.append,
+                       limit_up=day.limit_up)
     engine.setup()
     now = {"hhmm": "", "price": 0.0}
 
@@ -141,8 +146,15 @@ async def replay(day: DayData, config: AutoConfig, order: str = "auto",
 # ---------------------------------------------------------------------------
 # 데이터 적재 (키움 조회 + 로컬 캐시)
 # ---------------------------------------------------------------------------
-def day_from_rows(code: str, date: str, daily: List[dict], minutes: List[dict]) -> DayData:
-    """일봉(오름차순)·분봉 행에서 X/Z 를 뽑아 DayData 를 만든다."""
+def regular_close(minutes: Optional[List[dict]]) -> float:
+    """1분봉에서 정규장 종가(15:30 종가 단일가 봉까지의 마지막 종가). 없으면 0."""
+    regular = [row for row in (minutes or []) if "0900" <= row.get("_hhmm", "") <= LAST_BAR]
+    return float(regular[-1]["close"]) if regular else 0.0
+
+
+def day_from_rows(code: str, date: str, daily: List[dict], minutes: List[dict],
+                  prev_minutes: Optional[List[dict]] = None) -> DayData:
+    """일봉(오름차순)·분봉 행에서 X/Z(+전일 분봉이 있으면 기준가·상한가)를 뽑는다."""
     index = next((i for i, row in enumerate(daily) if row["_date"] == date), None)
     if index is None:
         raise ValueError(f"[{code}] {date} 일봉이 없습니다(휴장일이거나 거래정지).")
@@ -150,8 +162,10 @@ def day_from_rows(code: str, date: str, daily: List[dict], minutes: List[dict]) 
         raise ValueError(f"[{code}] {date} 직전 거래일 일봉이 없습니다.")
     if not minutes:
         raise ValueError(f"[{code}] {date} 분봉이 없습니다.")
+    base = regular_close(prev_minutes)
     return DayData(code=code, date=date, x=daily[index - 1]["close"],
-                   z=daily[index]["open"], bars=minutes)
+                   z=daily[index]["open"], bars=minutes,
+                   base=base, limit_up=upper_limit(base) if base else 0.0)
 
 
 def load_day(code: str, date: str, *, token_fn, mock: bool,
@@ -163,6 +177,7 @@ def load_day(code: str, date: str, *, token_fn, mock: bool,
     from .providers import kiwoom_api as kw
 
     path = cache_dir / f"{code}_{date}.json" if cache_dir else None
+    changed = False
     if path and path.exists() and not refresh:
         raw = json.loads(path.read_text(encoding="utf-8"))
     else:
@@ -170,11 +185,16 @@ def load_day(code: str, date: str, *, token_fn, mock: bool,
         # 오늘 이후를 기준일로 주면 안 되므로 조회 기준일은 대상일 그 자체다.
         daily = kw.fetch_day_bars(token, code, mock=mock, today=date, lookback_extra=5)
         minutes = kw.fetch_min_bars_on(token, code, date, mock=mock)
-        raw = {"daily": daily, "minutes": minutes}
-        if path:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
-    return day_from_rows(code, date, raw["daily"], raw["minutes"])
+        # 공식 기준가(전일 정규장 종가)용 전일 분봉.
+        prev = [row["_date"] for row in daily if row["_date"] < date]
+        prev_minutes = kw.fetch_min_bars_on(token, code, prev[-1], mock=mock) if prev else []
+        raw = {"daily": daily, "minutes": minutes, "prev_minutes": prev_minutes}
+        changed = True
+    if path and changed:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+    # 예전 캐시에는 전일 분봉이 없다 → 기준가 모름(상한가 X*1.295 근사). --refresh 로 갱신.
+    return day_from_rows(code, date, raw["daily"], raw["minutes"], raw.get("prev_minutes"))
 
 
 def parse_case(text: str) -> tuple[str, str]:

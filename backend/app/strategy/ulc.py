@@ -6,7 +6,8 @@ AUTO_TRADING 상태의 종목에 대해 틱마다 ``on_tick``이 호출된다. �
 한 번만 평가한다.
 
 흐름 요약:
-  X = 전일 종가(상한가), Z = 당일 시가
+  X = 전일 마지막 거래 가격(시간외 포함, 상한가), Z = 당일 시가
+  상한가 도달 청산은 X가 아니라 실제 상한가(limit_up, 공식 기준가 기준)로 판단
   - 진입필터: Z >= X*(1+w) → SKIP, X < 1000 → SKIP, 하락시가 & !allow_lower_open → SKIP
   - 시나리오: SC1 [X,X*(1+p)) / SC2 [X*(1+p),X*(1+p1)) / SC3 [X*(1+p1),∞)
   - 분할매수: SC1/2 = 2분할, SC3 = 3분할
@@ -54,13 +55,19 @@ class UlcEngine:
     """
     code: str
     config: AutoConfig
-    x: float                 # 전일 종가(상한가)
+    # 전일 '마지막 거래 가격'. 정규장 상한가 종목이면 상한가 종가와 같고, 시간외
+    # (KRX·NXT)에서 상한가에 도달한 종목이면 시간외 마지막 가격이다(공식 기준가와
+    # 다를 수 있다). 갭·시나리오·2차가·전일 종가 하회 손절의 기준.
+    x: float
     z: float                 # 당일 시가
     log: Callable[[str], None]
     # 계좌 실보유 조회(awaitable) → (수량, 평단) 또는 None(조회 불가/미지원).
     # 주문 콜백이 돌려주는 체결가는 시장가 주문의 '직전 틱 가격'이라 실체결가가
     # 아니다. 이 콜백으로 평단·수량을 계좌 기준에 맞춰 보정한다.
     position_fn: Optional[Callable[[], Awaitable[Optional[tuple]]]] = None
+    # 당일 실제 상한가(공식 기준가 × 1.3, 호가 단위 절사). '상한가 도달' 청산 기준.
+    # 0이면 모름 → X*1.295로 근사한다(시간외 상한가 종목에서는 발동하지 않을 수 있다).
+    limit_up: float = 0.0
 
     phase: Phase = Phase.INIT
     scenario: int = 0
@@ -340,8 +347,9 @@ class UlcEngine:
             if self._stop_hit(price):
                 await self._handle_stop(sell_fn, "트레일링 중 손절")
                 return
-            # 상한가 도달
-            if price >= self.x * 1.295:
+            # 상한가 도달 — 가격제한폭은 공식 기준가 기준이라 X(시간외 포함 마지막 가격)가
+            # 아니라 실제 상한가로 판단한다. 모르면 예전처럼 X*1.295로 근사.
+            if price >= (self.limit_up or self.x * 1.295):
                 await self._exit_all(sell_fn, "상한가 도달")
                 return
             # 보장 익절

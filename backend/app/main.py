@@ -44,6 +44,7 @@ from .screener import (  # noqa: E402
     DataPending,
     NotATradingDay,
     ScreenerError,
+    add_after_hours_drops,
     latest_session_date,
     parse_date,
     screen_big_candles,
@@ -53,8 +54,8 @@ from .screener import (  # noqa: E402
     source_name,
 )
 
-from .screener_cache import load_snapshot, save_snapshot
-from .screener_collector import run_collector
+from .screener_cache import REGULAR, load_snapshot, save_snapshot
+from .screener_collector import FINAL_AFTER, run_collector
 
 app = FastAPI(title="Bach 주식 거래 API")
 
@@ -252,6 +253,8 @@ def get_bars(
     session_only: bool = Query(False),
     # 평범한 기본값: 테스트가 get_bars를 직접 부를 때 Query 객체(참)로 평가되지 않게.
     include_today: bool = False,
+    # 분봉을 KRX+NXT 통합 시세로 받아 프리마켓(08:00)~애프터마켓(20:00) 봉까지 보여준다.
+    extended: bool = False,
 ):
     if interval not in VALID_INTERVALS:
         raise HTTPException(400, f"interval must be one of {VALID_INTERVALS}")
@@ -259,7 +262,9 @@ def get_bars(
     # 장중에는 직전 '완료된' 하루를 고를 수 있도록 3분봉 1일분과
     # MA60 계산 여유분까지 받는다. 일반 매매 차트의 조회량은 유지한다.
     fetch_lookback = 200 if session_only and interval == 3 else lookback_extra
-    bars = hub.data.get_bars(code, interval, fetch_lookback)
+    extended = extended and interval != DAY_INTERVAL
+    query_code = hub.data.integrated_code(code) if extended else code
+    bars = hub.data.get_bars(query_code, interval, fetch_lookback)
     if interval == DAY_INTERVAL and bars:
         tick = hub.data.last_tick(code)
         if tick and tick.time // (DAY_INTERVAL * 60) == bars[-1].time // (DAY_INTERVAL * 60):
@@ -277,8 +282,10 @@ def get_bars(
             dt = datetime.fromtimestamp(bar.time, timezone.utc)
             return dt.date().isoformat(), dt.hour * 60 + dt.minute
 
+        # 정규장은 15:30 종가 단일가 봉까지 포함한다(빠지면 차트 끝이 종가가 아니다).
+        start, end = (480, 1200) if extended else (540, 930)
         regular = [(i, session_key(b)) for i, b in enumerate(bars)]
-        regular = [(i, day) for i, (day, minute) in regular if 540 <= minute < 930]
+        regular = [(i, day) for i, (day, minute) in regular if start <= minute <= end]
         if regular:
             latest_day = max(day for _, day in regular)
             now = now_kst()
@@ -291,7 +298,7 @@ def get_bars(
         if regular and latest_day:
             first = next(i for i, day in regular if day == latest_day)
             # 이전 60봉은 SMA 계산용으로 남기고, 장외 봉은 제거한다.
-            warmup = [b for b in bars[:first] if 540 <= session_key(b)[1] < 930][-lookback_extra:]
+            warmup = [b for b in bars[:first] if start <= session_key(b)[1] <= end][-lookback_extra:]
             current = [bars[i] for i, day in regular if day == latest_day]
             bars = warmup + current
             day_start_index = len(warmup)
@@ -454,6 +461,12 @@ async def screener_upper_limit(
                     screen_current_upper_limits, current, min_pct, max_pct,
                     today=session_date,
                 )
+                if now.time() >= REGULAR_CLOSE:
+                    # 정규장 상한가였지만 시간외에서 밀린 종목(15:30~15:40 수집 목록 기준).
+                    regular = await asyncio.to_thread(
+                        load_snapshot, session_date, min_pct, max_pct, REGULAR)
+                    await asyncio.to_thread(add_after_hours_drops, result, regular,
+                                            getattr(live_hub.data, "last_price", None))
                 # 자정을 넘긴 요청 응답은 날짜를 보장할 수 없어 저장하지 않는다.
                 if now_kst().date() == now.date():
                     await asyncio.to_thread(save_snapshot, result, now)
@@ -470,6 +483,8 @@ async def screener_upper_limit(
             raise
         if saved is not None and result.date < saved.date:
             return saved
+        if saved is not None and result.date == saved.date:
+            merge_after_hours(result, saved)
         return result
     except DataPending as e:
         raise HTTPException(409, {"code": "DATA_PENDING", "message": str(e),
@@ -486,6 +501,42 @@ async def screener_upper_limit(
         raise HTTPException(503, str(e))
     except KrxError as e:
         raise HTTPException(502, str(e))
+
+
+def merge_after_hours(result: UpperLimitResult, saved: UpperLimitResult) -> None:
+    """KRX 확정 자료(정규장 종가 기준)에 저장된 키움 조회의 시간외 구분을 입힌다.
+
+    - 시간외 상한가 종목: KRX 자료에 없으므로 덧붙인다.
+    - 정규장 상한가·시간외 이탈: 저장된 조회에 그렇게 표시돼 있으면 그 행으로 바꾼다.
+      저장 시각이 NXT 종료(20:05) 이후인데 저장된 조회에 아예 없으면 시간외에서 밀린
+      것이므로(마지막 거래가는 모름) 이탈로 표시한다.
+    """
+    by_code = {s.code: s for s in saved.stocks}
+    captured = datetime.fromisoformat(saved.captured_at)
+    final = captured.date().isoformat() == saved.date and captured.time() >= FINAL_AFTER
+    added = dropped = 0
+    rows = []
+    for s in result.stocks:
+        old = by_code.get(s.code)
+        if old is not None and old.after_hours_drop:
+            rows.append(old)
+            dropped += 1
+        elif old is None and final:
+            rows.append(s.model_copy(update={"regular_close": s.close, "after_hours_drop": True}))
+            dropped += 1
+        else:
+            rows.append(s)
+    have = {s.code for s in rows}
+    for s in saved.stocks:
+        if s.after_hours and s.code not in have:
+            rows.append(s)
+            added += 1
+    result.stocks = rows
+    if added or dropped:
+        when = saved.captured_at[:16].replace("T", " ")
+        note = (f"{when} 키움 조회로 시간외(KRX·NXT) 구분을 반영했습니다"
+                f"(시간외 상한가 {added}종목 추가, 정규장 상한가·시간외 이탈 {dropped}종목).")
+        result.notice = f"{result.notice} {note}".strip()
 
 
 def _live_kiwoom_hub():

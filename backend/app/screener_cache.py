@@ -11,14 +11,19 @@ _lock = Lock()
 logger = logging.getLogger(__name__)
 
 
-def _path(day, minimum, maximum):
+REGULAR = "regular"   # 정규장 종가 기준 상한가 목록(15:30~15:40 수집)
+
+
+def _path(day, minimum, maximum, kind=""):
     root = Path(os.getenv("SCREENER_CACHE_DIR", str(Path(__file__).resolve().parents[1])))
-    return root / f"state.screener.{day}.{float(minimum)}.{float(maximum)}.json"
+    prefix = f"state.screener.{day}." + (f"{kind}." if kind else "")
+    return root / f"{prefix}{float(minimum)}.{float(maximum)}.json"
 
 
-def save_snapshot(result: UpperLimitResult, at: datetime) -> bool:
+def save_snapshot(result: UpperLimitResult, at: datetime, kind: str = "") -> bool:
+    """``kind``='' 는 마지막 거래가(통합) 기준 결과, REGULAR 는 정규장 종가 기준 목록."""
     result.captured_at = at.isoformat()
-    path = _path(result.date, result.min_pct, result.max_pct)
+    path = _path(result.date, result.min_pct, result.max_pct, kind)
     try:
         with _lock:
             # 느린 이전 요청이 나중 요청의 결과를 덮어쓰지 않는다.
@@ -38,8 +43,8 @@ def save_snapshot(result: UpperLimitResult, at: datetime) -> bool:
         return False
 
 
-def load_snapshot(day, minimum, maximum):
-    path = _path(day, minimum, maximum)
+def load_snapshot(day, minimum, maximum, kind: str = ""):
+    path = _path(day, minimum, maximum, kind)
     try:
         with _lock:
             result = UpperLimitResult.model_validate_json(path.read_text(encoding="utf-8"))

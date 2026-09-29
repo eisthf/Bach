@@ -82,3 +82,15 @@ def test_parse_case():
     assert parse_case("079650:2026-09-03") == ("079650", DATE)
     with pytest.raises(ValueError):
         parse_case("79650:20260903")
+
+
+def test_day_limit_comes_from_previous_regular_close():
+    """X는 전일 마지막 거래가(시간외 포함), 상한가는 전일 15:30 봉의 정규장 종가 기준."""
+    from app.backtest import day_from_rows
+    daily = [{"_date": "20260928", "open": 6410, "close": 7240},   # 일봉 종가 = 시간외 마지막
+             {"_date": "20260929", "open": 7700, "close": 8320}]
+    prev = [bar("1518", 6860, 6860, 6860, 6860), bar("1530", 6820, 6820, 6820, 6820),
+            bar("1957", 7240, 7240, 7240, 7240)]
+    day = day_from_rows("338220", "20260929", daily, [bar("0900", 7700, 7700, 7700, 7700)], prev)
+    assert (day.x, day.base, day.limit_up) == (7240, 6820, 8860)
+    assert day_from_rows("338220", "20260929", daily, [bar("0900", 1, 1, 1, 1)]).limit_up == 0.0

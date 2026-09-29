@@ -12,6 +12,7 @@ from app.providers import kiwoom as module
 def provider(monkeypatch):
     monkeypatch.setattr(module.kw, "fetch_access_token", lambda *a, **k: module.kw.AccessToken("test", "20990101000000"))
     monkeypatch.setattr(module, "now_kst", lambda: datetime(2026, 9, 8, 9, 1, tzinfo=KST))
+    monkeypatch.setattr(module.kw, "fetch_price_limits", lambda *a, **k: None)  # 네트워크 차단
     return module.KiwoomDataProvider("test", "test", mock=True)
 
 

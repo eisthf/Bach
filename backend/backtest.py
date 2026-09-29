@@ -27,7 +27,7 @@ HERE = Path(__file__).resolve().parent
 load_dotenv(HERE / ".env")
 sys.path.insert(0, str(HERE))
 
-from app.backtest import ORDERS, COMMISSION, SELL_TAX, load_day, parse_case, replay  # noqa: E402
+from app.backtest import ORDERS, COMMISSION, LAST_BAR, SELL_TAX, load_day, parse_case, replay  # noqa: E402
 from app.models import AutoConfig  # noqa: E402
 
 CACHE_DIR = HERE / "backtest_data"
@@ -96,6 +96,8 @@ def main() -> None:
     ap.add_argument("--commission", type=float, default=COMMISSION, help="수수료율(매수·매도 각각)")
     ap.add_argument("--tax", type=float, default=SELL_TAX, help="매도 거래세율")
     ap.add_argument("--refresh", action="store_true", help="캐시 무시하고 다시 조회")
+    ap.add_argument("--x-base", action="store_true",
+                    help="X를 전일 마지막 거래가 대신 공식 기준가(정규장 종가)로 (비교용)")
     ap.add_argument("-v", "--verbose", action="store_true", help="엔진 로그 출력")
     args = ap.parse_args()
 
@@ -107,20 +109,24 @@ def main() -> None:
         variants.append((name.strip() or spec, parse_overrides([x for x in body.split(",") if x.strip()])))
     orders = list(ORDERS) if args.order == "all" else [args.order]
 
-    token_fn = mock = None
+    # 토큰은 실제로 조회가 필요할 때만 발급된다(전부 캐시 적중이면 발급 안 함).
+    try:
+        token_fn, mock = token_factory(args.account)
+    except SystemExit:
+        token_fn, mock = (lambda: ""), False   # 자격증명 없음 — 캐시만 사용
     totals: dict[str, list] = {}
     for code, date in cases:
-        if token_fn is None:
-            cached = (CACHE_DIR / f"{code}_{date}.json").exists() and not args.refresh
-            if not cached:
-                token_fn, mock = token_factory(args.account)
-        day = load_day(code, date, token_fn=token_fn or (lambda: ""), mock=bool(mock),
+        day = load_day(code, date, token_fn=token_fn, mock=bool(mock),
                        cache_dir=CACHE_DIR, refresh=args.refresh)
+        if args.x_base and day.base:
+            day.x = day.base
+        regular = [b for b in day.bars if b["_hhmm"] <= LAST_BAR]
         gap = (day.z / day.x - 1) * 100
-        lows = min(b["low"] for b in day.bars)
-        highs = max(b["high"] for b in day.bars)
-        print(f"\n■ {code} {date[:4]}-{date[4:6]}-{date[6:]}  X(전일종가) {day.x:,.0f} · "
-              f"Z(시가) {day.z:,.0f} ({gap:+.2f}%) · 저 {lows:,.0f} · 고 {highs:,.0f} · 종가 {day.close:,.0f}")
+        limits = (f" · 기준가 {day.base:,.0f} · 상한가 {day.limit_up:,.0f}" if day.base
+                  else " · 기준가 모름(상한가 X×1.295 근사)")
+        print(f"\n■ {code} {date[:4]}-{date[4:6]}-{date[6:]}  X(전일 마지막 거래가) {day.x:,.0f}{limits}\n"
+              f"  Z(시가) {day.z:,.0f} ({gap:+.2f}%) · 저 {min(b['low'] for b in regular):,.0f} · "
+              f"고 {max(b['high'] for b in regular):,.0f} · 정규장 종가 {regular[-1]['close']:,.0f}")
         base_cfg = {**(state_config(args.state, code) if args.state else {}), **base}
         for name, overrides in variants:
             config = AutoConfig(**{**base_cfg, **overrides})

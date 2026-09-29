@@ -19,6 +19,7 @@ function formatMarketCap(won) {
 }
 
 const won = (n) => Number(n || 0).toLocaleString()
+const signedPct = (v) => `${v > 0 ? '+' : ''}${v.toFixed(2)}%`
 
 // 큰 값이 위로 오는 정렬 기준. 동률이면 다른 기준으로 한 번 더 가른다.
 const SORT_KEYS = {
@@ -33,7 +34,9 @@ export default function UpperLimitPage() {
   const [error, setError] = useState(null)
   const [selectedStock, setSelectedStock] = useState(null)
   const [sortKey, setSortKey] = useState('volume')
-  const stocks = useMemo(() => (data ? sortDesc(data.stocks, SORT_KEYS[sortKey]) : []), [data, sortKey])
+  // 정규장 상한가·시간외 이탈 종목은 본 목록과 따로 보여준다.
+  const stocks = useMemo(() => (data ? sortDesc(data.stocks.filter((s) => !s.after_hours_drop), SORT_KEYS[sortKey]) : []), [data, sortKey])
+  const drops = useMemo(() => (data ? sortDesc(data.stocks.filter((s) => s.after_hours_drop), SORT_KEYS[sortKey]) : []), [data, sortKey])
 
   const load = useCallback(async (d) => {
     setLoading(true)
@@ -58,6 +61,62 @@ export default function UpperLimitPage() {
     e.preventDefault()
     load(date)
   }
+
+  const priceLabel = data?.cached ? '저장 시점 가격' : data?.snapshot ? '현재가' : '종가'
+  const renderTable = (rows) => (
+    <div className="table-wrap">
+      <table className="data-table">
+        <thead>
+          <tr>
+            <th className="col-num">#</th>
+            <th>종목코드</th>
+            <th>종목명</th>
+            <th>시장</th>
+            <SortHeader sortKey="market_cap" active={sortKey} onSort={setSortKey} title="시가총액 큰 순으로 정렬">
+              시가총액
+            </SortHeader>
+            <SortHeader sortKey="volume" active={sortKey} onSort={setSortKey}
+              title={`${data.snapshot ? '현재까지 누적 거래량' : '조회일 거래량'} — 큰 순으로 정렬`}>
+              거래량{data.snapshot ? ' (누적)' : ''}
+            </SortHeader>
+            <th className="col-num">{priceLabel}</th>
+            <th className="col-num">등락률</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((s, i) => (
+            <tr key={s.code} className="screener-stock-row" onClick={() => setSelectedStock(s)}>
+              <td className="col-num muted">{i + 1}</td>
+              <td className="mono">{s.code}</td>
+              <td className="col-name">
+                <button className="screener-stock-link" onClick={(e) => { e.stopPropagation(); setSelectedStock(s) }} aria-label={`${s.name || s.code} 차트 보기`}>{s.name || '—'}</button>
+                {s.after_hours && (
+                  <span className="after-hours-badge" title="정규장 종가는 상한가 미만이었고, 15:30 이후 시간외(KRX·NXT)에서 상한가에 도달했습니다">시간외</span>
+                )}
+                {s.after_hours_drop && (
+                  <span className="after-hours-badge drop" title="정규장은 상한가로 마감했지만 시간외(KRX·NXT)에서 밀렸습니다">시간외 이탈</span>
+                )}
+              </td>
+              <td>
+                <span className={`mkt mkt-${s.market.toLowerCase()}`}>{s.market}</span>
+              </td>
+              <td className="col-num">{formatMarketCap(s.market_cap)}</td>
+              <td className="col-num">{won(s.volume)}</td>
+              <td className="col-num strong">{won(s.close)}</td>
+              <td className={`col-num ${s.change_pct >= 0 ? 'up' : 'down'}`} title={`직전 거래일 종가 ${won(s.prev_close)}원`}>
+                {signedPct(s.change_pct)}
+                {(s.after_hours || s.after_hours_drop) && s.regular_close > 0 && s.prev_close > 0 && (
+                  <div className="regular-close muted">
+                    정규장 {won(s.regular_close)} ({signedPct((s.regular_close - s.prev_close) / s.prev_close * 100)})
+                  </div>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
 
   return (
     <main className="screener">
@@ -93,7 +152,8 @@ export default function UpperLimitPage() {
             직전 거래일 <strong>{data.prev_date}</strong> 대비
           </span>
           <span className="sum-count">
-            {data.stocks.length}종목
+            {stocks.length}종목
+            {drops.length > 0 && <span className="muted"> (+ 시간외 이탈 {drops.length})</span>}
             {!data.snapshot && <span className="muted"> / {won(data.scanned)}종목 조회</span>}
           </span>
           {data.source === 'kiwoom' && (
@@ -129,52 +189,25 @@ export default function UpperLimitPage() {
 
       {loading && !data && <div className="screener-empty">불러오는 중…</div>}
 
-      {data && data.stocks.length === 0 && !loading && (
+      {data && stocks.length === 0 && !loading && (
         <div className="screener-empty">
           {data.date}에는 상한가 조건을 만족하는 종목이 없습니다.
         </div>
       )}
 
-      {data && data.stocks.length > 0 && (
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th className="col-num">#</th>
-                <th>종목코드</th>
-                <th>종목명</th>
-                <th>시장</th>
-                <SortHeader sortKey="market_cap" active={sortKey} onSort={setSortKey} title="시가총액 큰 순으로 정렬">
-                  시가총액
-                </SortHeader>
-                <SortHeader sortKey="volume" active={sortKey} onSort={setSortKey}
-                  title={`${data.snapshot ? '현재까지 누적 거래량' : '조회일 거래량'} — 큰 순으로 정렬`}>
-                  거래량{data.snapshot ? ' (누적)' : ''}
-                </SortHeader>
-                <th className="col-num">{data.cached ? '저장 시점 가격' : data.snapshot ? '현재가' : '종가'}</th>
-                <th className="col-num">등락률</th>
-              </tr>
-            </thead>
-            <tbody>
-              {stocks.map((s, i) => (
-                <tr key={s.code} className="screener-stock-row" onClick={() => setSelectedStock(s)}>
-                  <td className="col-num muted">{i + 1}</td>
-                  <td className="mono">{s.code}</td>
-                  <td className="col-name"><button className="screener-stock-link" onClick={(e) => { e.stopPropagation(); setSelectedStock(s) }} aria-label={`${s.name || s.code} 차트 보기`}>{s.name || '—'}</button></td>
-                  <td>
-                    <span className={`mkt mkt-${s.market.toLowerCase()}`}>{s.market}</span>
-                  </td>
-                  <td className="col-num">{formatMarketCap(s.market_cap)}</td>
-                  <td className="col-num">{won(s.volume)}</td>
-                  <td className="col-num strong">{won(s.close)}</td>
-                  <td className="col-num up" title={`직전 거래일 종가 ${won(s.prev_close)}원`}>
-                    +{s.change_pct.toFixed(2)}%
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      {data && stocks.length > 0 && renderTable(stocks)}
+
+      {data && drops.length > 0 && (
+        <section className="after-hours-drops" aria-labelledby="ul-drops-title">
+          <h3 id="ul-drops-title">
+            정규장 상한가 · 시간외 이탈 <span className="muted">{drops.length}종목</span>
+          </h3>
+          <p className="muted">
+            정규장(15:30)은 상한가로 마감했지만 시간외(KRX·NXT)에서 밀려 마지막 거래가가 상한가 구간 밖인 종목입니다.
+            가격·등락률은 마지막 거래가 기준이며, ULC의 전일 종가(X)도 이 값입니다.
+          </p>
+          {renderTable(drops)}
+        </section>
       )}
       {selectedStock && (
         <ScreenerChart

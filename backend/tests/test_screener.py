@@ -258,3 +258,18 @@ def test_parse_rows_falls_back_to_shares_times_close_for_market_cap():
 
 def test_parse_rows_drops_rows_without_code():
     assert parse_rows([{"ISU_NM": "이름만"}, "쓰레기"], "KOSPI") == []
+
+
+def test_current_upper_limits_flag_after_hours_limit():
+    current = [
+        {"code": "338220", "name": "뷰노", "price": 7240, "prev_close": 5570,
+         "change_pct": 29.98, "volume": 5, "regular_close": 6820},   # 정규장 +22.44%
+        {"code": "028300", "name": "HLB", "price": 39700, "prev_close": 30550,
+         "change_pct": 29.95, "volume": 5, "regular_close": 39700},  # 정규장 상한가
+        {"code": "047920", "name": "HLB제약", "price": 9620, "prev_close": 7400,
+         "change_pct": 30.0, "volume": 5},                            # 장중(정규장 종가 모름)
+    ]
+    res = screen_current_upper_limits(current, 29, 30, fetch=fetcher({"20260925": [q("000001", 100)]}),
+                                      today=date(2026, 9, 28))
+    flags = {s.code: (s.after_hours, s.regular_close) for s in res.stocks}
+    assert flags == {"338220": (True, 6820), "028300": (False, 39700), "047920": (False, 0)}

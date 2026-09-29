@@ -325,6 +325,11 @@ def screen_current_upper_limits(
         if prev_close <= 0 and old is not None:
             prev_close = old.close
         shares = old.listed_shares if old is not None else 0
+        # 통합 시세의 현재가는 정규장 이후 시간외(KRX·NXT) 체결까지 반영한다.
+        # 정규장 종가가 상한가 구간 밖이면 '시간외 상한가'로 구분한다.
+        regular = int(item.get("regular_close") or 0)
+        regular_pct = (round((regular - prev_close) / prev_close * 100, 2)
+                       if regular > 0 and prev_close > 0 else None)
         rows.append(UpperLimitStock(
             code=code,
             name=str(item.get("name") or (old.name if old else "")),
@@ -334,6 +339,8 @@ def screen_current_upper_limits(
             change_pct=pct,
             volume=int(item.get("volume") or 0),
             market_cap=shares * price,
+            regular_close=regular,
+            after_hours=regular_pct is not None and regular_pct < min_pct,
         ))
 
     rows.sort(key=lambda r: (-r.change_pct, -r.market_cap))
@@ -343,6 +350,41 @@ def screen_current_upper_limits(
         date=_iso(d), prev_date=_iso(prev_d), min_pct=min_pct, max_pct=max_pct,
         source="kiwoom", snapshot=True, scanned=len(current), stocks=rows,
     )
+
+
+def add_after_hours_drops(
+    result: UpperLimitResult,
+    regular: Optional[UpperLimitResult],
+    last_price: Optional[Callable[[str], Optional[float]]] = None,
+) -> int:
+    """정규장 상한가 목록 중 마지막 거래가 기준 결과에 없는 종목을 덧붙인다.
+
+    정규장은 상한가로 마감했지만 시간외(KRX·NXT)에서 밀린 종목이다
+    (``after_hours_drop``). ``last_price``로 마지막 거래가를 구하면 close·등락률을
+    그 값으로 채우고, 모르면 정규장 종가를 그대로 둔다. 덧붙인 종목 수를 반환.
+    """
+    if regular is None:
+        return 0
+    have = {s.code for s in result.stocks}
+    added = 0
+    for s in regular.stocks:
+        if s.code in have or s.after_hours:
+            continue
+        regular_close = s.regular_close or s.close
+        last = 0
+        if last_price is not None:
+            try:
+                last = int(last_price(s.code) or 0)
+            except Exception:  # noqa: BLE001 — 가격 조회 실패는 정규장 종가로 대신한다
+                logger.warning("[%s] 마지막 거래가 조회 실패", s.code, exc_info=True)
+        pct = (round((last - s.prev_close) / s.prev_close * 100, 2)
+               if last > 0 and s.prev_close > 0 else s.change_pct)
+        result.stocks.append(s.model_copy(update={
+            "close": last or regular_close, "change_pct": pct,
+            "regular_close": regular_close, "after_hours": False, "after_hours_drop": True,
+        }))
+        added += 1
+    return added
 
 
 # ---------------------------------------------------------------------------
