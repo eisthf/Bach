@@ -91,11 +91,12 @@ def test_returned_list_is_isolated(provider):
     assert len(b) == 1
 
 
-def test_current_daily_bars_are_cached_until_next_day(provider, monkeypatch):
-    """오늘 일봉을 받은 뒤에는 3초 TTL이 지나도 과거 120개를 다시 받지 않는다."""
+def _daily_provider(provider, monkeypatch, start_hour):
+    """오늘 봉이 든 일봉을 돌려주는 스텁 + 조작 가능한 시계(chart_epoch·time.time 일치)."""
     day = (1_788_000_000 // 86_400) * 86_400
-    clock = {"now": day + 9 * 3600}
+    clock = {"now": day + start_hour * 3600}
     monkeypatch.setattr("app.providers.kiwoom.chart_epoch", lambda: clock["now"])
+    monkeypatch.setattr("app.providers.kiwoom.time.time", lambda: clock["now"])
 
     def daily_fetch(code, interval, lookback_extra):
         provider.calls += 1
@@ -103,12 +104,55 @@ def test_current_daily_bars_are_cached_until_next_day(provider, monkeypatch):
         return [Bar(time=current_day, open=1, high=2, low=1, close=2, volume=1)]
 
     provider._fetch_bars = daily_fetch
+    return clock
+
+
+def test_daily_fetched_after_close_cached_until_next_day(provider, monkeypatch):
+    """20:00 이후에 받은 오늘 일봉(확정)은 자정까지 재사용한다."""
+    clock = _daily_provider(provider, monkeypatch, 21)
     provider.get_bars("005930", DAY_INTERVAL, 119)
-    monkeypatch.setattr("app.providers.kiwoom.time.time", lambda: 99_999_999_999)
+    clock["now"] += 2 * 3600
     provider.get_bars("005930", DAY_INTERVAL, 119)
     assert provider.calls == 1
 
     clock["now"] += 86_400
+    provider.get_bars("005930", DAY_INTERVAL, 119)
+    assert provider.calls == 2
+
+
+def test_daily_in_session_refetched_after_ttl(provider, monkeypatch):
+    """장중 응답은 5분 TTL — 기준가 점 봉이 자정까지 남지 않는다."""
+    clock = _daily_provider(provider, monkeypatch, 12)
+    provider.get_bars("005930", DAY_INTERVAL, 119)
+    clock["now"] += 299
+    provider.get_bars("005930", DAY_INTERVAL, 119)
+    assert provider.calls == 1
+    clock["now"] += 2
+    provider.get_bars("005930", DAY_INTERVAL, 119)
+    assert provider.calls == 2
+
+
+def test_daily_pre_open_response_not_frozen_after_close(provider, monkeypatch):
+    """장전에 받은 응답은 20:00 이후에도 고정되지 않는다(이번 HLB제약 사례)."""
+    clock = _daily_provider(provider, monkeypatch, 8)
+    provider.get_bars("005930", DAY_INTERVAL, 119)
+    clock["now"] += 13 * 3600    # 21:00
+    provider.get_bars("005930", DAY_INTERVAL, 119)
+    assert provider.calls == 2
+    clock["now"] += 3600         # 22:00 — 20:00 이후에 받은 응답이므로 재사용
+    provider.get_bars("005930", DAY_INTERVAL, 119)
+    assert provider.calls == 2
+
+
+def test_daily_open_window_defers_refetch(provider, monkeypatch):
+    """09:00~09:10 에는 TTL 이 지나도 새 조회를 미루고, 09:10 이후 갱신한다."""
+    clock = _daily_provider(provider, monkeypatch, 8)
+    clock["now"] += 59 * 60          # 08:59
+    provider.get_bars("005930", DAY_INTERVAL, 119)
+    clock["now"] += 6 * 60           # 09:05 (TTL 만료)
+    provider.get_bars("005930", DAY_INTERVAL, 119)
+    assert provider.calls == 1
+    clock["now"] += 6 * 60           # 09:11
     provider.get_bars("005930", DAY_INTERVAL, 119)
     assert provider.calls == 2
 

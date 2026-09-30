@@ -92,6 +92,10 @@ def _open_rejections(v: dict, open_: float, now) -> list[str]:
 class KiwoomDataProvider(DataProvider):
     # 봉 캐시 유효시간(초). 동시·연속 요청을 합치는 것이 목적이라 짧게 잡는다.
     _BARS_TTL = 3.0
+    # 오늘 봉이 든 일봉의 재사용 시간(초). 장중 진행 봉 갱신 주기.
+    _DAILY_TODAY_TTL = 300.0
+    _DAILY_FINAL_MINUTE = 20 * 60         # 이 시각(차트 시간축) 이후 받은 응답은 확정
+    _DAILY_HOLD_START, _DAILY_HOLD_END = 9 * 60, 9 * 60 + 10   # 시가 직후 새 조회 보류
 
     def __init__(
         self,
@@ -217,14 +221,15 @@ class KiwoomDataProvider(DataProvider):
             hit = self._bars_cache.get(key)
             if hit is not None:
                 age = time.time() - hit[0]
-                # 오늘 진행 일봉까지 받은 응답은 자정까지 재사용한다. 장중
-                # 고가·저가·종가는 실시간 틱이 프런트의 마지막 봉을 갱신한다.
                 has_today = (
                     interval == DAY_INTERVAL
                     and hit[1]
                     and hit[1][-1].time // (DAY_INTERVAL * 60) == bucket
                 )
-                if has_today or age < self._BARS_TTL:
+                if has_today:
+                    if self._daily_today_reusable(age):
+                        return list(hit[1])
+                elif age < self._BARS_TTL:
                     return list(hit[1])
             bars = self._fetch_bars(code, interval, lookback_extra)
             now = time.time()
@@ -242,6 +247,26 @@ class KiwoomDataProvider(DataProvider):
                     self._bars_cache.pop(k, None)
                     self._bars_locks.pop(k, None)
             return list(bars)
+
+    def _daily_today_reusable(self, age: float) -> bool:
+        """오늘 봉이 든 일봉 캐시를 이번에 그대로 써도 되는가.
+
+        장전(~09:00)에는 키움이 오늘 봉을 기준가 한 점(시가=고가=저가=종가)으로 준다.
+        예전엔 이 응답을 자정까지 재사용해, 그 점 봉이 장 마감 뒤에도 남았다.
+        - 20:00 이후에 받은 응답: 오늘 봉이 확정이라 자정까지 재사용.
+        - 그 전에 받은 응답: `_DAILY_TODAY_TTL` 이 지나면 다시 받는다(진행 봉 갱신).
+        - 단 09:00~09:10 에는 만료돼도 옛 응답을 쓴다 — 시가 직후 REST 게이트를
+          ULC 시가 조회·주문에 양보하기 위해(주문은 우선순위가 있지만 조회량 자체를 줄인다).
+        """
+        now_c = chart_epoch()
+        fetched_c = now_c - age
+        if (fetched_c // 86_400 == now_c // 86_400
+                and (fetched_c % 86_400) // 60 >= self._DAILY_FINAL_MINUTE):
+            return True
+        if age < self._DAILY_TODAY_TTL:
+            return True
+        minute = (now_c % 86_400) // 60
+        return self._DAILY_HOLD_START <= minute < self._DAILY_HOLD_END
 
     def _bars_lock(self, key: tuple) -> threading.Lock:
         with self._bars_guard:
