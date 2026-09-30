@@ -201,7 +201,7 @@ def parse_case(text: str) -> tuple[str, str]:
     """'079650:20260903' 또는 '079650:2026-09-03' → (code, YYYYMMDD)."""
     code, _, date = text.partition(":")
     date = date.replace("-", "")
-    if len(code) != 6 or not code.isdigit():
+    if len(code) != 6 or not code.isalnum():
         raise ValueError(f"종목코드 형식 오류: {text!r} (예: 079650:20260903)")
     datetime.strptime(date, "%Y%m%d")
     return code, date
