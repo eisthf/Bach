@@ -44,7 +44,7 @@ def test_base_code_strips_exchange_suffix_and_prefix():
         ["338220", "338220", "338220", "0197X0"]
 
 
-def _provider(monkeypatch, now, bars):
+def _provider(monkeypatch, now, bars, daily=None):
     from app.providers import kiwoom as module
     monkeypatch.setattr(kw, "fetch_access_token", lambda *a, **k: kw.AccessToken("t", "20990101000000"))
     monkeypatch.setattr(module, "now_kst", lambda: now)
@@ -55,6 +55,8 @@ def _provider(monkeypatch, now, bars):
     calls = []
 
     def get_bars(code, interval, lookback):
+        if interval == 1440:
+            return daily or []
         calls.append((code, interval, lookback))
         return bars
     monkeypatch.setattr(provider, "get_bars", get_bars)
@@ -85,3 +87,28 @@ def test_during_regular_session_skips_regular_close_lookup(monkeypatch):
     provider, calls = _provider(monkeypatch, datetime(2026, 9, 28, 11, 0, tzinfo=KST), [])
     rows = provider.current_upper_limits()
     assert "regular_close" not in rows[0] and calls == []
+
+
+def _day_bar(day, amount):
+    from datetime import datetime, timezone
+    from app.models import Bar
+    dt = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    return Bar(time=int(dt.timestamp()), open=1, high=1, low=1, close=1, volume=1, amount=amount)
+
+
+def test_attaches_today_amount_from_daily_bar(monkeypatch):
+    """ka10017에는 거래대금이 없어 일봉의 오늘 봉 거래대금을 붙인다."""
+    from datetime import datetime
+    from app.market_clock import KST
+    daily = [_day_bar("2026-09-25", 1_000_000_000), _day_bar("2026-09-28", 37_600_000_000)]
+    provider, _ = _provider(monkeypatch, datetime(2026, 9, 28, 11, 0, tzinfo=KST), [], daily)
+    assert provider.current_upper_limits()[0]["amount"] == 37_600_000_000
+
+
+def test_amount_unknown_when_daily_lacks_today(monkeypatch):
+    """일봉에 오늘 봉이 없으면(장전 등) 전일 거래대금을 잘못 붙이지 않고 0(모름)."""
+    from datetime import datetime
+    from app.market_clock import KST
+    daily = [_day_bar("2026-09-25", 1_000_000_000)]
+    provider, _ = _provider(monkeypatch, datetime(2026, 9, 28, 11, 0, tzinfo=KST), [], daily)
+    assert provider.current_upper_limits()[0]["amount"] == 0

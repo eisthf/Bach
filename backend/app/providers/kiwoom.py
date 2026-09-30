@@ -417,6 +417,7 @@ class KiwoomDataProvider(DataProvider):
     def current_upper_limits(self, krx_only: bool = False) -> list[dict] | None:
         """키움 ka10017(기본 통합, ``krx_only``면 KRX)로 당일 상한가 종목을 조회한다.
 
+        ka10017에는 거래대금이 없어 종목마다 일봉의 오늘 거래대금을 ``amount``로 붙인다.
         정규장 마감 후엔 현재가에 시간외 체결이 섞이므로, 종목마다 정규장 종가
         (KRX 3분봉의 15:30 종가 단일가 봉)를 ``regular_close``로 붙인다.
         """
@@ -425,10 +426,26 @@ class KiwoomDataProvider(DataProvider):
         if rows is None:
             return None
         now = now_kst()
+        for row in rows:
+            row["amount"] = self._today_amount(row["code"], now)
         if now.weekday() < 5 and now.time() >= REGULAR_CLOSE:
             for row in rows:
                 row["regular_close"] = self._regular_close(row["code"], now)
         return rows
+
+    # 스크리너 차트의 일봉 조회와 같은 키(lookback 119)라 차트를 열 때 캐시를 그대로 쓴다.
+    _AMOUNT_LOOKBACK = 119
+
+    def _today_amount(self, code: str, now) -> int:
+        """오늘 거래대금(원, 일봉의 오늘 봉). 모르면 0."""
+        try:
+            bars = self.get_bars(code, DAY_INTERVAL, self._AMOUNT_LOOKBACK)
+        except Exception:  # noqa: BLE001 — 거래대금 실패가 목록 조회를 막지 않게
+            logger.warning("[%s] 거래대금 조회 실패", code, exc_info=True)
+            return 0
+        if not bars or datetime.fromtimestamp(bars[-1].time, timezone.utc).date() != now.date():
+            return 0
+        return int(bars[-1].amount or 0)
 
     def _regular_close(self, code: str, now) -> int:
         """오늘 정규장 종가(15:30 봉까지의 마지막 봉 종가). 모르면 0."""

@@ -277,6 +277,7 @@ def screen_upper_limit(
                 change_pct=pct,
                 volume=q.volume,
                 market_cap=q.market_cap,
+                amount=q.amount,
             ))
 
     rows.sort(key=lambda r: (-r.change_pct, -r.market_cap))
@@ -339,6 +340,7 @@ def screen_current_upper_limits(
             change_pct=pct,
             volume=int(item.get("volume") or 0),
             market_cap=shares * price,
+            amount=int(item.get("amount") or 0),
             regular_close=regular,
             after_hours=regular_pct is not None and regular_pct < min_pct,
         ))

@@ -8,8 +8,8 @@ import ScreenerChart from '../components/ScreenerChart'
 import SortHeader, { sortDesc } from '../components/SortHeader'
 import { ROUTES, navigate } from '../router'
 
-// 시가총액은 원 단위 그대로 보면 자릿수를 셀 수 없다. 조/억으로 접는다.
-function formatMarketCap(won) {
+// 시가총액·거래대금은 원 단위 그대로 보면 자릿수를 셀 수 없다. 조/억으로 접는다.
+function formatEok(won) {
   if (!won || won <= 0) return '—'
   const jo = Math.floor(won / 1e12)
   const eok = Math.floor((won % 1e12) / 1e8)
@@ -24,6 +24,7 @@ const signedPct = (v) => `${v > 0 ? '+' : ''}${v.toFixed(2)}%`
 // 큰 값이 위로 오는 정렬 기준. 동률이면 다른 기준으로 한 번 더 가른다.
 const SORT_KEYS = {
   volume: ['volume', 'market_cap'],
+  amount: ['amount', 'volume'],
   market_cap: ['market_cap', 'volume'],
 }
 
@@ -79,6 +80,10 @@ export default function UpperLimitPage() {
               title={`${data.snapshot ? '현재까지 누적 거래량' : '조회일 거래량'} — 큰 순으로 정렬`}>
               거래량{data.snapshot ? ' (누적)' : ''}
             </SortHeader>
+            <SortHeader sortKey="amount" active={sortKey} onSort={setSortKey}
+              title={`${data.snapshot ? '현재까지 누적 거래대금' : '조회일 거래대금'} — 큰 순으로 정렬`}>
+              거래대금
+            </SortHeader>
             <th className="col-num">{priceLabel}</th>
             <th className="col-num">등락률</th>
           </tr>
@@ -100,8 +105,9 @@ export default function UpperLimitPage() {
               <td>
                 <span className={`mkt mkt-${s.market.toLowerCase()}`}>{s.market}</span>
               </td>
-              <td className="col-num">{formatMarketCap(s.market_cap)}</td>
+              <td className="col-num">{formatEok(s.market_cap)}</td>
               <td className="col-num">{won(s.volume)}</td>
+              <td className="col-num">{formatEok(s.amount)}</td>
               <td className="col-num strong">{won(s.close)}</td>
               <td className={`col-num ${s.change_pct >= 0 ? 'up' : 'down'}`} title={`직전 거래일 종가 ${won(s.prev_close)}원`}>
                 {signedPct(s.change_pct)}

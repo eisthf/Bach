@@ -164,6 +164,7 @@ class UpperLimitStock(BaseModel):
     change_pct: float                # 등락률(%)
     volume: int = 0                  # 조회일 거래량(키움 시세면 KRX+NXT 통합 누적)
     market_cap: int = 0              # 시가총액(원)
+    amount: int = 0                  # 조회일 거래대금(원). 0 = 모름(예전 저장본 등)
     regular_close: int = 0           # 정규장(15:30) 종가. 0 = 모름/아직 정규장 중
     after_hours: bool = False        # 정규장 종가는 상한가 미만이고 시간외(KRX·NXT)에서 도달
     # 정규장은 상한가로 마감했지만 시간외에서 밀려 마지막 가격이 상한가 구간 밖.

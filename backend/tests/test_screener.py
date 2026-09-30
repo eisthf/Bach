@@ -24,6 +24,7 @@ def q(code: str, close: int, *, name: str = "", cap: int = 0) -> DailyQuote:
         code=code, name=name or f"종목{code}", market="KOSDAQ",
         open=close, high=close, low=close, close=close,
         volume=1000, market_cap=cap or close * 1000, listed_shares=1000,
+        amount=close * 1000,
     )
 
 
@@ -51,6 +52,7 @@ def test_band_boundaries_are_inclusive():
         source="test",
     )
     assert [s.code for s in res.stocks] == ["D", "C", "B"]
+    assert res.stocks[0].amount == 13_000_000   # KRX 거래대금(ACC_TRDVAL)을 그대로 싣는다
     assert res.scanned == 5
     assert res.date == "2026-03-10"
     assert res.prev_date == "2026-03-09"
@@ -140,7 +142,8 @@ def test_current_upper_limits_use_today_and_previous_krx_metadata():
     previous = [q("048770", 3_050, name="TPC로보틱스", cap=46_000_000_000)]
     res = screen_current_upper_limits(
         [{"code": "048770", "name": "TPC로보틱스", "price": 3_965,
-          "prev_close": 3_050, "change_pct": 30.0, "volume": 12_345_678}],
+          "prev_close": 3_050, "change_pct": 30.0, "volume": 12_345_678,
+          "amount": 48_900_000_000}],
         fetch=fetcher({"20260904": previous}),
         today=date(2026, 9, 7),
     )
@@ -152,6 +155,7 @@ def test_current_upper_limits_use_today_and_previous_krx_metadata():
     assert res.stocks[0].market == "KOSDAQ"
     assert res.stocks[0].market_cap == 3_965_000
     assert res.stocks[0].volume == 12_345_678
+    assert res.stocks[0].amount == 48_900_000_000
 
 
 def test_current_upper_limits_keep_successful_empty_today():
