@@ -100,3 +100,71 @@ async def test_correction_happens_before_tp_decision():
                            open=10_000.0), sell_fn, sell_fn)
     assert eng.phase == Phase.HOLDING and not sold, "낡은 평단으로 익절 발동"
     assert any("평단 보정" in m for m in logs)
+
+
+async def test_late_fill_of_pending_leg_restores_shares():
+    """미체결 분할 매수로 줄인 수량은 나중 체결(00)로 되돌린다.
+
+    2026-10-01 008970: 3차 지정가가 미체결인 채 계좌 보정이 622→404주로 줄였고,
+    3차 218주가 체결된 뒤에도 404주만 손절해 218주가 보호 없이 남았다.
+    """
+    account = {"pos": (404, 1_640.0)}
+
+    async def position_fn():
+        return account["pos"]
+
+    eng = make_engine()
+    eng.position_fn = position_fn
+    eng.on_fill("buy", 197, 1_671.0)
+    eng.on_fill("buy", 207, 1_611.0)
+    eng.shares = 622                      # 3차 218주 주문 직후 추정
+    await eng._sync_from_account()
+    assert eng.shares == 404              # 3차 미체결 — 지금은 실보유에 맞춘다
+
+    eng.on_fill("buy", 218, 1_520.0)      # 2분 뒤 3차 체결
+    assert eng.shares == 622
+
+    sold = []
+
+    async def sell_fn(q):
+        sold.append(q)
+        return 1_480.0
+
+    account["pos"] = (622, 1_598.0)
+    await eng._exit_all(sell_fn, "손절")
+    assert sold == [622], "3차 체결분까지 전량 매도해야 함"
+
+
+async def test_account_lag_does_not_shrink_below_confirmed_fills():
+    """계좌가 체결을 늦게 반영해도 실체결로 확인된 수량 밑으로 줄이지 않는다."""
+    eng = make_engine(account=(197, 1_671.0))
+    eng.on_fill("buy", 197, 1_671.0)
+    eng.on_fill("buy", 207, 1_611.0)
+    eng.shares = 404
+    await eng._sync_from_account()
+    assert eng.shares == 404
+    assert eng._unconfirmed == 0
+
+
+async def test_fill_counted_once_when_restoring():
+    """줄인 수량보다 많은 체결이 와도 줄인 만큼만 되돌린다(이중 계산 방지)."""
+    eng = make_engine(account=(10, 10_000.0))
+    eng.on_fill("buy", 10, 10_000.0)
+    eng.shares = 15
+    await eng._sync_from_account()
+    assert (eng.shares, eng._unconfirmed) == (10, 5)
+    eng.on_fill("buy", 3, 9_900.0)
+    eng.on_fill("buy", 4, 9_900.0)
+    assert (eng.shares, eng._unconfirmed) == (15, 0)
+
+
+async def test_no_restore_after_done():
+    """청산 완료(DONE) 뒤 늦은 체결은 엔진 수량을 살리지 않는다(허브가 잔량 경고)."""
+    eng = make_engine(account=(10, 10_000.0))
+    eng.on_fill("buy", 10, 10_000.0)
+    eng.shares = 15
+    await eng._sync_from_account()
+    eng.phase = Phase.DONE
+    eng.shares = 0
+    eng.on_fill("buy", 5, 9_900.0)
+    assert eng.shares == 0

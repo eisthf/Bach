@@ -81,6 +81,11 @@ class UlcEngine:
     # 이 엔진이 낸 주문만 반영하므로 기존 보유분이 섞이지 않는다.
     fill_qty: int = 0
     fill_avg: float = 0.0
+    # 계좌 보정으로 줄였지만 아직 체결 확인이 안 된 수량. 지정가 분할 매수가
+    # 미체결인 채 계좌를 보면 '부분체결'로 보고 수량을 줄이는데, 그 주문이
+    # 나중에 체결되면 실체결(00)로 이만큼까지 되돌린다. 안 그러면 그 물량은
+    # 엔진 밖에 남아 손절·익절에서 빠진다(2026-10-01 008970: 3차 218주 방치).
+    _unconfirmed: int = 0
     trail_max: float = 0.0
     # 손절선 도달 시 자동매도를 생략하고 Hub에 수동 인계를 요청한 사유.
     # 빈 문자열이면 기존처럼 매도 후 종료한 것이다.
@@ -177,6 +182,11 @@ class UlcEngine:
         else:
             # 매도는 수량만 줄인다(주당 평단은 변하지 않는다).
             self.fill_qty = max(0, self.fill_qty - qty)
+        if side == "buy" and self._unconfirmed > 0 and self.phase != Phase.DONE:
+            add = min(qty, self._unconfirmed)
+            self._unconfirmed -= add
+            self._emit(f"미확인 매수 {add}주 체결 확인 → 보유 {self.shares}주 → {self.shares + add}주")
+            self.shares += add
         if self.fill_qty > 0:
             if abs(self.fill_avg - self.avg_cost) >= 1:
                 self._emit(f"평단 확정(실체결): {self.avg_cost:,.0f} → {self.fill_avg:,.0f}")
@@ -211,12 +221,17 @@ class UlcEngine:
         qty, avg = int(pos[0]), float(pos[1] or 0.0)
         if qty <= 0:
             return
-        if qty < self.shares:
+        # 실체결(00)로 확인된 수량 밑으로는 줄이지 않는다 — 계좌가 체결을 늦게
+        # 반영한 것이지 물량이 없는 게 아니다. 이 엔진의 주문만 누적한 값이라
+        # 기존 보유분이 섞일 염려도 없다.
+        floor = max(qty, min(self.shares, self.fill_qty))
+        if floor < self.shares:
             self._emit(
                 f"⚠️ 계좌 잔량 {qty}주 < 엔진 추정 {self.shares}주 "
-                f"— 부분체결/미체결로 보고 실보유에 맞춤"
+                f"— 부분체결/미체결로 보고 {floor}주로 맞춤(나중에 체결되면 되돌림)"
             )
-            self.shares = qty
+            self._unconfirmed += self.shares - floor
+            self.shares = floor
         # 실체결(00) 로 확정된 평단이 있으면 그쪽이 우선이다. 계좌 평단은
         # 기존 보유분까지 섞인 집계값이라 이 엔진의 손익 기준으로는 부정확하다.
         if avg > 0 and qty == self.shares and self.fill_qty <= 0:
