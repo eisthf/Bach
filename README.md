@@ -122,6 +122,8 @@ Host gcp-rblue
    기준선 이하가 될 때 보유 전량 시장가 매도를 한 번 전송하고 옵션을 자동 해제한다.
 7. **장 종료** 누르면 하루 사이클 종료 → 모든 종목이 `수동매매`로 복귀하고
    장 단계가 `장전`으로 리셋(엔진 정리). 다시 PUSH로 `모니터` 진입 가능.
+   단 **보유 중인 자동매매는 다음 거래일로 이월**된다(`자동매매` 상태 유지). 진입일의
+   X·Z·분할 계획·평단 그대로 다음 장 시작부터 이어가며, 그만두려면 PUSH로 수동 전환한다.
 
 ## 상태머신
 
@@ -132,6 +134,7 @@ MONITOR --> MANUAL_TRADING : PUSH
 MONITOR --> AUTO_TRADING : MARKET-OPEN
 AUTO_TRADING --> MANUAL_TRADING : PUSH | POSITION-FLAT(보유수량→0)
 (MONITOR|AUTO_TRADING) --> MANUAL_TRADING : MARKET-CLOSE
+(단, 보유 중인 AUTO_TRADING은 MARKET-CLOSE에서 유지 → 다음 MARKET-OPEN에 이어감)
 (장중 MANUAL_TRADING은 종착 — 나가는 전이 없음)
 (POSITION-FLAT은 엔진 전량매도의 결과로 발생하는 이벤트 — 청산 버튼 없음)
 (MARKET-CLOSE 시 장 단계도 장전(PRE_OPEN)으로 리셋 → 초기 상태 복귀)

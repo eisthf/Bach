@@ -42,7 +42,8 @@ def test_network_failure_still_has_http_duration(monkeypatch):
 
 
 async def test_parallel_orders_have_separate_traces_and_report_after_return(mock_hub, monkeypatch):
-    hub, _, _ = mock_hub
+    hub, _, clock = mock_hub
+    clock.open()  # 자동매매 엔진은 장중에만 판단한다
     recorded = []
     returned = set()
     def record(text, **fields):

@@ -12,7 +12,8 @@ from app.strategy.ulc import UlcEngine, Phase
     (35000, True, None), (30150, True, 500000),
 ])
 async def test_first_order_uses_verified_open(mock_hub, opened, verified, expected):
-    hub, mgr, _ = mock_hub
+    hub, mgr, clock = mock_hub
+    clock.open()  # 자동매매 엔진은 장중에만 판단한다
     stock = hub.add_stock('248170', '샘표식품')
     hub.live = True  # 실제 네트워크 대신 아래 주문 모형만 사용
     stock.machine.state = TradeState.AUTO_TRADING

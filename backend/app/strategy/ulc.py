@@ -16,7 +16,7 @@ AUTO_TRADING 상태의 종목에 대해 틱마다 ``on_tick``이 호출된다. �
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from decimal import Decimal
 from enum import Enum
 from typing import Awaitable, Callable, List, Optional
@@ -408,6 +408,71 @@ class UlcEngine:
                     await self._exit_all(sell_fn, "익절 전량")
                 return
 
+    # ------------------------------------------------------------------
+    # 다음 거래일 이월
+    #
+    # 보유 중에 장이 끝나면 엔진을 저장해 다음 장에서 그대로 이어간다. 같은 매매의
+    # 연속이므로 X·Z·시나리오·분할 계획·평단·트레일링 고점은 진입일 값 그대로다.
+    # 날마다 바뀌는 것만 새로 정한다: 실제 상한가(그날 공식 기준가 기준)와
+    # 미체결 수량(지정가 주문은 장 마감에 소멸).
+    # ------------------------------------------------------------------
+    @property
+    def carryable(self) -> bool:
+        """장 마감 때 다음 거래일로 이어갈 보유가 있는가."""
+        return (self.phase in (Phase.ACCUMULATING, Phase.HOLDING, Phase.TRAILING)
+                and self.shares > 0)
+
+    def to_dict(self) -> dict:
+        return {
+            "x": self.x, "z": self.z, "phase": self.phase.value, "scenario": self.scenario,
+            "legs": [asdict(leg) for leg in self.legs],
+            "avg_cost": self.avg_cost, "shares": self.shares,
+            "fill_qty": self.fill_qty, "fill_avg": self.fill_avg,
+            "trail_max": self.trail_max, "stop_deferred": self._stop_deferred,
+            "unconfirmed": self._unconfirmed,
+        }
+
+    @classmethod
+    def from_dict(cls, code: str, config: AutoConfig, data: dict,
+                  log: Callable[[str], None],
+                  position_fn: Optional[Callable[[], Awaitable[Optional[tuple]]]] = None,
+                  ) -> "UlcEngine":
+        eng = cls(code=code, config=config, x=float(data["x"]), z=float(data["z"]),
+                  log=log, position_fn=position_fn)
+        eng.phase = Phase(data["phase"])
+        eng.scenario = int(data.get("scenario") or 0)
+        eng.legs = [BuyLeg(**leg) for leg in data.get("legs") or []]
+        eng.avg_cost = float(data.get("avg_cost") or 0.0)
+        eng.shares = int(data.get("shares") or 0)
+        eng.fill_qty = int(data.get("fill_qty") or 0)
+        eng.fill_avg = float(data.get("fill_avg") or 0.0)
+        eng.trail_max = float(data.get("trail_max") or 0.0)
+        eng._stop_deferred = bool(data.get("stop_deferred"))
+        eng._unconfirmed = int(data.get("unconfirmed") or 0)
+        # 평단은 저장값(실체결 평단)을 그대로 믿는다. 수량은 begin_session 이 계좌로 대조한다.
+        eng._avg_synced = True
+        return eng
+
+    def begin_session(self, account_qty: int, limit_up: float) -> None:
+        """이월 엔진의 새 거래일 시작. 계좌 보유 수량으로 대조하고 당일 값을 갱신한다.
+
+        ``account_qty`` 는 장 시작 시점의 계좌 보유 수량이다(아직 주문이 없어 반영
+        지연이 없다). 밤사이 시간외 등에서 직접 판 만큼은 엔진에서도 뺀다 — 실체결
+        누적(fill_qty)이 그보다 크면 청산 때 없는 물량을 팔려다 주문이 거부된다.
+        계좌가 더 많으면(직접 더 산 경우) 지금처럼 엔진 물량만 관리한다.
+        """
+        if self._unconfirmed > 0:
+            self._emit(f"전일 미체결 매수 {self._unconfirmed}주는 장 마감으로 소멸 — 이월 대상 아님")
+            self._unconfirmed = 0
+        if account_qty < self.shares:
+            self._emit(f"⚠️ 계좌 보유 {account_qty}주 < 이월 수량 {self.shares}주 — 계좌에 맞춤")
+            self.shares = account_qty
+        self.fill_qty = min(self.fill_qty, self.shares)
+        self.limit_up = limit_up
+        self._bar_bucket = None
+        self._bar_close = None
+
+    # ------------------------------------------------------------------
     def _stop_hit(self, price: float) -> bool:
         """손절 조건 성립 여부.
 

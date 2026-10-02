@@ -88,6 +88,11 @@ cd backend && uv run python backtest.py 079650:20260903 --state real     --varia
   `MARKET-OPEN`(`MONITOR→AUTO`), `MARKET-CLOSE`(모두 `→MANUAL` + 장 단계 `PRE_OPEN` 리셋),
   `POSITION-FLAT`(엔진 전량매도로 보유수량 0 → `AUTO→MANUAL`).
   장중 `MANUAL_TRADING`은 종착 — 나가는 전이 없음. **청산 버튼은 없다**(청산은 매매의 결과).
+- **자동매매 이월**: 단, 보유 중인 `AUTO_TRADING`은 `MARKET-CLOSE`에서 끝내지 않고 엔진을
+  저장(`state.{계좌}.json`의 `engine`)해 다음 거래일에 **같은 매매로** 이어간다 — X·Z·분할
+  계획·평단·트레일링 고점은 진입일 값 그대로, 당일 상한가와 계좌 보유 수량만 장 시작 때 새로
+  맞춘다(대조 전·장외에는 주문 없음). 최대 보유 기간은 없다 — 그만두기는 사람이 PUSH(→MANUAL).
+  장외 재시작은 이월 엔진을 되살리고, 장중 재시작은 종전대로 수동 인계한다.
 - **장 시계는 전 계좌 공유**: kiwoom 계좌가 하나라도 있으면 실제 KST 시계로 자동
   판정되고 수동 장 토글이 409로 거부된다. 수동 토글 데모는 `./dev.sh --demo`
   (또는 `ACCOUNTS=mock` + `MOCK_PROVIDER=mock`).

@@ -27,7 +27,9 @@ export default function StateButton({ account, stock }) {
         : '→ 모니터'
       : state === 'MONITOR'
       ? '→ 수동매매'
-      : '→ 수동매매(수동 전환)'
+      : isOpen
+      ? '→ 수동매매(수동 전환)'
+      : '→ 수동매매(이월 중단)'
 
   return (
     <div className="state-box">
@@ -37,7 +39,8 @@ export default function StateButton({ account, stock }) {
         onClick={() => actions.push(account, stock.code)}
         title={nextHint}
       >
-        <span className="state-name">{LABELS[state]}</span>
+        {/* 장외의 자동매매는 보유 중이라 다음 거래일로 이월된 종목이다. */}
+        <span className="state-name">{LABELS[state]}{state === 'AUTO_TRADING' && !isOpen ? ' (이월)' : ''}</span>
         <span className="state-sub">{nextHint}</span>
       </button>
     </div>

@@ -56,6 +56,8 @@ class Stock:
     open_received_ns: int = 0
     engine_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     startup_tick_ns: int = 0
+    # 전 거래일에서 이월된 엔진이 장 시작 후 계좌 대조를 마칠 때까지 주문을 막는다.
+    resume_pending: bool = False
 
 
 class Hub:
@@ -164,7 +166,8 @@ class Hub:
         data = {
             "stocks": [
                 {"code": s.code, "name": s.name, "config": s.config.model_dump(),
-                 "state": s.machine.state.value, "recovery_notice": s.recovery_notice}
+                 "state": s.machine.state.value, "recovery_notice": s.recovery_notice,
+                 **({"engine": s.engine.to_dict()} if self._carry_engine(s) else {})}
                 for s in self.stocks.values()
             ]
         }
@@ -174,6 +177,19 @@ class Hub:
             )
         except Exception as e:  # noqa: BLE001
             logger.warning("상태 저장 실패(%s): %s", self._state_path, e)
+
+    @staticmethod
+    def _carry_engine(stock: Stock) -> bool:
+        """다음 거래일로 이어갈(저장할) 자동매매 엔진이 있는가."""
+        return (stock.machine.state == TradeState.AUTO_TRADING
+                and stock.engine is not None and stock.engine.carryable)
+
+    def _position_fn(self, stock: Stock):
+        async def position_fn():
+            """엔진이 평단·수량을 계좌 기준으로 보정할 때 쓰는 조회(블로킹 → 스레드)."""
+            p = await asyncio.to_thread(self.broker.position, stock.code)
+            return (p.quantity, p.avg_price) if p else None
+        return position_fn
 
     def _load_state(self) -> Dict[str, dict]:
         try:
@@ -225,9 +241,13 @@ class Hub:
                         stock.config = AutoConfig(**cfg)
                     except Exception:  # noqa: BLE001
                         self._log(f"[{code}] 저장 설정 오류 — 기본 설정으로 복원")
+                if self._restore_carried(stock, entry, positions, position_error):
+                    continue
                 reasons = []
                 if entry.get("state") in (TradeState.AUTO_TRADING.value, TradeState.MONITOR.value):
                     reasons.append(f"저장된 {entry['state']} 자동 재개 안 함")
+                if entry.get("engine") and self.clock.is_open():
+                    reasons.append("이월 자동매매는 장중 재시작 시 이어가지 않음")
                 if code in positions:
                     reasons.append(f"계좌 잔량 {positions[code].quantity}주")
                 if position_error:
@@ -253,6 +273,39 @@ class Hub:
             self._restoring = False
         self._persist()
         self._log(f"종목 복원: {len(self.stocks)}개 (수동매매)")
+
+    def _restore_carried(self, stock: Stock, entry: dict, positions: dict,
+                         position_error: bool) -> bool:
+        """장외 재시작이면 저장된 이월 엔진을 되살린다. 되살렸으면 True.
+
+        장중 재시작은 종전대로 수동 인계한다 — 저장 이후 체결·주문 상황을 알 수 없다.
+        장외에는 주문이 없으므로 마지막 저장(장 마감 시점) 그대로 이어갈 수 있다.
+        계좌 확인에 실패했거나 보유가 없으면 이어가지 않는다.
+        """
+        data = entry.get("engine")
+        if (not data or entry.get("state") != TradeState.AUTO_TRADING.value
+                or self.clock.is_open() or position_error or stock.code not in positions):
+            return False
+        try:
+            eng = UlcEngine.from_dict(stock.code, stock.config, data, log=self._log,
+                                      position_fn=self._position_fn(stock))
+        except Exception:  # noqa: BLE001 — 깨진 저장본은 수동 인계로
+            logger.exception("[%s][%s] 이월 엔진 복원 실패", self.account, stock.code)
+            return False
+        stock.engine = eng
+        stock.machine.state = TradeState.AUTO_TRADING
+        stock.recovery_notice = self._carry_notice(eng)
+        self._log_transition(stock, entry.get("state"), "SERVER_RESTORE_CARRY")
+        self._log(f"[{stock.code}] {stock.recovery_notice}", event="auto_carry_restored",
+                  code=stock.code, shares=eng.shares)
+        self.broadcast_status(stock.code)
+        return True
+
+    @staticmethod
+    def _carry_notice(eng: UlcEngine) -> str:
+        return (f"자동매매 이월: 다음 장 시작에 이어감 (X={eng.x:,.0f}, Z={eng.z:,.0f}, "
+                f"평단 {eng.avg_cost:,.0f}, {eng.shares}주, {eng.phase.value}). "
+                "그만두려면 PUSH로 수동 전환")
 
     async def import_held(self) -> List[str]:
         """계좌(kt00018) 보유 종목 중 화면에 없는 것을 가져와 추가. 추가 코드 반환."""
@@ -492,6 +545,10 @@ class Hub:
             if tick.received_ns and tick.received_ns <= stock.startup_tick_ns:
                 return
             if stock.machine.state != TradeState.AUTO_TRADING:
+                return
+            # 이월 엔진은 장외(시간외 체결 틱 포함)에 판단하지 않고, 장 시작 후에도
+            # 계좌 대조를 마칠 때까지 기다린다.
+            if self.clock.phase != MarketPhase.OPEN or stock.resume_pending:
                 return
             await self._evaluate_engine_tick(stock, tick)
 
@@ -737,7 +794,13 @@ class Hub:
             prev = stock.machine.state
             new = stock.machine.on_market_open()
             self._log_transition(stock, prev, "MARKET_OPEN")
-            if prev == TradeState.MONITOR and new == TradeState.AUTO_TRADING:
+            if prev == TradeState.AUTO_TRADING and stock.engine is not None:
+                stock.resume_pending = True
+                stock.recovery_notice = "이월 자동매매 재개 준비: 계좌 보유 확인 중 (주문 없음)"
+                self._log(f"[{stock.code}] {stock.recovery_notice}",
+                          event="auto_carry_wait", code=stock.code)
+                stock.setup_task = asyncio.create_task(self._resume_carried(stock))
+            elif prev == TradeState.MONITOR and new == TradeState.AUTO_TRADING:
                 stock.recovery_notice = (
                     f"자동매매 준비: 기준가 확인 대기 중 (최대 {self.AUTO_SETUP_TIMEOUT:g}초, 주문 없음)")
                 self._log(f"[{stock.code}] {stock.recovery_notice}",
@@ -749,10 +812,21 @@ class Hub:
     def apply_market_close(self) -> None:
         for stock in self.stocks.values():
             self._cancel_setup(stock)
+            stock.resume_pending = False
             previous = stock.machine.state
-            stock.machine.on_market_close()
-            stock.engine = None
-            self._log_transition(stock, previous, "MARKET_CLOSE")
+            if self._carry_engine(stock):
+                # 보유 중인 자동매매는 끝내지 않고 다음 거래일에 그대로 이어간다.
+                eng = stock.engine
+                stock.recovery_notice = self._carry_notice(eng)
+                self._log_transition(stock, previous, "MARKET_CLOSE_CARRY",
+                                     shares=eng.shares, phase=eng.phase.value)
+                self._log(f"[{stock.code}] {stock.recovery_notice}",
+                          event="auto_carry", code=stock.code, shares=eng.shares,
+                          avg_cost=eng.avg_cost, x=eng.x, z=eng.z)
+            else:
+                stock.machine.on_market_close()
+                stock.engine = None
+                self._log_transition(stock, previous, "MARKET_CLOSE")
             self.broadcast_status(stock.code)
         self._persist()
 
@@ -762,9 +836,63 @@ class Hub:
             previous = stock.machine.state
             stock.machine.state = TradeState.MANUAL_TRADING
             stock.engine = None
+            stock.resume_pending = False
             self._log_transition(stock, previous, "MARKET_RESET")
             self.broadcast_status(stock.code)
         self._persist()
+
+    async def _resume_carried(self, stock: Stock) -> None:
+        """이월 엔진 재개: 당일 상한가를 받고 계좌 보유로 수량을 대조한다.
+
+        잔고 조회에 실패하면 주문 없이 재시도하고, 제한 시간이 지나면 수동 인계한다.
+        계좌에 보유가 없으면(밤사이 직접 매도) 이월을 끝낸다.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.AUTO_SETUP_TIMEOUT
+        eng = stock.engine
+        try:
+            limits = await self._price_limits(stock)
+            qty: Optional[int] = None
+            while self._setup_allowed(stock) and stock.engine is eng:
+                try:
+                    self.broker.invalidate()
+                    positions = await asyncio.to_thread(self.broker.all_positions)
+                    qty = next((p.quantity for p in positions if p.code == stock.code), 0)
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    self._log(f"[{stock.code}] 이월 재개 잔고 확인 실패({type(exc).__name__})"
+                              " — 주문 보류, 재시도", event="auto_carry_error", code=stock.code)
+                if loop.time() >= deadline:
+                    break
+                await asyncio.sleep(self.AUTO_SETUP_INTERVAL)
+            if not self._setup_allowed(stock) or stock.engine is not eng:
+                return
+            previous = stock.machine.state
+            if qty is None:
+                stock.machine.state = TradeState.MANUAL_TRADING
+                stock.engine = None
+                stock.recovery_notice = "이월 자동매매 재개 실패(계좌 잔고 확인 시간 초과) — 수동 확인 필요"
+                self._log_transition(stock, previous, "AUTO_CARRY_TIMEOUT")
+                self._log(f"[{stock.code}] ⚠️ {stock.recovery_notice}")
+            elif qty <= 0:
+                stock.machine.on_position_flat()
+                stock.engine = None
+                stock.recovery_notice = ""
+                self._log_transition(stock, previous, "AUTO_CARRY_FLAT")
+                self._log(f"[{stock.code}] 이월 종료: 계좌 보유 없음 → MANUAL_TRADING")
+            else:
+                eng.begin_session(qty, float(limits["upper"]) if limits else 0.0)
+                stock.recovery_notice = ""
+                self._log(f"[{stock.code}] 이월 자동매매 재개 (X={eng.x:,.0f}, Z={eng.z:,.0f}, "
+                          f"평단 {eng.avg_cost:,.0f}, {eng.shares}주, {eng.phase.value})",
+                          event="auto_carry_resumed", code=stock.code, shares=eng.shares,
+                          account_qty=qty)
+            self.broadcast_status(stock.code)
+            self._persist()
+        finally:
+            stock.resume_pending = False
+            if stock.setup_task is asyncio.current_task():
+                stock.setup_task = None
 
     async def _price_limits(self, stock: Stock) -> Optional[dict]:
         """당일 기준가·상한가. 미지원·실패는 None(엔진이 X*1.295로 근사)."""
@@ -812,18 +940,13 @@ class Hub:
                       missing=list(stock.setup_missing))
             return False
 
-        async def position_fn():
-            """엔진이 평단·수량을 계좌 기준으로 보정할 때 쓰는 조회(블로킹 → 스레드)."""
-            p = await asyncio.to_thread(self.broker.position, stock.code)
-            return (p.quantity, p.avg_price) if p else None
-
         eng = UlcEngine(
             code=stock.code,
             config=stock.config,
             x=float(x),
             z=float(z),
             log=self._log,
-            position_fn=position_fn,
+            position_fn=self._position_fn(stock),
             limit_up=float(limits["upper"]) if limits else 0.0,
         )
         if limits and abs(limits["base"] - float(x)) >= 1:

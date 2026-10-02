@@ -19,6 +19,8 @@ PUSH로 수동 인수한 뒤 수동매매에서 매도한다(그 경우엔 이�
 장 종료(MARKET-CLOSE)는 하루 거래 사이클의 끝이다. 모든 종목을
 MANUAL_TRADING으로 되돌리고, Hub가 장 단계를 PRE_OPEN(다음 거래일 장전)으로
 리셋하여 다시 MONITOR 진입이 가능한 초기 상태로 복귀시킨다.
+예외: 보유 중인 AUTO_TRADING은 Hub가 이 전이를 부르지 않고 다음 거래일로
+이월한다(Hub.apply_market_close).
 
 이벤트:
 - PUSH          : 버튼 누름

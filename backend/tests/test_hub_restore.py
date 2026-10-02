@@ -181,6 +181,7 @@ async def test_balance_error_at_engine_completion_hands_off(mock_hub):
     from conftest import make_engine
 
     hub, mgr, clock = mock_hub
+    clock.open()
     stock = hub.add_stock("005930")
     stock.machine.state = TradeState.AUTO_TRADING
     stock.engine = make_engine()
