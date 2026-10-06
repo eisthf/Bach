@@ -219,6 +219,7 @@ class BigCandleStock(BaseModel):
     market: str = ""                 # "KOSPI" | "KOSDAQ" (모르면 빈 값)
     open: int                        # 당일 시가
     close: int                       # 장중=현재가, 장 이후=종가
+    high: int = 0                    # 당일 고가. 0 = 모름
     rise_pct: float                  # 시가 대비 상승률(%)
     change_pct: Optional[float] = None  # 전일 종가 대비 등락률(%). 모르면 None
     volume: int = 0

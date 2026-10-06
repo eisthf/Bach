@@ -424,6 +424,8 @@ input:focus { outline: none; border-color: var(--accent); }
   position: sticky; top: 0; background: #fafbfc; z-index: 1;
   font-size: 12px; font-weight: 700; color: var(--muted);
 }
+.screener-controls .check-label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.screener-controls .check-label input { margin: 0; }
 .th-sort {
   border: 0; background: transparent; padding: 0; cursor: pointer;
   font: inherit; color: inherit; display: inline-flex; align-items: center; gap: 4px;

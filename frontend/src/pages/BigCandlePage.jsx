@@ -58,12 +58,16 @@ export default function BigCandlePage() {
   const [error, setError] = useState(null)
   const [selectedStock, setSelectedStock] = useState(null)
   const [sort, onSort] = useSort('amount')
+  // 종가(장중이면 현재가)가 그날 고가인 종목만 — 고가에서 마감한 강한 양봉. 화면 필터.
+  // 고가를 모르는(0) 종목은 판정할 수 없어 켜면 빠진다.
+  const [closeAtHigh, setCloseAtHigh] = useState(false)
   // 저가 ETF·ETN이 거래량 상위를 차지해 개별 종목이 묻힌다. 항상 제외한다(화면 필터).
   const etpCount = useMemo(() => (data ? data.stocks.filter((s) => s.etp).length : 0), [data])
   const stocks = useMemo(() => {
     if (!data) return []
-    return sortRows(data.stocks.filter((s) => !s.etp), SORT_KEYS[sort.key], sort.dir)
-  }, [data, sort])
+    const rows = data.stocks.filter((s) => !s.etp && (!closeAtHigh || (s.high > 0 && s.close >= s.high)))
+    return sortRows(rows, SORT_KEYS[sort.key], sort.dir)
+  }, [data, sort, closeAtHigh])
 
   const load = useCallback(async (d, rise, amount, change) => {
     setLoading(true)
@@ -157,6 +161,10 @@ export default function BigCandlePage() {
         <button type="button" className="ghost" disabled={loading} onClick={() => submit('')}>
           최근 거래일
         </button>
+        <label className="check-label" title="조회일 종가(장중이면 현재가)가 고가와 같은 종목만 표시">
+          <input type="checkbox" checked={closeAtHigh} onChange={(e) => setCloseAtHigh(e.target.checked)} />
+          {live ? '현재가' : '종가'} = 고가
+        </label>
       </form>
 
       {data && (
@@ -170,6 +178,7 @@ export default function BigCandlePage() {
             거래대금 <strong>{formatEok(data.min_amount)}</strong> 이상 양봉,
             시가 대비 <strong>+{Number(data.min_rise_pct).toFixed(2)}%</strong> 이상,
             전일 대비 <strong>{signedPct(Number(data.min_change_pct ?? 0))}</strong> 이상
+            {closeAtHigh && <>, <strong>{priceLabel} = 고가</strong></>}
           </span>
           <span className="sum-count">
             {stocks.length}종목

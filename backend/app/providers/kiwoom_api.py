@@ -441,7 +441,7 @@ def fetch_big_candles(token: str, min_amount_krw: int,
 
     반환: ``{"scanned": 거래대금 기준 이상 종목 수, "stocks": [...]}``.
     ``None``은 호출 실패, ``stocks``가 비면 정상 응답이지만 해당 종목이 없음.
-    종목 dict: code, name, open, price(현재가), change_pct(전일대비 %),
+    종목 dict: code, name, open, high(고가), price(현재가), change_pct(전일대비 %),
     volume, amount(원).
     """
     min_mil = min_amount_krw / 1_000_000   # ka10032 거래대금 단위: 백만원
@@ -494,6 +494,7 @@ def fetch_big_candles(token: str, min_amount_krw: int,
             "code": code,
             "name": str(r.get("stk_nm") or row.get("stk_nm") or "").strip(),
             "open": open_,
+            "high": parse_int(row.get("high_pric")),
             "price": price,
             "change_pct": _signed(row.get("flu_rt")),
             "volume": parse_int(r.get("now_trde_qty")),

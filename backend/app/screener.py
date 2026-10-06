@@ -454,7 +454,7 @@ def screen_big_candles(
             continue
         rows.append(BigCandleStock(
             code=q.code, name=q.name, market=q.market,
-            open=q.open, close=q.close, rise_pct=rise,
+            open=q.open, close=q.close, high=q.high, rise_pct=rise,
             change_pct=change,
             volume=q.volume, amount=q.amount, market_cap=q.market_cap,
         ))
@@ -516,7 +516,7 @@ def screen_current_big_candles(
             code=code,
             name=str(item.get("name") or (old.name if old else "")),
             market=old.market if old else "",
-            open=open_, close=price, rise_pct=rise,
+            open=open_, close=price, high=int(item.get("high") or 0), rise_pct=rise,
             change_pct=round(float(change), 2) if change is not None else None,
             volume=int(item.get("volume") or 0), amount=amount,
             market_cap=old.listed_shares * price if old else 0,

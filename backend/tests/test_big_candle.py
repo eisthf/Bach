@@ -36,9 +36,9 @@ def ranked(code, name, amount_mil, qty="1000"):
             "now_trde_qty": qty}
 
 
-def rising(code, open_, cur, pre, flu="+1.00"):
+def rising(code, open_, cur, pre, flu="+1.00", high=None):
     return {"stk_cd": code, "stk_nm": "", "open_pric": open_, "cur_prc": cur,
-            "open_pric_pre": pre, "flu_rt": flu}
+            "high_pric": high if high is not None else cur, "open_pric_pre": pre, "flu_rt": flu}
 
 
 def test_fetch_big_candles_joins_amount_with_open(monkeypatch):
@@ -61,7 +61,7 @@ def test_fetch_big_candles_joins_amount_with_open(monkeypatch):
         assert api == "ka10028"
         assert body["trde_prica_cnd"] == "1000" and body["flu_cnd"] == "1"
         return Resp({"return_code": 0, "open_pric_pre_flu_rt": [
-            rising("000001", "+10000", "+11000", "+10.00", "+12.30"),
+            rising("000001", "+10000", "+11000", "+10.00", "+12.30", high="+11500"),
             rising("000003", "-5000", "+5050", "+1.00", "-0.50"),
             rising("000004", "+100", "+120", "+20.00"),
             rising("000009", "+100", "+100", "0.00"),
@@ -71,9 +71,9 @@ def test_fetch_big_candles_joins_amount_with_open(monkeypatch):
     got = kw.fetch_big_candles("t", 150 * EOK)
     assert got["scanned"] == 3  # 대형양봉·대형음봉·경계양봉 (기준미달 제외)
     assert got["stocks"] == [
-        {"code": "000001", "name": "대형양봉", "open": 10000, "price": 11000,
+        {"code": "000001", "name": "대형양봉", "open": 10000, "high": 11500, "price": 11000,
          "change_pct": 12.3, "volume": 123, "amount": 50_000 * 1_000_000},
-        {"code": "000003", "name": "경계양봉", "open": 5000, "price": 5050,
+        {"code": "000003", "name": "경계양봉", "open": 5000, "high": 5050, "price": 5050,
          "change_pct": -0.5, "volume": 1000, "amount": 15_000 * 1_000_000},
     ]
     # ka10032는 기준 미만이 보인 페이지에서 멈춘다(2페이지), ka10028은 1페이지.
@@ -346,3 +346,18 @@ def test_screen_big_candles_rejects_out_of_range_change():
     with pytest.raises(ScreenerError):
         screen_big_candles("2026-09-21", 0, 150 * EOK, fetch=fetcher({}), source="krx",
                            min_change_pct=31)
+
+
+def test_big_candles_carry_high_for_close_at_high_filter():
+    """'종가=고가' 화면 필터용 고가가 KRX·키움 경로 모두 실린다(모르면 0)."""
+    get = fetcher({"20260921": [q("A", 1000, 1100, 200 * EOK)]})
+    res = screen_big_candles("2026-09-21", 0, 150 * EOK, fetch=get, source="krx",
+                             min_change_pct=-30)
+    assert res.stocks[0].high == 1100
+    current = {"scanned": 2, "stocks": [
+        {"code": "A", "open": 1000, "high": 1150, "price": 1100, "amount": 200 * EOK},
+        {"code": "B", "open": 1000, "price": 1100, "amount": 200 * EOK},
+    ]}
+    res = screen_current_big_candles(current, 0, 150 * EOK, closed=True, fetch=fetcher({}),
+                                     today=date(2026, 9, 22))
+    assert {s.code: s.high for s in res.stocks} == {"A": 1150, "B": 0}
