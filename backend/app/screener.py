@@ -393,7 +393,10 @@ def add_after_hours_drops(
 # 거래대금 상위 양봉
 #
 # 거래대금이 ``min_amount`` 이상이면서 종가(장중이면 현재가)가 시가보다 높은
-# '양봉'을 찾고, 시가 대비 상승률이 ``min_rise_pct`` 이상인 것만 남긴다.
+# '양봉'을 찾고, 시가 대비 상승률이 ``min_rise_pct`` 이상이면서 전일 대비 등락률이
+# ``min_change_pct`` 이상인 것만 남긴다. 전일 종가를 몰라 등락률을 판정할 수 없는
+# 종목(신규 상장 등)은 숨기지 않고 남긴다 — 화면에 '—'로 보이며, 거래대금이 큰
+# 상장 첫날 종목이 조용히 빠지는 편이 더 위험하다.
 # 오늘 장중·장후는 키움 당일 시세(현재가/종가), 과거일은 KRX 확정 일별 자료.
 # ---------------------------------------------------------------------------
 BIG_CANDLE_MIN_AMOUNT = 15_000_000_000   # 150억원
@@ -409,11 +412,13 @@ def _sort_big(rows: List[BigCandleStock]) -> List[BigCandleStock]:
     return rows
 
 
-def _check_big_args(min_rise_pct: float, min_amount: int) -> None:
+def _check_big_args(min_rise_pct: float, min_amount: int, min_change_pct: float = 0.0) -> None:
     if min_rise_pct < 0:
         raise ScreenerError("상승률 조건은 0% 이상이어야 합니다.")
     if min_amount <= 0:
         raise ScreenerError("거래대금 조건은 0보다 커야 합니다.")
+    if not -30 <= min_change_pct <= 30:
+        raise ScreenerError("전일 대비 조건은 -30% ~ +30% 사이여야 합니다.")
 
 
 def screen_big_candles(
@@ -422,9 +427,10 @@ def screen_big_candles(
     min_amount: int = BIG_CANDLE_MIN_AMOUNT,
     fetch: Optional[Fetch] = None,
     source: Optional[str] = None,
+    min_change_pct: float = 0.0,
 ) -> BigCandleResult:
     """확정 일별 자료(KRX/mock)로 D일 거래대금 상위 양봉을 찾는다(종가 기준)."""
-    _check_big_args(min_rise_pct, min_amount)
+    _check_big_args(min_rise_pct, min_amount, min_change_pct)
     src = source or source_name()
     get = fetch or _fetch_for(src)
     d, quotes = _quotes_on(date, src, get)
@@ -443,10 +449,13 @@ def screen_big_candles(
         if rise < min_rise_pct:
             continue
         base = prev_close.get(q.code, 0)
+        change = round((q.close - base) / base * 100, 2) if base > 0 else None
+        if change is not None and change < min_change_pct:
+            continue
         rows.append(BigCandleStock(
             code=q.code, name=q.name, market=q.market,
             open=q.open, close=q.close, rise_pct=rise,
-            change_pct=round((q.close - base) / base * 100, 2) if base > 0 else None,
+            change_pct=change,
             volume=q.volume, amount=q.amount, market_cap=q.market_cap,
         ))
     logger.info("거래대금 양봉 스크리닝 %s: %d/%d 종목 [%s]",
@@ -457,7 +466,7 @@ def screen_big_candles(
                   "KRX 자료는 영업일 기준 다음 날 오전 8시에 갱신됩니다.")
     return BigCandleResult(
         date=_iso(d), min_rise_pct=min_rise_pct, min_amount=min_amount,
-        source=src, closed=True, scanned=len(heavy), stocks=_sort_big(rows),
+        min_change_pct=min_change_pct, source=src, closed=True, scanned=len(heavy), stocks=_sort_big(rows),
         notice=notice,
     )
 
@@ -471,13 +480,14 @@ def screen_current_big_candles(
     captured_at: str = "",
     fetch: Optional[Fetch] = None,
     today: Optional[_date] = None,
+    min_change_pct: float = 0.0,
 ) -> BigCandleResult:
     """키움 당일 스냅샷(현재가 또는 장후 종가) 기준 거래대금 상위 양봉.
 
     시장 구분·시가총액은 KRX 직전 거래일 자료로 보완한다. KRX 키가 없거나
     조회가 실패해도 목록 자체는 보여준다(보완 필드만 빈 값).
     """
-    _check_big_args(min_rise_pct, min_amount)
+    _check_big_args(min_rise_pct, min_amount, min_change_pct)
     d = today or now_kst().date()
     metadata: dict = {}
     if fetch is not None or configured():
@@ -500,6 +510,8 @@ def screen_current_big_candles(
             continue
         old = metadata.get(code)
         change = item.get("change_pct")
+        if change is not None and round(float(change), 2) < min_change_pct:
+            continue
         rows.append(BigCandleStock(
             code=code,
             name=str(item.get("name") or (old.name if old else "")),
@@ -514,7 +526,7 @@ def screen_current_big_candles(
                 _iso(d), len(rows), int(current.get("scanned") or 0))
     return BigCandleResult(
         date=_iso(d), min_rise_pct=min_rise_pct, min_amount=min_amount,
-        source="kiwoom", snapshot=True, closed=closed, captured_at=captured_at,
+        min_change_pct=min_change_pct, source="kiwoom", snapshot=True, closed=closed, captured_at=captured_at,
         etp_known=bool(current.get("etp_known", False)),
         scanned=int(current.get("scanned") or 0), stocks=_sort_big(rows),
     )

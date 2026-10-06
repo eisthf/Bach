@@ -282,15 +282,17 @@ async def test_big_candle_routing(monkeypatch, at, requested, use_live, closed):
     monkeypatch.setattr(main, "screen_current_big_candles", current)
     monkeypatch.setattr(main, "screen_big_candles", historical)
 
-    result = await main.screener_big_candle(date=requested, min_rise_pct=1.5, min_amount_eok=150)
+    result = await main.screener_big_candle(date=requested, min_rise_pct=1.5, min_amount_eok=150,
+                                            min_change_pct=-2.0)
 
     assert result == ("current" if use_live else "historical")
     if use_live:
         live.assert_called_once_with(150 * EOK)
         assert current.call_args.kwargs["closed"] is closed
+        assert current.call_args.kwargs["min_change_pct"] == -2.0
     else:
         live.assert_not_called()
-        historical.assert_called_once_with(requested, 1.5, 150 * EOK)
+        historical.assert_called_once_with(requested, 1.5, 150 * EOK, min_change_pct=-2.0)
 
 
 async def test_big_candle_live_failure_is_502(monkeypatch):
@@ -301,5 +303,46 @@ async def test_big_candle_live_failure_is_502(monkeypatch):
             current_big_candles=Mock(return_value=None)))},
     ))
     with pytest.raises(main.HTTPException) as e:
-        await main.screener_big_candle(date=None, min_rise_pct=0, min_amount_eok=150)
+        await main.screener_big_candle(date=None, min_rise_pct=0, min_amount_eok=150,
+                                       min_change_pct=0)
     assert e.value.status_code == 502
+
+
+# ---------------------------------------------------------------------------
+# 전일 대비 등락률 조건
+# ---------------------------------------------------------------------------
+def test_screen_big_candles_min_change_filters_and_keeps_unknown():
+    """전일 대비 ≥ 기준만 남긴다(경계 포함). 전일 종가를 모르는 종목은 숨기지 않는다."""
+    get = fetcher({
+        "20260918": [q("A", 1, 1000, 0), q("B", 1, 1000, 0), q("C", 1, 1000, 0)],
+        "20260921": [q("A", 900, 950, 150 * EOK),     # 전일 대비 -5% (양봉)
+                     q("B", 1000, 1030, 150 * EOK),   # +3%
+                     q("C", 1000, 1029, 150 * EOK),   # +2.9%
+                     q("N", 1000, 1100, 150 * EOK)],  # 신규 상장: 전일 종가 없음
+    })
+    res = screen_big_candles("2026-09-21", 0, 150 * EOK, fetch=get, source="krx",
+                             min_change_pct=3.0)
+    assert sorted(s.code for s in res.stocks) == ["B", "N"]
+    assert res.min_change_pct == 3.0
+    # 기본 0%: 전일 대비 하락한 양봉(A)은 빠진다. 음수 기준이면 들어온다.
+    assert "A" not in [s.code for s in screen_big_candles(
+        "2026-09-21", 0, 150 * EOK, fetch=get, source="krx").stocks]
+    assert "A" in [s.code for s in screen_big_candles(
+        "2026-09-21", 0, 150 * EOK, fetch=get, source="krx", min_change_pct=-5.0).stocks]
+
+
+def test_current_big_candles_min_change():
+    current = {"scanned": 3, "stocks": [
+        {"code": "A", "open": 1000, "price": 1100, "amount": 200 * EOK, "change_pct": -1.0},
+        {"code": "B", "open": 1000, "price": 1100, "amount": 200 * EOK, "change_pct": 4.0},
+        {"code": "C", "open": 1000, "price": 1100, "amount": 200 * EOK},
+    ]}
+    res = screen_current_big_candles(current, 0, 150 * EOK, closed=True, fetch=fetcher({}),
+                                     today=date(2026, 9, 22), min_change_pct=0)
+    assert sorted(s.code for s in res.stocks) == ["B", "C"]
+
+
+def test_screen_big_candles_rejects_out_of_range_change():
+    with pytest.raises(ScreenerError):
+        screen_big_candles("2026-09-21", 0, 150 * EOK, fetch=fetcher({}), source="krx",
+                           min_change_pct=31)

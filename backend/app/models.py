@@ -230,6 +230,7 @@ class BigCandleStock(BaseModel):
 class BigCandleResult(BaseModel):
     date: str                        # 조회일 (YYYY-MM-DD)
     min_rise_pct: float              # 시가 대비 최소 상승률(%)
+    min_change_pct: float = 0.0      # 전일 대비 최소 등락률(%). 음수 가능
     min_amount: int                  # 최소 거래대금(원)
     source: str                      # "kiwoom"=당일 | "krx"=확정 일별 | "mock"=데모
     snapshot: bool = False           # True면 키움 당일 시세 스냅샷

@@ -554,8 +554,10 @@ async def screener_big_candle(
     min_rise_pct: float = Query(0.0, ge=0, le=100, description="시가 대비 최소 상승률(%)"),
     min_amount_eok: int = Query(BIG_CANDLE_MIN_AMOUNT // 100_000_000, ge=1, le=1_000_000,
                                 description="최소 거래대금(억원)"),
+    min_change_pct: float = Query(0.0, ge=-30, le=30, description="전일 대비 최소 등락률(%)"),
 ):
-    """거래대금 ≥ 기준이면서 양봉(현재가/종가 > 시가)이고 시가 대비 상승률 ≥ 기준인 종목.
+    """거래대금 ≥ 기준이면서 양봉(현재가/종가 > 시가)이고 시가 대비 상승률 ≥ 기준,
+    전일 대비 등락률 ≥ 기준인 종목.
 
     오늘 세션이면 실전 키움 계좌의 당일 시세를 쓴다 — 장중엔 현재가, 장 마감
     후엔 종가 기준이다. 과거일(또는 키움 계좌가 없을 때)은 KRX 확정 일별 자료.
@@ -576,9 +578,10 @@ async def screener_big_candle(
                 screen_current_big_candles, current, min_rise_pct, min_amount,
                 closed=now.time() >= REGULAR_CLOSE,
                 captured_at=now.isoformat(timespec="seconds"),
-                today=session_date,
+                today=session_date, min_change_pct=min_change_pct,
             )
-        return await asyncio.to_thread(screen_big_candles, date, min_rise_pct, min_amount)
+        return await asyncio.to_thread(screen_big_candles, date, min_rise_pct, min_amount,
+                                       min_change_pct=min_change_pct)
     except DataPending as e:
         raise HTTPException(409, {"code": "DATA_PENDING", "message": str(e),
                                   "date": e.date, "available_after": e.available_after})

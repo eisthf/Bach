@@ -1,6 +1,6 @@
 // 거래대금 상위 양봉 페이지.
 // 조회 시점의 거래대금이 기준(기본 150억) 이상이면서 양봉(현재가/종가 > 시가)이고,
-// 시가 대비 상승률이 지정값 이상인 종목을 표로 보여준다.
+// 시가 대비 상승률과 전일 대비 등락률이 각각 지정값 이상인 종목을 표로 보여준다.
 // - 오늘 장중: 키움 당일 시세의 '현재가' 기준 (조회 시각의 스냅샷)
 // - 오늘 장 마감 후: 키움 당일 시세의 '종가' 기준
 // - 과거일: KRX 확정 일별 자료의 종가 기준
@@ -12,6 +12,7 @@ import SortHeader, { sortRows, useSort } from '../components/SortHeader'
 import { ROUTES, navigate } from '../router'
 
 const RISE_KEY = 'bach.bigCandle.minRise'
+const CHANGE_KEY = 'bach.bigCandle.minChange'
 const AMOUNT_KEY = 'bach.bigCandle.minAmountEok'
 const EXCLUDE_ETP_KEY = 'bach.bigCandle.excludeEtp'
 
@@ -51,6 +52,7 @@ const SORT_KEYS = {
 export default function BigCandlePage() {
   const [date, setDate] = useState('')        // '' = 가장 최근 거래일(서버가 결정)
   const [minRise, setMinRise] = useState(() => loadNum(RISE_KEY, 0))
+  const [minChange, setMinChange] = useState(() => loadNum(CHANGE_KEY, 0))
   const [minAmount, setMinAmount] = useState(() => loadNum(AMOUNT_KEY, 150))
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -70,12 +72,12 @@ export default function BigCandlePage() {
     return sortRows(rows, SORT_KEYS[sort.key], sort.dir)
   }, [data, sort, excludeEtp])
 
-  const load = useCallback(async (d, rise, amount) => {
+  const load = useCallback(async (d, rise, amount, change) => {
     setLoading(true)
     setSelectedStock(null)
     setError(null)
     try {
-      const res = await api.bigCandle(d, rise, amount)
+      const res = await api.bigCandle(d, rise, amount, change)
       setData(res)
       setDate(res.date)   // 서버가 고른 거래일을 입력칸에 반영
     } catch (e) {
@@ -89,16 +91,19 @@ export default function BigCandlePage() {
 
   // 최초 1회만 저장된 조건으로 조회한다(입력 중 값 변경마다 조회하지 않음).
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { load('', minRise, minAmount) }, [load])
+  useEffect(() => { load('', minRise, minAmount, minChange) }, [load])
 
   const submit = (d) => {
     const rise = Math.max(0, Number(minRise) || 0)
     const amount = Math.max(1, Math.round(Number(minAmount) || 150))
+    const change = Math.min(30, Math.max(-30, Number(minChange) || 0))
     setMinRise(rise)
     setMinAmount(amount)
+    setMinChange(change)
     saveNum(RISE_KEY, rise)
     saveNum(AMOUNT_KEY, amount)
-    load(d, rise, amount)
+    saveNum(CHANGE_KEY, change)
+    load(d, rise, amount, change)
   }
 
   const onSubmit = (e) => {
@@ -127,6 +132,20 @@ export default function BigCandlePage() {
           aria-describedby="bc-rise-unit"
         />
         <span id="bc-rise-unit">% 이상</span>
+        <label htmlFor="bc-change">전일 대비</label>
+        <input
+          id="bc-change"
+          className="num-input"
+          type="number"
+          min="-30"
+          max="30"
+          step="any"
+          value={minChange}
+          onChange={(e) => setMinChange(e.target.value)}
+          aria-describedby="bc-change-unit"
+          title="전일 종가 대비 등락률. 음수도 가능(예: -5 → 전일 대비 -5% 이상)"
+        />
+        <span id="bc-change-unit">% 이상</span>
         <label htmlFor="bc-amount">거래대금</label>
         <input
           id="bc-amount"
@@ -160,7 +179,8 @@ export default function BigCandlePage() {
               : <>확정 <strong>종가</strong> 기준</>}
             <span className="sum-sep">·</span>
             거래대금 <strong>{formatEok(data.min_amount)}</strong> 이상 양봉,
-            시가 대비 <strong>+{Number(data.min_rise_pct).toFixed(2)}%</strong> 이상
+            시가 대비 <strong>+{Number(data.min_rise_pct).toFixed(2)}%</strong> 이상,
+            전일 대비 <strong>{signedPct(Number(data.min_change_pct ?? 0))}</strong> 이상
           </span>
           <span className="sum-count">
             {stocks.length}종목

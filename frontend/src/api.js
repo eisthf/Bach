@@ -37,8 +37,8 @@ export const api = {
   upperLimit: (date) =>
     req(`/api/screener/upper-limit${date ? `?date=${enc(date)}` : ''}`),
   // 거래대금 ≥ 기준 양봉. 오늘은 키움 당일 시세(장중 현재가·장후 종가), 과거는 KRX.
-  bigCandle: (date, minRisePct = 0, minAmountEok = 150) =>
-    req(`/api/screener/big-candle?min_rise_pct=${enc(minRisePct)}&min_amount_eok=${enc(minAmountEok)}${date ? `&date=${enc(date)}` : ''}`),
+  bigCandle: (date, minRisePct = 0, minAmountEok = 150, minChangePct = 0) =>
+    req(`/api/screener/big-candle?min_rise_pct=${enc(minRisePct)}&min_amount_eok=${enc(minAmountEok)}&min_change_pct=${enc(minChangePct)}${date ? `&date=${enc(date)}` : ''}`),
 
   // 계좌 스코프 (a = account id)
   listStocks: (a) => req(`/api/${enc(a)}/stocks`),
