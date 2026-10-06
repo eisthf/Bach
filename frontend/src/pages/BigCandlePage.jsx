@@ -14,7 +14,6 @@ import { ROUTES, navigate } from '../router'
 const RISE_KEY = 'bach.bigCandle.minRise'
 const CHANGE_KEY = 'bach.bigCandle.minChange'
 const AMOUNT_KEY = 'bach.bigCandle.minAmountEok'
-const EXCLUDE_ETP_KEY = 'bach.bigCandle.excludeEtp'
 
 const loadNum = (key, fallback) => {
   try {
@@ -59,18 +58,12 @@ export default function BigCandlePage() {
   const [error, setError] = useState(null)
   const [selectedStock, setSelectedStock] = useState(null)
   const [sort, onSort] = useSort('amount')
-  // 저가 ETF·ETN이 거래량 상위를 차지해 개별 종목이 묻힌다. 기본은 제외(화면 필터).
-  const [excludeEtp, setExcludeEtp] = useState(() => loadNum(EXCLUDE_ETP_KEY, 1) !== 0)
-  const toggleEtp = (on) => {
-    setExcludeEtp(on)
-    saveNum(EXCLUDE_ETP_KEY, on ? 1 : 0)
-  }
+  // 저가 ETF·ETN이 거래량 상위를 차지해 개별 종목이 묻힌다. 항상 제외한다(화면 필터).
   const etpCount = useMemo(() => (data ? data.stocks.filter((s) => s.etp).length : 0), [data])
   const stocks = useMemo(() => {
     if (!data) return []
-    const rows = excludeEtp ? data.stocks.filter((s) => !s.etp) : data.stocks
-    return sortRows(rows, SORT_KEYS[sort.key], sort.dir)
-  }, [data, sort, excludeEtp])
+    return sortRows(data.stocks.filter((s) => !s.etp), SORT_KEYS[sort.key], sort.dir)
+  }, [data, sort])
 
   const load = useCallback(async (d, rise, amount, change) => {
     setLoading(true)
@@ -164,10 +157,6 @@ export default function BigCandlePage() {
         <button type="button" className="ghost" disabled={loading} onClick={() => submit('')}>
           최근 거래일
         </button>
-        <label className="check-label">
-          <input type="checkbox" checked={excludeEtp} onChange={(e) => toggleEtp(e.target.checked)} />
-          ETF·ETN 제외
-        </label>
       </form>
 
       {data && (
@@ -184,7 +173,7 @@ export default function BigCandlePage() {
           </span>
           <span className="sum-count">
             {stocks.length}종목
-            {excludeEtp && etpCount > 0 && <span className="muted"> (ETF·ETN {etpCount}종목 제외)</span>}
+            {etpCount > 0 && <span className="muted"> (ETF·ETN {etpCount}종목 제외)</span>}
             <span className="muted"> / 거래대금 기준 {won(data.scanned)}종목</span>
           </span>
           {data.source === 'kiwoom' && (
@@ -197,7 +186,7 @@ export default function BigCandlePage() {
       )}
 
       {data?.notice && <div className="screener-notice" role="status">{data.notice}</div>}
-      {data && excludeEtp && data.etp_known === false && (
+      {data && data.etp_known === false && (
         <div className="screener-notice" role="status">
           ETF·ETN 목록을 불러오지 못해 이번 결과에는 ETF·ETN 제외가 적용되지 않았습니다. 잠시 후 다시 조회하세요.
         </div>
