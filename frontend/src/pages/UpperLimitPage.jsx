@@ -5,7 +5,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
 import ScreenerChart from '../components/ScreenerChart'
-import SortHeader, { sortDesc } from '../components/SortHeader'
+import SortHeader, { sortRows, useSort } from '../components/SortHeader'
 import { ROUTES, navigate } from '../router'
 
 // 시가총액·거래대금은 원 단위 그대로 보면 자릿수를 셀 수 없다. 조/억으로 접는다.
@@ -34,10 +34,10 @@ export default function UpperLimitPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [selectedStock, setSelectedStock] = useState(null)
-  const [sortKey, setSortKey] = useState('volume')
+  const [sort, onSort] = useSort('volume')
   // 정규장 상한가·시간외 이탈 종목은 본 목록과 따로 보여준다.
-  const stocks = useMemo(() => (data ? sortDesc(data.stocks.filter((s) => !s.after_hours_drop), SORT_KEYS[sortKey]) : []), [data, sortKey])
-  const drops = useMemo(() => (data ? sortDesc(data.stocks.filter((s) => s.after_hours_drop), SORT_KEYS[sortKey]) : []), [data, sortKey])
+  const stocks = useMemo(() => (data ? sortRows(data.stocks.filter((s) => !s.after_hours_drop), SORT_KEYS[sort.key], sort.dir) : []), [data, sort])
+  const drops = useMemo(() => (data ? sortRows(data.stocks.filter((s) => s.after_hours_drop), SORT_KEYS[sort.key], sort.dir) : []), [data, sort])
 
   const load = useCallback(async (d) => {
     setLoading(true)
@@ -73,15 +73,15 @@ export default function UpperLimitPage() {
             <th>종목코드</th>
             <th>종목명</th>
             <th>시장</th>
-            <SortHeader sortKey="market_cap" active={sortKey} onSort={setSortKey} title="시가총액 큰 순으로 정렬">
+            <SortHeader sortKey="market_cap" sort={sort} onSort={onSort} title="시가총액">
               시가총액
             </SortHeader>
-            <SortHeader sortKey="volume" active={sortKey} onSort={setSortKey}
-              title={`${data.snapshot ? '현재까지 누적 거래량' : '조회일 거래량'} — 큰 순으로 정렬`}>
+            <SortHeader sortKey="volume" sort={sort} onSort={onSort}
+              title={`${data.snapshot ? '현재까지 누적 거래량' : '조회일 거래량'}`}>
               거래량{data.snapshot ? ' (누적)' : ''}
             </SortHeader>
-            <SortHeader sortKey="amount" active={sortKey} onSort={setSortKey}
-              title={`${data.snapshot ? '현재까지 누적 거래대금' : '조회일 거래대금'} — 큰 순으로 정렬`}>
+            <SortHeader sortKey="amount" sort={sort} onSort={onSort}
+              title={`${data.snapshot ? '현재까지 누적 거래대금' : '조회일 거래대금'}`}>
               거래대금
             </SortHeader>
             <th className="col-num">{priceLabel}</th>

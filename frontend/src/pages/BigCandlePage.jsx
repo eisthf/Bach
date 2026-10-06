@@ -8,7 +8,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
 import ScreenerChart from '../components/ScreenerChart'
-import SortHeader, { sortDesc } from '../components/SortHeader'
+import SortHeader, { sortRows, useSort } from '../components/SortHeader'
 import { ROUTES, navigate } from '../router'
 
 const RISE_KEY = 'bach.bigCandle.minRise'
@@ -56,7 +56,7 @@ export default function BigCandlePage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [selectedStock, setSelectedStock] = useState(null)
-  const [sortKey, setSortKey] = useState('amount')
+  const [sort, onSort] = useSort('amount')
   // 저가 ETF·ETN이 거래량 상위를 차지해 개별 종목이 묻힌다. 기본은 제외(화면 필터).
   const [excludeEtp, setExcludeEtp] = useState(() => loadNum(EXCLUDE_ETP_KEY, 1) !== 0)
   const toggleEtp = (on) => {
@@ -67,8 +67,8 @@ export default function BigCandlePage() {
   const stocks = useMemo(() => {
     if (!data) return []
     const rows = excludeEtp ? data.stocks.filter((s) => !s.etp) : data.stocks
-    return sortDesc(rows, SORT_KEYS[sortKey])
-  }, [data, sortKey, excludeEtp])
+    return sortRows(rows, SORT_KEYS[sort.key], sort.dir)
+  }, [data, sort, excludeEtp])
 
   const load = useCallback(async (d, rise, amount) => {
     setLoading(true)
@@ -208,15 +208,15 @@ export default function BigCandlePage() {
                 <th>종목코드</th>
                 <th>종목명</th>
                 <th>시장</th>
-                <SortHeader sortKey="market_cap" active={sortKey} onSort={setSortKey} title="시가총액 큰 순으로 정렬">
+                <SortHeader sortKey="market_cap" sort={sort} onSort={onSort} title="시가총액">
                   시가총액
                 </SortHeader>
-                <SortHeader sortKey="volume" active={sortKey} onSort={setSortKey}
-                  title={`${live ? '현재까지 누적 거래량' : '당일 거래량'} — 큰 순으로 정렬`}>
+                <SortHeader sortKey="volume" sort={sort} onSort={onSort}
+                  title={`${live ? '현재까지 누적 거래량' : '당일 거래량'}`}>
                   거래량{live ? ' (누적)' : ''}
                 </SortHeader>
-                <SortHeader sortKey="amount" active={sortKey} onSort={setSortKey}
-                  title={`${live ? '현재까지 누적 거래대금' : '당일 거래대금'} — 큰 순으로 정렬`}>
+                <SortHeader sortKey="amount" sort={sort} onSort={onSort}
+                  title={`${live ? '현재까지 누적 거래대금' : '당일 거래대금'}`}>
                   거래대금{live ? ' (누적)' : ''}
                 </SortHeader>
                 <th className="col-num">시가</th>
