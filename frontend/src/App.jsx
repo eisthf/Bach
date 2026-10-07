@@ -12,6 +12,10 @@ import BigCandlePage from './pages/BigCandlePage'
 import CloseTradePage from './pages/CloseTradePage'
 import BrokerConnection from './components/BrokerConnection'
 
+// 종목 칩의 매매 상태 표시(색은 StateButton과 같은 체계: 수동=파랑, 모니터=주황, 자동=초록).
+const STATE_SHORT = { MANUAL_TRADING: '수동', MONITOR: '감시', AUTO_TRADING: '자동' }
+const STATE_LABEL = { MANUAL_TRADING: '수동매매', MONITOR: '모니터', AUTO_TRADING: '자동매매' }
+
 // 한 계좌(모의/실전)의 종목 입력 + 칩바 + 패널 목록. 실전(danger)은 위험 톤.
 function AccountColumn({ account }) {
   const { stocks, order, hidden, compact, actions } = useStore()
@@ -81,8 +85,13 @@ function AccountColumn({ account }) {
                 key={c}
                 className={`stock-chip ${off ? 'off' : 'on'}`}
                 onClick={() => actions.toggleVisible(acc, c)}
-                title={off ? '클릭하면 차트 표시' : '클릭하면 차트 숨김'}
+                title={`${STATE_LABEL[s.state] || ''} · ${off ? '클릭하면 차트 표시' : '클릭하면 차트 숨김'}`}
               >
+                {s.state && (
+                  <span className={`chip-state chip-state-${s.state.toLowerCase()}`}>
+                    {STATE_SHORT[s.state] || s.state}
+                  </span>
+                )}
                 {s.name || c}
               </button>
             )

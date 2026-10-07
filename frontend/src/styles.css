@@ -140,6 +140,14 @@ input:focus { outline: none; border-color: var(--accent); }
 .stock-chip.on { background: var(--accent); color: #fff; }
 .stock-chip.off { background: #f0f0f0; color: var(--muted, #999); border-color: var(--border); }
 .stock-chip:hover { filter: brightness(0.97); }
+/* 칩 안의 매매 상태 꼬리표. 표시(on)·숨김(off) 어느 쪽이든 상태 색으로 구분된다. */
+.chip-state {
+  border-radius: 999px; padding: 1px 7px; font-size: 11px; font-weight: 700;
+  background: #fff; border: 1px solid currentColor;
+}
+.chip-state-manual_trading { color: var(--accent); }
+.chip-state-monitor { color: var(--amber); }
+.chip-state-auto_trading { color: #fff; background: var(--green); border-color: var(--green); }
 .code-input { width: 200px; }
 .name-input { width: 160px; }
 .add-btn {
