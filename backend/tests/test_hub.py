@@ -9,6 +9,8 @@ import time
 from app.models import Position, Tick, TradeState
 from app.strategy.ulc import Phase
 
+from conftest import plain_config
+
 
 def _slow_orders(hub, sec: float) -> None:
     """mock 브로커는 즉시 반환이라, 실주문(HTTP+rate-limit 대기)처럼 늦춘다."""
@@ -27,6 +29,7 @@ def _to_auto(hub, clock, code: str, name: str = ""):
     stock = hub.add_stock(code, name)
     if stock.task:
         stock.task.cancel()
+    stock.config = plain_config()
     stock.machine.state = TradeState.MONITOR
     clock.open()
     return stock

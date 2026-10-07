@@ -2,13 +2,15 @@
 from app.models import AutoConfig, Tick
 from app.strategy.ulc import Phase, UlcEngine
 
+from conftest import plain_config
+
 X, Z = 10_000, 10_600  # SC2. 1차만(예산 절반 23주) 사면 평단 10,600 → 손절선 10,070 > X
 
 
 def make(**cfg):
     logs, sells = [], []
     eng = UlcEngine(code="000001", x=X, z=Z, log=logs.append,
-                    config=AutoConfig(ulc_first_buy_only=True, **cfg))
+                    config=plain_config(ulc_first_buy_only=True, **cfg))
     eng.setup()
     return eng, logs, sells
 

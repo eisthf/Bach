@@ -62,7 +62,7 @@ class AutoConfig(BaseModel):
 
     상한가 따라잡기(upper_limit_chase) 전략 파라미터.
     """
-    max_buy_amount: int = Field(500_000, description="총 투자액(원), 분할매수로 배분")
+    max_buy_amount: int = Field(1_000_000, description="총 투자액(원), 분할매수로 배분")
 
     # 시나리오 경계
     ulc_p: float = Field(0.05, description="SC1/SC2 경계 갭 비율")
@@ -71,7 +71,7 @@ class AutoConfig(BaseModel):
 
     # 진입 필터
     ulc_w: float = Field(0.15, description="갭 상한(초과 시 SKIP)")
-    ulc_allow_lower_open: bool = Field(False, description="하락 시가도 SC1 진입 허용")
+    ulc_allow_lower_open: bool = Field(True, description="하락 시가도 SC1 진입 허용")
 
     # 손익 청산
     ulc_tp: float = Field(0.05, description="익절 비율(평단 대비)")
@@ -82,13 +82,13 @@ class AutoConfig(BaseModel):
         False, description="손절 조건 강화: 현재가 ≤ 손절선 이고 동시에 현재가 < 전일 종가(X)일 때만 손절")
 
     # 트레일링 스탑
-    ulc_trailing: bool = Field(False, description="트레일링 스탑 활성화")
+    ulc_trailing: bool = Field(True, description="트레일링 스탑 활성화")
     ulc_t: float = Field(0.02, description="trail_max 대비 하락 청산 비율")
     ulc_g: float = Field(0.15, description="평단 대비 보장 익절 비율")
 
     # 실행 모드
     ulc_first_buy_only: bool = Field(False, description="1차 매수만 실행")
-    ulc_first_buy_ask3: bool = Field(False, description="1차 매수를 매도 3호가 지정가로 주문")
+    ulc_first_buy_ask3: bool = Field(True, description="1차 매수를 매도 3호가 지정가로 주문")
     use_3min_bar_timing: bool = Field(
         False, description="완성된 3분봉 종가가 확정될 때만 매매 조건 평가")
 

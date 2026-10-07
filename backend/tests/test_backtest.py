@@ -6,6 +6,8 @@ import pytest
 from app.backtest import DayData, bar_prices, day_from_rows, load_day, minute_epoch, parse_case, replay
 from app.models import AutoConfig
 
+from conftest import plain_config
+
 DATE = "20260903"
 
 
@@ -30,7 +32,7 @@ async def test_sc2_split_buy_then_stop_loss():
         bar("0908", 6700, 6700, 6620, 6620),
         bar("0937", 8600, 8600, 8600, 8600),
     ])
-    r = await replay(day, AutoConfig(max_buy_amount=1_000_000))
+    r = await replay(day, plain_config(max_buy_amount=1_000_000))
     assert [(t.side, t.qty, t.price) for t in r.trades] == [
         ("buy", 69, 7190), ("buy", 73, 6790), ("sell", 142, 6620)]
     assert r.held == 0
@@ -40,21 +42,21 @@ async def test_sc2_split_buy_then_stop_loss():
 
 async def test_first_buy_ask3_fills_two_ticks_above():
     day = DayData("079650", DATE, x=6790, z=7190, bars=[bar("0900", 7190, 7190, 7190, 7190)])
-    r = await replay(day, AutoConfig(ulc_first_buy_ask3=True))
+    r = await replay(day, plain_config(ulc_first_buy_ask3=True))
     assert r.trades[0].price == 7210  # 7,190 + 2호가(10원)
     assert r.held == r.trades[0].qty and r.mark == r.held * 7190  # 미청산은 종가 평가
 
 
 async def test_gap_filter_skips_without_trades():
     day = DayData("079650", DATE, x=6790, z=7900, bars=[bar("0900", 7900, 7900, 7900, 7900)])
-    r = await replay(day, AutoConfig())
+    r = await replay(day, plain_config())
     assert r.trades == [] and any("SKIP" in line for line in r.logs)
 
 
 async def test_bars_after_regular_close_are_ignored():
     day = DayData("079650", DATE, x=6790, z=6800, bars=[
         bar("0900", 6800, 6800, 6800, 6800), bar("1600", 5000, 5000, 5000, 5000)])
-    r = await replay(day, AutoConfig(ulc_first_buy_only=True))
+    r = await replay(day, plain_config(ulc_first_buy_only=True))
     assert [t.side for t in r.trades] == ["buy"]
 
 

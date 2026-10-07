@@ -113,18 +113,18 @@ X는 전일 종가 REST API, Z는 검증된 정규장 체결 이벤트의 시가
 
 | 파라미터 | 기본값 | 의미 |
 |---|---|---|
-| `max_buy_amount` | 500,000원 | 총 투자액. 분할 차수에 배분 |
+| `max_buy_amount` | 1,000,000원 | 총 투자액. 분할 차수에 배분 |
 | `ulc_p` | 0.05 | SC1/SC2 경계 갭 비율 |
 | `ulc_p1` | 0.07 | SC2/SC3 경계 갭 비율 |
 | `ulc_q` | 0.05 | SC1 2차 매수가: X×(1−q) |
 | `ulc_w` | 0.15 | 진입 갭 상한(Z ≥ X×(1+w)면 SKIP) |
-| `ulc_allow_lower_open` | false | 하락 시가(Z<X)도 진입 허용 |
-| `ulc_first_buy_ask3` | false | 1차 매수를 현재 매도 3호가 지정가로 주문. 호가 조회 실패 시 시장가 대체 없음 |
+| `ulc_allow_lower_open` | true | 하락 시가(Z<X)도 진입 허용 |
+| `ulc_first_buy_ask3` | true | 1차 매수를 현재 매도 3호가 지정가로 주문. 호가 조회 실패 시 시장가 대체 없음 |
 | `ulc_tp` | 0.05 | 익절 비율(평단 대비) |
 | `ulc_sl` | 0.05 | 손절 비율(평단 대비) |
 | `ulc_manual_on_stop` | false | true면 분할 완료 후 손절선 도달 시 자동매도 없이 수동 인계 |
 | `ulc_stop_requires_below_prev_close` | false | true면 손절 조건을 `현재가 ≤ 평단×(1−sl)` **AND** `현재가 < X`로 강화. 손절선 아래라도 X 이상이면 보유. 트레일링 스탑·수동매매 자동손절에는 적용 안 됨 |
-| `ulc_trailing` | false | 익절 시 절반 매도 후 트레일링 |
+| `ulc_trailing` | true | 익절 시 절반 매도 후 트레일링 |
 | `ulc_t` | 0.02 | 트레일링 스탑: trail_max 대비 하락률 |
 | `ulc_g` | 0.15 | 트레일링 중 보장 익절 비율 |
 | `ulc_first_buy_only` | false | 1차 매수만 실행 |

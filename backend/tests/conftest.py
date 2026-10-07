@@ -57,6 +57,17 @@ def mock_hub(tmp_path, monkeypatch):
             stock.task.cancel()
 
 
+# 운영 기본값은 총 투자액 100만 원에 하락 시가 허용·트레일링·1차 매도 3호가 지정가가
+# 켜져 있다. 전략 단위 테스트는 50만 원·옵션을 끈 기본 경로를 전제로 쓰였으므로 그 값을
+# 명시적으로 쓴다.
+PLAIN = dict(max_buy_amount=500_000, ulc_allow_lower_open=False, ulc_trailing=False,
+             ulc_first_buy_ask3=False)
+
+
+def plain_config(**overrides) -> AutoConfig:
+    return AutoConfig(**{**PLAIN, **overrides})
+
+
 def make_engine(account=None, logs: list | None = None, *,
                 x: float = 10_000.0, z: float = 10_000.0) -> UlcEngine:
     """계좌 응답을 고정한 단독 엔진. account = (qty, avg) 또는 None."""
@@ -64,7 +75,7 @@ def make_engine(account=None, logs: list | None = None, *,
     async def position_fn():
         return account
 
-    eng = UlcEngine(code="005930", config=AutoConfig(), x=x, z=z,
+    eng = UlcEngine(code="005930", config=plain_config(), x=x, z=z,
                     log=(logs.append if logs is not None else (lambda m: None)),
                     position_fn=position_fn)
     eng.phase = Phase.ACCUMULATING
