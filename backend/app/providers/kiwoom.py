@@ -11,7 +11,7 @@ import logging
 import os
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from datetime import time as dtime
 from typing import AsyncIterator, Callable, Dict, List, Optional
 
@@ -60,12 +60,18 @@ OPEN_DIAG_START = dtime(8, 59, 30)
 OPEN_DIAG_END = dtime(9, 3)
 OPEN_DIAG_SAMPLES = 5  # 종목·일별로 원본 필드를 남길 탈락 틱 수
 OPEN_DIAG_FIELDS = ("10", "16", "15", "20", "290", "9081")
+# 체결시간이 PC 시각보다 이만큼(초)까지 앞서는 것은 PC 시계 오차로 보고 통과시킨다.
+# PC 시계가 1초만 늦어도 체결이 이어지는 종목은 모든 틱의 체결시간이 PC 시각보다
+# 앞서 시가 검증이 끝내 실패한다(2026-10-08 278650: 1.2초 늦음 → 1,625틱 전부 탈락,
+# 셋업 시간 초과). 장전 틱은 체결시간 09:00:00 이전·세션 구분(290)으로도 걸러진다.
+OPEN_CLOCK_TOLERANCE_SEC = 3
 
 
 def _open_rejections(v: dict, open_: float, now) -> list[str]:
     """0B 틱이 당일 KRX 정규장 시가로 검증되지 못한 사유. 빈 목록이면 통과."""
     reasons = []
     local = now.strftime("%H%M%S")
+    local_tolerant = (now + timedelta(seconds=OPEN_CLOCK_TOLERANCE_SEC)).strftime("%H%M%S")
     trade_time = str(v.get("20") or "")  # 체결시간 HHMMSS
     if open_ <= 0:
         reasons.append("open_zero")
@@ -78,7 +84,7 @@ def _open_rejections(v: dict, open_: float, now) -> list[str]:
     else:
         if trade_time < "090000":
             reasons.append("trade_time_before_open")
-        if trade_time > local:
+        if trade_time > local_tolerant:
             reasons.append("trade_time_ahead_of_local")
     if str(v.get("290")) != "2":
         reasons.append(f"session_{v.get('290')}")

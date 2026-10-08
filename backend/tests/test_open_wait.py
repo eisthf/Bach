@@ -38,7 +38,7 @@ def emit(provider, code="386380", **overrides):
     ("9081", "NXT", "exchange_NXT"),
     ("15", "0", "volume_zero"),
     ("16", "0", "open_zero"),
-    ("20", "090200", "trade_time_ahead_of_local"),  # PC 시계(09:01:00)가 체결시간보다 늦음
+    ("20", "090104", "trade_time_ahead_of_local"),  # PC 시계(09:01:00)보다 3초 넘게 앞섬
     ("20", "085959", "trade_time_before_open"),
     ("20", "9:0:1", "trade_time_invalid"),
 ])
@@ -142,3 +142,16 @@ async def test_setup_timeout_logs_open_diagnostics(provider, events, monkeypatch
     timeout = next(f for f in logged if f.get("event") == "auto_setup_timeout")
     assert timeout["missing"] == ["Z"]
     assert timeout["open_diag"]["rejected"] == {"session_1": 1}
+
+
+@pytest.mark.parametrize("trade_time,ok", [
+    ("090100", True),   # PC 시각과 같음
+    ("090103", True),   # 3초 앞섬 — PC 시계 오차 허용 범위
+    ("090104", False),  # 4초 앞섬 — 탈락
+])
+def test_trade_time_tolerates_pc_clock_lag(trade_time, ok):
+    """PC 시계가 조금 늦어도 시가 검증이 막히지 않는다(2026-10-08 278650: 1.2초 늦어 전부 탈락)."""
+    now = datetime(2026, 9, 8, 9, 1, tzinfo=KST)
+    values = {**VALID, "20": trade_time}
+    rejections = module._open_rejections(values, module.kw.parse_price(values["16"]), now)
+    assert (rejections == []) is ok
