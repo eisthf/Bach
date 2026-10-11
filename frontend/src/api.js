@@ -48,8 +48,9 @@ export const api = {
   importHeld: (a) => req(`/api/${enc(a)}/stocks/import-held`, { method: 'POST' }),
 
   // 일봉은 최근 60일 전체에 MA60을 그릴 수 있도록 59일의 계산 여유분을 더 받는다.
-  getBars: (a, code, interval, lookbackExtra = interval === 1440 ? 119 : 60, sessionOnly = false, includeToday = false, extended = false) =>
-    req(`/api/${enc(a)}/bars?code=${enc(code)}&interval=${interval}&lookback_extra=${lookbackExtra}${sessionOnly ? '&session_only=true' : ''}${includeToday ? '&include_today=true' : ''}${extended ? '&extended=true' : ''}`),
+  // anchor: 일봉에서 이 날짜(YYYY-MM-DD) 앞 20거래일부터 60거래일(스크리너 조회일).
+  getBars: (a, code, interval, lookbackExtra = interval === 1440 ? 119 : 60, sessionOnly = false, includeToday = false, extended = false, anchor = null) =>
+    req(`/api/${enc(a)}/bars?code=${enc(code)}&interval=${interval}&lookback_extra=${lookbackExtra}${sessionOnly ? '&session_only=true' : ''}${includeToday ? '&include_today=true' : ''}${extended ? '&extended=true' : ''}${anchor ? `&anchor=${enc(anchor)}` : ''}`),
 
   buy: (a, code, amount_krw) =>
     req(`/api/${enc(a)}/orders/buy`, { method: 'POST', body: JSON.stringify({ code, amount_krw }) }),

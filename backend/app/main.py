@@ -244,6 +244,12 @@ async def remove_close_trade(account: str, code: str):
 # ---------------------------------------------------------------------------
 # 봉 데이터
 # ---------------------------------------------------------------------------
+DAY_WINDOW = 60                 # 일봉 차트에 보여 주는 거래일 수
+DAY_ANCHOR_BEFORE = 20          # 조회일 앞에 함께 보여 주는 거래일 수(맥락)
+DAY_ANCHOR_WARMUP = 119         # 화면 첫 봉 앞에 붙이는 MA 계산용 일봉 수(프런트 일봉 기본 조회량과 같음)
+DAY_ANCHOR_MAX_LOOKBACK = 600   # 조회일 기준 일봉 조회 상한(약 2년 반)
+
+
 @app.get("/api/{account}/bars")
 def get_bars(
     account: str,
@@ -255,6 +261,9 @@ def get_bars(
     include_today: bool = False,
     # 분봉을 KRX+NXT 통합 시세로 받아 프리마켓(08:00)~애프터마켓(20:00) 봉까지 보여준다.
     extended: bool = False,
+    # 일봉 전용: 이 날짜(YYYY-MM-DD, 스크리너 조회일) 앞 20거래일부터 60거래일을 보여준다
+    # (조회일 이전 맥락 + 이후 전개). 없으면 최근 60거래일.
+    anchor: Optional[str] = None,
 ):
     if interval not in VALID_INTERVALS:
         raise HTTPException(400, f"interval must be one of {VALID_INTERVALS}")
@@ -262,6 +271,16 @@ def get_bars(
     # 장중에는 직전 '완료된' 하루를 고를 수 있도록 3분봉 1일분과
     # MA60 계산 여유분까지 받는다. 일반 매매 차트의 조회량은 유지한다.
     fetch_lookback = 200 if session_only and interval == 3 else lookback_extra
+    anchor_day = None
+    if anchor and interval == DAY_INTERVAL:
+        try:
+            anchor_day = datetime.strptime(anchor, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(400, "anchor must be YYYY-MM-DD") from None
+        # MA 계산분 + 조회일 앞 맥락 + 조회일부터 오늘까지(거래일 ≈ 달력일×5/7, 휴장 여유 포함).
+        elapsed = max(0, (now_kst().date() - anchor_day).days)
+        fetch_lookback = min(DAY_ANCHOR_MAX_LOOKBACK,
+                             DAY_ANCHOR_WARMUP + DAY_ANCHOR_BEFORE + elapsed * 5 // 7 + 15)
     extended = extended and interval != DAY_INTERVAL
     query_code = hub.data.integrated_code(code) if extended else code
     bars = hub.data.get_bars(query_code, interval, fetch_lookback)
@@ -305,9 +324,18 @@ def get_bars(
         else:
             bars = []
             day_start_index = 0
+    elif anchor_day and bars:
+        days = [datetime.fromtimestamp(b.time, timezone.utc).date() for b in bars]
+        first = next((i for i, d in enumerate(days) if d >= anchor_day), len(bars) - 1)
+        view = max(0, first - DAY_ANCHOR_BEFORE)
+        start = max(0, view - DAY_ANCHOR_WARMUP)
+        bars = bars[start:view + DAY_WINDOW]
+        view -= start
+        # 조회일 뒤 전개가 아직 짧으면(최근 조회일) 최근 60거래일을 보여준다 — 조회일은 그 안에 있다.
+        day_start_index = max(0, min(view, len(bars) - DAY_WINDOW))
     else:
         day_start_index = (
-            max(0, len(bars) - 60) if interval == DAY_INTERVAL else min(lookback_extra, len(bars))
+            max(0, len(bars) - DAY_WINDOW) if interval == DAY_INTERVAL else min(lookback_extra, len(bars))
         )
     return {
         "code": code,

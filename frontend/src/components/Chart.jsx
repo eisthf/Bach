@@ -8,7 +8,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { createChart, CrosshairMode } from 'lightweight-charts'
 import { api } from '../api'
 import { sma, lastSma, MA_LINES } from '../indicators'
-import { tradeMarkers, tradePoints } from '../tradeMarkers'
+import { ANCHOR_COLOR, anchorMarker, tradeMarkers, tradePoints } from '../tradeMarkers'
 import { TradeCrossPrimitive } from '../tradeCrossPrimitive'
 import { AmountStripePrimitive, amountStripeTimes } from '../amountStripePrimitive'
 
@@ -21,7 +21,11 @@ const volumePoint = (bar) => ({
   color: bar.close >= bar.open ? 'rgba(211, 47, 47, 0.35)' : 'rgba(21, 101, 192, 0.35)',
 })
 
-export default function Chart({ account, code, interval, tick, height = 360, sessionOnly = false, includeToday = false, extended = false, onSessionDate }) {
+// anchorDate: 일봉일 때 이 날짜(YYYY-MM-DD) 앞 20거래일부터 60거래일을 보여준다(스크리너 조회일).
+export default function Chart({ account, code, interval, tick, height = 360, sessionOnly = false, includeToday = false, extended = false, anchorDate = null, onSessionDate }) {
+  const anchor = interval === 1440 ? anchorDate : null
+  const anchorRef = useRef(anchor)
+  anchorRef.current = anchor
   const containerRef = useRef(null)
   const chartRef = useRef(null)
   const candleRef = useRef(null)
@@ -39,9 +43,12 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
   const stripeRef = useRef(null)
   const [tradeError, setTradeError] = useState(false)
 
-  // 봉 위/아래 화살표·라벨(봉별 합산) + 캔들 안 체결 건별 X.
+  // 봉 위/아래 화살표·라벨(봉별 합산) + 캔들 안 체결 건별 X. 조회일이 있으면 기준봉 화살표도.
   const drawTrades = (bars) => {
-    candleRef.current?.setMarkers(tradeMarkers(bars, tradesRef.current, interval))
+    const markers = tradeMarkers(bars, tradesRef.current, interval)
+    const anchorMark = anchorMarker(bars, anchorRef.current)
+    if (anchorMark) markers.push(anchorMark)
+    candleRef.current?.setMarkers(markers.sort((a, b) => a.time - b.time))
     crossRef.current?.setPoints(tradePoints(bars, tradesRef.current, interval))
   }
   // 거래대금은 일봉에만 있다(분봉 원천엔 없음).
@@ -156,7 +163,7 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
       timeVisible: interval !== 1440,
       secondsVisible: false,
     })
-    api.getBars(account, code, interval, undefined, sessionOnly && interval !== 1440, includeToday, extended).then((data) => {
+    api.getBars(account, code, interval, undefined, sessionOnly && interval !== 1440, includeToday, extended, anchor).then((data) => {
       if (cancelled || !candleRef.current || !chartRef.current) return
       const bars = data.bars
       onSessionDate?.(data.session_date)
@@ -205,7 +212,7 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
     return () => {
       cancelled = true
     }
-  }, [account, code, interval, sessionOnly, includeToday, extended, retry])
+  }, [account, code, interval, sessionOnly, includeToday, extended, anchor, retry])
 
   // 봉 경계를 넘었을 때 서버에서 다시 받는다.
   // 클라이언트가 틱으로 새 봉을 지어내지 않는 이유: 틱은 큐가 차면 드롭될 수
@@ -215,7 +222,7 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
     if (refreshingRef.current) return
     refreshingRef.current = true
     try {
-      const data = await api.getBars(account, code, interval, undefined, sessionOnly && interval !== 1440, includeToday, extended)
+      const data = await api.getBars(account, code, interval, undefined, sessionOnly && interval !== 1440, includeToday, extended, anchor)
       if (!candleRef.current) return
       barsRef.current = data.bars
       setDisplayVolume(data.bars.length ? Number(data.bars[data.bars.length - 1].volume || 0) : null)
@@ -231,7 +238,7 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
     } finally {
       refreshingRef.current = false
     }
-  }, [account, code, interval, sessionOnly, includeToday, extended])
+  }, [account, code, interval, sessionOnly, includeToday, extended, anchor])
 
   // 실시간 틱 → 마지막 봉 갱신 (경계를 넘으면 재조회)
   useEffect(() => {
@@ -278,7 +285,7 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
 
   return (
     <div className="chart-container">
-      <div className="chart-trade-legend"><span className="up">▲ B 매수 체결</span> · <span className="down">▼ S 매도 체결</span> · 캔들 안 ✕ = 체결 건별 체결가 · 수량·평균 체결가 · 시각 미제공 건은 수신 시각 기준{interval === 1440 && <> · <span className="amount-stripe-legend">노란 띠</span> = 거래대금 150억원 이상</>}</div>
+      <div className="chart-trade-legend"><span className="up">▲ B 매수 체결</span> · <span className="down">▼ S 매도 체결</span> · 캔들 안 ✕ = 체결 건별 체결가 · 수량·평균 체결가 · 시각 미제공 건은 수신 시각 기준{interval === 1440 && <> · <span className="amount-stripe-legend">노란 띠</span> = 거래대금 150억원 이상</>}{anchor && <> · <span style={{ color: ANCHOR_COLOR }}>▼ 기준봉</span> = 조회일 {anchor}</>}</div>
       {tradeError && <div role="status">체결 표시를 갱신하지 못했습니다. 재연결 중…</div>}
       {loadState === 'loading' && <p role="status">차트 불러오는 중…</p>}
       {loadState === 'empty' && <p role="status">조회 가능한 봉 데이터가 없습니다.</p>}

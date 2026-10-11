@@ -39,3 +39,12 @@ export function tradeMarkers(bars, trades, interval) {
     text: `${group.side === 'buy' ? 'B' : 'S'} ${group.qty.toLocaleString('ko-KR')}주 · ${group.price.toLocaleString('ko-KR', { maximumFractionDigits: 2 })}원`,
   }))
 }
+
+// 스크리너 기준봉(조회일) 표시. 봉 시각은 KST 벽시계를 UTC로 둔 epoch라 ISO 날짜가 곧 KST 날짜다.
+export const ANCHOR_COLOR = '#7b1fa2'
+
+export function anchorMarker(bars, anchorDate) {
+  if (!anchorDate) return null
+  const bar = bars.find((b) => new Date(b.time * 1000).toISOString().slice(0, 10) >= anchorDate)
+  return bar ? { time: bar.time, position: 'aboveBar', shape: 'arrowDown', color: ANCHOR_COLOR, size: 2, text: '기준봉' } : null
+}

@@ -114,3 +114,65 @@ def test_extended_uses_integrated_code_and_keeps_pre_and_after_market(monkeypatc
         last_tick=lambda code: None)))
     main.get_bars("real", "338220", 1440, 60, False, extended=True)
     assert calls == ["338220"]
+
+
+def day_bar(day):
+    dt = datetime.strptime(day, "%Y-%m-%d")
+    return Bar(time=int(dt.replace(tzinfo=timezone.utc).timestamp()), open=100,
+               high=110, low=90, close=100, volume=10)
+
+
+def weekdays(start, count):
+    out, d = [], datetime.strptime(start, "%Y-%m-%d")
+    while len(out) < count:
+        if d.weekday() < 5:
+            out.append(d.strftime("%Y-%m-%d"))
+        d = datetime.fromordinal(d.toordinal() + 1)
+    return out
+
+
+def test_daily_anchor_shows_20_days_before_query_date_and_60_in_total(monkeypatch):
+    """스크리너 조회일(anchor) 앞 20거래일부터 60거래일을 보여준다(맥락 + 전개)."""
+    days = weekdays("2025-03-03", 460)          # 2025-03 ~ 2026-12 초(조회일 앞 MA 계산분 충분)
+    bars = [day_bar(d) for d in days]
+    calls = []
+
+    def get_bars(code, interval, lookback):
+        calls.append(lookback)
+        return bars[-(lookback + 1):]
+
+    monkeypatch.setattr(main, "_hub", lambda account: SimpleNamespace(
+        data=SimpleNamespace(get_bars=get_bars, last_tick=lambda code: None)))
+    monkeypatch.setattr(main, "now_kst", lambda: datetime(2026, 12, 10, 16, 0))
+    anchor = "2026-07-01"
+    result = main.get_bars("real", "014950", 1440, 119, False, False, False, anchor)
+    shown = result["bars"][result["day_start_index"]:]
+    shown_days = [datetime.fromtimestamp(b["time"], timezone.utc).date().isoformat() for b in shown]
+    assert shown_days.index(anchor) == 20         # 조회일 앞 20거래일
+    assert len(shown) == 60
+    assert result["day_start_index"] == 119      # 그 앞은 MA 계산용
+    assert calls[0] > 139                         # 조회일 앞 맥락까지 닿도록 더 받는다
+
+
+def test_daily_anchor_recent_date_falls_back_to_latest_60(monkeypatch):
+    """조회일 뒤로 60거래일이 아직 없으면 최근 60거래일 — 조회일은 그 안에 보인다."""
+    days = weekdays("2026-01-01", 200)
+    bars = [day_bar(d) for d in days]
+    monkeypatch.setattr(main, "_hub", lambda account: SimpleNamespace(
+        data=SimpleNamespace(get_bars=lambda c, i, n: bars[-(n + 1):], last_tick=lambda code: None)))
+    last = days[-1]
+    monkeypatch.setattr(main, "now_kst", lambda: datetime.strptime(last, "%Y-%m-%d").replace(hour=16))
+    anchor = days[-10]
+    result = main.get_bars("real", "014950", 1440, 119, False, False, False, anchor)
+    shown = result["bars"][result["day_start_index"]:]
+    shown_days = [datetime.fromtimestamp(b["time"], timezone.utc).date().isoformat() for b in shown]
+    assert len(shown) == 60
+    assert shown_days[-1] == last and anchor in shown_days
+
+
+def test_daily_without_anchor_keeps_latest_60(monkeypatch):
+    bars = [day_bar(d) for d in weekdays("2026-01-01", 120)]
+    monkeypatch.setattr(main, "_hub", lambda account: SimpleNamespace(
+        data=SimpleNamespace(get_bars=lambda c, i, n: bars, last_tick=lambda code: None)))
+    result = main.get_bars("real", "014950", 1440, 119, False, False, False)
+    assert result["day_start_index"] == 60 and len(result["bars"]) == 120

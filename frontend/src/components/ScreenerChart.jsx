@@ -5,9 +5,10 @@ import Chart from './Chart'
 
 // includeToday: 장중 스냅샷으로 고른 종목이면 진행 중인 오늘 세션을 보여준다.
 // defaultInterval: 처음 열 때의 주기(3=3분봉, 1440=일봉).
+// anchorDate: 스크리너 조회일(YYYY-MM-DD). 일봉은 이 날 앞 20거래일부터 60거래일을 보여준다.
 // register: 있으면 헤더에 등록 버튼을 띄운다(차트 조회 계좌로 등록).
 //   { label, title(account) → 툴팁, run(account) → Promise }
-export default function ScreenerChart({ stock, source, includeToday = false, defaultInterval = 3, register, onClose }) {
+export default function ScreenerChart({ stock, source, includeToday = false, defaultInterval = 3, anchorDate = null, register, onClose }) {
   const dialogRef = useRef(null)
   const [interval, setInterval] = useState(defaultInterval)
   const [account, setAccount] = useState(null)
@@ -64,9 +65,9 @@ export default function ScreenerChart({ stock, source, includeToday = false, def
       </div>
       <p className="muted">{source === 'mock' ? '합성 데모 차트' : '키움 시세 차트'} · {interval === 3
         ? `${sessionDate || '최근 거래일'} KRX+NXT 통합 · 프리마켓~${includeToday ? '현재' : '마지막 체결'} (정규장 09:00~15:30)`
-        : '최근 일봉'} 기준입니다.</p>
+        : anchorDate ? `조회일 ${anchorDate} 앞 20거래일부터 60거래일 일봉` : '최근 일봉'} 기준입니다.</p>
       {error ? <p role="alert">{error} <button onClick={() => setRetry((value) => value + 1)}>다시 시도</button></p>
-        : account ? <Chart key={`${stock.code}:${interval}`} account={account.id} code={stock.code} interval={interval} sessionOnly extended includeToday={includeToday} onSessionDate={setSessionDate} height={460} />
+        : account ? <Chart key={`${stock.code}:${interval}`} account={account.id} code={stock.code} interval={interval} sessionOnly extended includeToday={includeToday} anchorDate={anchorDate} onSessionDate={setSessionDate} height={460} />
           : <p role="status">시세 연결 확인 중…</p>}
     </dialog>
   )

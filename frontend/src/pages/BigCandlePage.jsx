@@ -281,6 +281,7 @@ export default function BigCandlePage() {
           source={data.source === 'mock' ? 'mock' : 'kiwoom'}
           includeToday={live}
           defaultInterval={1440}
+          anchorDate={data.date}
           register={{
             label: '종가 매매 등록',
             title: (account) => `${account.label} 계좌의 종가 매매 목록에 추가합니다(주문은 나가지 않음)`,
