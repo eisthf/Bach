@@ -220,7 +220,7 @@ export default function UpperLimitPage() {
           stock={selectedStock}
           source={data.source}
           defaultInterval={1440}
-          register={{
+          register={[{
             label: '매매 등록',
             title: (account) => `${account.label} 계좌의 [매매] 목록에 수동매매로 추가합니다(주문은 나가지 않음)`,
             run: async (account) => {
@@ -231,7 +231,18 @@ export default function UpperLimitPage() {
                 window.alert(`매매 등록 실패: ${e.message || e}`)
               }
             },
-          }}
+          }, {
+            label: '구간 매매 등록',
+            title: (account) => `${account.label} 계좌의 [구간 매매] 목록에 추가합니다(주문은 나가지 않음). 매입 구간은 거기서 차트로 지정합니다.`,
+            run: async (account) => {
+              try {
+                await api.addZoneTrade(account.id, selectedStock.code, selectedStock.name)
+                navigate(ROUTES.ZONE_TRADE)
+              } catch (e) {
+                window.alert(`구간 매매 등록 실패: ${e.message || e}`)
+              }
+            },
+          }]}
           onClose={() => setSelectedStock(null)}
         />
       )}

@@ -283,7 +283,7 @@ export default function BigCandlePage() {
           includeToday={live}
           defaultInterval={1440}
           anchorDate={data.date}
-          register={{
+          register={[{
             label: '대금 양봉 매매 등록',
             title: (account) => `${account.label} 계좌의 대금 양봉 매매 목록에 추가합니다(주문은 나가지 않음). `
               + `${data.date} 봉(시가 ${won(selectedStock.open)} → ${priceLabel} ${won(selectedStock.close)})이 기준 캔들입니다.`,
@@ -306,7 +306,18 @@ export default function BigCandlePage() {
                 window.alert(`대금 양봉 매매 등록 실패: ${e.message || e}`)
               }
             },
-          }}
+          }, {
+            label: '구간 매매 등록',
+            title: (account) => `${account.label} 계좌의 [구간 매매] 목록에 추가합니다(주문은 나가지 않음). 매입 구간은 거기서 차트로 지정합니다.`,
+            run: async (account) => {
+              try {
+                await api.addZoneTrade(account.id, selectedStock.code, selectedStock.name)
+                navigate(ROUTES.ZONE_TRADE)
+              } catch (e) {
+                window.alert(`구간 매매 등록 실패: ${e.message || e}`)
+              }
+            },
+          }]}
           onClose={() => setSelectedStock(null)}
         />
       )}
