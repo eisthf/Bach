@@ -8,6 +8,11 @@
 매입 구간 (몸통 = 종가 − 시가, x = zone_margin_pct):
   상단 = 종가 − 몸통 × x%,   하단 = 시가 + 몸통 × x%
 
+구간 매매(kind="zone"): 같은 엔진을 임의 종목에 쓰되, 매입 구간 상단·하단을 사람이
+직접 정한다(예: 10일선 눌림목). 기준 캔들이 없으므로 '기준일 다음 거래일부터' 대신
+**감시를 시작한 거래일부터** 평가하고, 1차 기한도 그날부터 센다(``watch_from``).
+나머지(2차 기준·절반 익절·트레일링·구간 이탈 손절)는 모두 같다.
+
 흐름 (기준일 D 당일에는 아무것도 평가하지 않는다 — D+1 거래일부터):
   DRAFT ──[감시 시작]→ WATCHING
   WATCHING:
@@ -132,6 +137,12 @@ class CandleTradeEngine:
     base_close: float = 0.0
     # 기준일 일봉을 실제 차트 데이터로 확인했는가(장중 스냅샷으로 등록했을 수 있다).
     base_confirmed: bool = False
+    # "candle"=대금 양봉 매매(기준 캔들로 구간 계산) | "zone"=구간 매매(구간을 사람이 지정)
+    kind: str = "candle"
+    zone_low: float = 0.0
+    zone_high: float = 0.0
+    # 구간 매매의 경과 거래일 기준(감시를 시작한 첫 세션 날짜). 감시 중지 시 비운다.
+    watch_from: str = ""
     log: Callable[[str], None] = field(default=lambda _: None, repr=False)
 
     phase: CzPhase = CzPhase.DRAFT
@@ -144,7 +155,7 @@ class CandleTradeEngine:
     active_leg: Optional[int] = None
     # 하루치 맥락(begin_day). day 가 오늘이 아니면 평가하지 않는다.
     day: str = ""
-    days_elapsed: int = 0            # 기준일 이후 경과 거래일(오늘 포함)
+    days_elapsed: int = 0            # 기준일(구간 매매는 감시 시작일 전날) 이후 경과 거래일(오늘 포함)
     prev_close: Optional[float] = None
     stop_armed: bool = False         # 오늘 구간 이탈 손절이 켜져 있는가
     # 분 단위 감시 버퍼(영속화하지 않음)
@@ -175,7 +186,10 @@ class CandleTradeEngine:
         return self.legs[0].date if self.legs and self.legs[0].status == "filled" else ""
 
     def zone(self) -> Optional[Tuple[float, float]]:
-        """매입 구간 (하단, 상단). 기준 캔들이 양봉이 아니면 None."""
+        """매입 구간 (하단, 상단). 기준 캔들이 양봉이 아니거나 구간 미지정이면 None."""
+        if self.kind == "zone":
+            ok = 0 < self.zone_low < self.zone_high
+            return (self.zone_low, self.zone_high) if ok else None
         body = self.base_close - self.base_open
         if self.base_open <= 0 or body <= 0:
             return None
@@ -216,6 +230,22 @@ class CandleTradeEngine:
         self.base_date, self.base_open, self.base_close = date, float(open_), float(close)
         self.base_confirmed = confirmed
 
+    @property
+    def bought(self) -> bool:
+        return any(leg.status == "filled" for leg in self.legs)
+
+    def set_zone(self, low: float, high: float) -> None:
+        """구간 매매의 매입 구간 지정. 1차 매수 뒤엔 바꿀 수 없다(평단·손절 기준)."""
+        if self.kind != "zone":
+            raise ValueError("대금 양봉 매매의 구간은 기준 캔들로 정해집니다.")
+        if self.bought:
+            raise ValueError("1차 매수 후에는 매입 구간을 바꿀 수 없습니다.")
+        low, high = float(low), float(high)
+        if not 0 < low < high:
+            raise ValueError("매입 구간은 0 < 하단 < 상단 이어야 합니다.")
+        self.zone_low, self.zone_high = low, high
+        self.log(f"매입 구간 지정 {low:,.0f} ~ {high:,.0f}")
+
     def reconfigure(self, config: CandleTradeConfig) -> None:
         """설정 변경. 1차 매수 전엔 차수 계획을 다시 짜고, 그 뒤엔 1차 비중은 고정하고
         남은 차수 금액·조건값만 바꾼다. 매입 구간 폭은 매수 시작 후 바꿀 수 없다
@@ -226,7 +256,7 @@ class CandleTradeEngine:
             return
         if abs(config.first_ratio_pct - self.config.first_ratio_pct) > 1e-9:
             raise ValueError("1차 매수 후에는 1차 비중을 바꿀 수 없습니다.")
-        if abs(config.zone_margin_pct - self.config.zone_margin_pct) > 1e-9:
+        if self.kind == "candle" and abs(config.zone_margin_pct - self.config.zone_margin_pct) > 1e-9:
             raise ValueError("1차 매수 후에는 매입 구간을 바꿀 수 없습니다.")
         if config.total_krw != self.config.total_krw:
             for leg in self.legs:
@@ -241,12 +271,15 @@ class CandleTradeEngine:
         if self.phase != CzPhase.DRAFT:
             raise ValueError("설정 중인 종목만 감시를 시작할 수 있습니다.")
         if self.zone() is None:
-            raise ValueError("기준 캔들이 양봉이 아니라 매입 구간을 정할 수 없습니다.")
+            raise ValueError("매입 구간 상단·하단을 먼저 지정하세요." if self.kind == "zone"
+                             else "기준 캔들이 양봉이 아니라 매입 구간을 정할 수 없습니다.")
         self.phase = CzPhase.WATCHING
         self.day = ""
+        self.watch_from = ""
         lo, hi = self.zone()
+        since = "감시 시작일부터" if self.kind == "zone" else f"기준일({self.base_date}) 이후"
         self.log(f"감시 시작 — 매입 구간 {lo:,.0f} ~ {hi:,.0f}, "
-                 f"기준일({self.base_date}) 이후 {self.config.entry_days}거래일 안에 진입")
+                 f"{since} {self.config.entry_days}거래일 안에 진입")
 
     def stop(self) -> bool:
         """1차 매수 전 감시 중지(설정 중으로 되돌림)."""
@@ -254,6 +287,7 @@ class CandleTradeEngine:
             return False
         self.phase = CzPhase.DRAFT
         self.day = ""
+        self.watch_from = ""
         self.log("감시 중지")
         return True
 
@@ -278,7 +312,8 @@ class CandleTradeEngine:
             return
         if self.phase == CzPhase.WATCHING and days_elapsed > self.config.entry_days:
             self.phase = CzPhase.DONE
-            self.exit_reason = f"기한 만료: 기준일 이후 {self.config.entry_days}거래일 안에 매입 구간 진입 없음"
+            since = "감시 시작일부터" if self.kind == "zone" else "기준일 이후"
+            self.exit_reason = f"기한 만료: {since} {self.config.entry_days}거래일 안에 매입 구간 진입 없음"
             self.log(self.exit_reason)
             return
         z = self.zone()
@@ -428,6 +463,9 @@ class CandleTradeEngine:
             "phase": self.phase.value,
             "base": {"date": self.base_date, "open": self.base_open, "close": self.base_close,
                      "confirmed": self.base_confirmed},
+            "kind": self.kind,
+            "zone": {"low": self.zone_low, "high": self.zone_high},
+            "watch_from": self.watch_from,
             "legs": [asdict(leg) for leg in self.legs],
             "sold_qty": self.sold_qty,
             "peak": self.peak,
@@ -439,12 +477,16 @@ class CandleTradeEngine:
     def from_dict(cls, code: str, config: CandleTradeConfig, data: dict,
                   log: Callable[[str], None] = lambda _: None) -> "CandleTradeEngine":
         base = data.get("base") or {}
+        zone = data.get("zone") or {}
         legs = [CzLeg(**leg) for leg in data.get("legs") or []] or build_legs(config)
         return cls(
             code=code, config=config, log=log,
             base_date=str(base.get("date") or ""),
             base_open=float(base.get("open") or 0), base_close=float(base.get("close") or 0),
             base_confirmed=bool(base.get("confirmed")),
+            kind=str(data.get("kind") or "candle"),
+            zone_low=float(zone.get("low") or 0), zone_high=float(zone.get("high") or 0),
+            watch_from=str(data.get("watch_from") or ""),
             phase=CzPhase(data.get("phase", CzPhase.DRAFT.value)),
             legs=legs,
             sold_qty=int(data.get("sold_qty") or 0),

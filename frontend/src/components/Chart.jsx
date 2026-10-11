@@ -23,7 +23,8 @@ const volumePoint = (bar) => ({
 
 // anchorDate: 일봉일 때 이 날짜(YYYY-MM-DD) 앞 20거래일부터 60거래일을 보여준다(스크리너 조회일).
 // priceLines: [{price, color, title, dashed}] 수평 가격선(예: 대금 양봉 매매 구간·익절선).
-export default function Chart({ account, code, interval, tick, height = 360, sessionOnly = false, includeToday = false, extended = false, anchorDate = null, priceLines = null, onSessionDate }) {
+// onPriceClick: 지정하면 차트를 누른 위치의 가격으로 호출된다(구간 매매의 수평선 지정). 커서가 십자로 바뀐다.
+export default function Chart({ account, code, interval, tick, height = 360, sessionOnly = false, includeToday = false, extended = false, anchorDate = null, priceLines = null, onPriceClick = null, onSessionDate }) {
   const anchor = interval === 1440 ? anchorDate : null
   const anchorRef = useRef(anchor)
   anchorRef.current = anchor
@@ -148,6 +149,22 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
       volumeRef.current = null
       maRefs.current = []
     }
+  }, [])
+
+  // 가격 찍기. 콜백은 ref로 들고 구독은 한 번만 한다(부모가 매 렌더 새 함수를 넘겨도).
+  const priceClickRef = useRef(onPriceClick)
+  priceClickRef.current = onPriceClick
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart) return undefined
+    const onClick = (param) => {
+      const cb = priceClickRef.current
+      if (!cb || !param.point || !candleRef.current) return
+      const price = candleRef.current.coordinateToPrice(param.point.y)
+      if (price !== null && price > 0) cb(price)
+    }
+    chart.subscribeClick(onClick)
+    return () => chart.unsubscribeClick(onClick)
   }, [])
 
   // 수평 가격선. 내용이 바뀔 때만 다시 그린다(부모가 매 렌더 새 배열을 넘겨도).
@@ -311,7 +328,7 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
       )}
     <div
       ref={containerRef}
-      className="chart-canvas"
+      className={`chart-canvas${onPriceClick ? ' picking' : ''}`}
       style={{ width: '100%', '--chart-height': `${height}px` }}
     />
     </div>

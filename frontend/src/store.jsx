@@ -197,13 +197,15 @@ export function StoreProvider({ children }) {
     },
     // 대금 양봉 매매. 실전 계좌의 감시 시작(이후 자동 주문)은 확인을 한 번 더 받는다.
     setCandleConfig: (acc, code, config) => api.setCandleConfig(acc, code, config),
+    setCandleZone: (acc, code, low, high) => api.setCandleZone(acc, code, low, high),
+    addZoneTrade: (acc, code, name) => api.addZoneTrade(acc, code, name),
     startCandle: (acc, code, message) => {
       if (dangerRef.current[acc] && !window.confirm(message)) return Promise.resolve(null)
       return api.startCandle(acc, code)
     },
     stopCandle: (acc, code) => api.stopCandle(acc, code),
     handoffCandle: (acc, code) => {
-      if (!window.confirm(`${code} 대금 양봉 매매를 멈추고 [매매] 목록의 수동매매로 넘길까요?
+      if (!window.confirm(`${code} 자동 매매를 멈추고 [매매] 목록의 수동매매로 넘길까요?
 이후 자동 추가매수·익절·트레일링·손절은 하지 않습니다.`)) {
         return Promise.resolve(null)
       }

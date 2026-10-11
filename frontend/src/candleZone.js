@@ -63,3 +63,17 @@ export function addRuleText(cfg) {
   if (cfg.add_mode === 'gap') return gap
   return `1차가~하단 여유가 ${cfg.add_drop_pct}% 초과면 −${cfg.add_drop_pct}%와 그 갭의 ${cfg.add_gap_pct}% 하락 중 더 깊은 곳, 아니면 2차 없음`
 }
+
+// KRX 호가 단위(backend/app/pricing.py tick_size 와 같음). 차트에서 찍은 가격을 맞춘다.
+export function tickSize(price) {
+  for (const [ceiling, step] of [[2_000, 1], [5_000, 5], [20_000, 10], [50_000, 50], [200_000, 100], [500_000, 500]]) {
+    if (price < ceiling) return step
+  }
+  return 1_000
+}
+
+export function roundToTick(price) {
+  if (!(price > 0)) return 0
+  const step = tickSize(price)
+  return Math.round(price / step) * step
+}

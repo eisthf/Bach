@@ -613,11 +613,24 @@ input:focus { outline: none; border-color: var(--accent); }
 .ct-ratios input { width: 64px; }
 .ct-rule { font-size: 12px; margin: 8px 0 0; }
 .ct-maxdrop { font-size: 12px; margin-top: 2px; }
+.chart-canvas.picking, .chart-canvas.picking * { cursor: crosshair !important; }
+.ct-zone { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; margin: 8px 0 4px;
+  padding: 8px 10px; border: 1px dashed #2e7d32; border-radius: 8px; background: #f3faf3; }
+.ct-zone input { width: 96px; padding: 4px 6px; border: 1px solid var(--border, #ccc); border-radius: 6px; }
+.ct-zone button { padding: 4px 10px; border-radius: 6px; border: 1px solid #2e7d32; background: #fff; color: #2e7d32; cursor: pointer; }
+.ct-zone button.on { background: #2e7d32; color: #fff; }
+.ct-zone button:disabled { opacity: .5; cursor: default; }
+.ct-zone .ct-zone-hint { flex-basis: 100%; }
+.zone-add { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.zone-add input, .zone-add select { padding: 6px 8px; border: 1px solid var(--border, #ccc); border-radius: 6px; }
 .ct-config label.ct-sub { padding-left: 14px; }
 .ct-error, .ct-msg { font-size: 12px; margin-top: 8px; }
 .ct-error { color: var(--down); }
 .ct-legs { font-size: 13px; }
 .ct-legs th, .ct-legs td { padding: 6px 8px; }
+/* 조건 칸은 2차 규칙 문구가 길어 줄바꿈한다(nowrap이면 카드 밖으로 밀려 가로 스크롤). */
+.ct-legs td:nth-child(4) { white-space: normal; min-width: 180px; }
+.candle-card .panels > * { min-width: 0; }
 .ct-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .ct-actions button {
   border: 1px solid var(--border); background: var(--card); border-radius: 6px;

@@ -126,7 +126,7 @@ class Hub:
             return self.stocks[code]
         if code in self.candle_trades.occupied():
             # 한 종목은 한 방식으로만 운용한다(포지션 진실원이 계좌 하나뿐이다).
-            raise ValueError("대금 양봉 매매에서 운용 중인 종목입니다. 먼저 대금 양봉 매매에서 감시 중지·수동 전환하세요.")
+            raise ValueError("대금 양봉·구간 매매에서 운용 중인 종목입니다. 먼저 그 페이지에서 감시 중지·수동 전환하세요.")
         stock = Stock(
             code=code,
             name=name or code,

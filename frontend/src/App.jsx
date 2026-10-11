@@ -10,6 +10,7 @@ import PageNav from './components/PageNav'
 import UpperLimitPage from './pages/UpperLimitPage'
 import BigCandlePage from './pages/BigCandlePage'
 import CandleTradePage from './pages/CandleTradePage'
+import ZoneTradePage from './pages/ZoneTradePage'
 import BrokerConnection from './components/BrokerConnection'
 
 // 종목 칩의 매매 상태 표시(색은 StateButton과 같은 체계: 수동=파랑, 모니터=주황, 자동=초록).
@@ -189,6 +190,7 @@ function Router() {
     [ROUTES.UPPER_LIMIT]: UpperLimitPage,
     [ROUTES.BIG_CANDLE]: BigCandlePage,
     [ROUTES.CANDLE_TRADE]: CandleTradePage,
+    [ROUTES.ZONE_TRADE]: ZoneTradePage,
   }
   const Page = pages[route]
   if (Page) {

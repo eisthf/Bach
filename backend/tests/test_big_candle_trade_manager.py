@@ -378,3 +378,46 @@ async def test_first_buy_proceeds_after_yield_timeout(hub, monkeypatch):
     await push_tick(hub, 11_000)                  # 상한을 넘겨 그대로 진행
     assert hub.broker.buys == [500_000]
     stock.task.cancel()
+
+
+# ---------------------------------------------------------------------------
+# 구간 매매(kind="zone")
+# ---------------------------------------------------------------------------
+async def test_zone_trade_counts_days_from_watch_start(hub):
+    item = hub.candle_trades.add_zone(CODE, "테스트")
+    assert item["kind"] == "zone" and item["zone"] is None and item["zone_editable"]
+    with pytest.raises(ValueError):
+        await hub.candle_trades.start(CODE)   # 구간 미지정
+    hub.candle_trades.set_zone(CODE, 10_200, 11_800)
+    await hub.candle_trades.start(CODE)
+    hub._bars = {d: (11_000, 11_000) for d in ["2026-09-18", "2026-09-21"]}
+    hub.clock.open()
+    await push_tick(hub, 12_000)
+    it = hub.candle_trades.items[CODE]
+    assert it.engine.watch_from == "2026-09-22" and it.engine.days_elapsed == 1
+    await push_tick(hub, 11_000)
+    assert hub.broker.buys == [500_000]
+    assert hub.candle_trades.payload(CODE)["zone_editable"] is False
+    with pytest.raises(ValueError):
+        hub.candle_trades.set_zone(CODE, 10_000, 11_000)
+    assert any("[123450] 구간매매:" in t for t in hub.manager.logs())
+
+
+async def test_zone_trade_expires_after_entry_days(hub):
+    hub.candle_trades.add_zone(CODE, "테스트", {"low": 10_200, "high": 11_800})
+    await hub.candle_trades.start(CODE)
+    it = hub.candle_trades.items[CODE]
+    it.engine.watch_from = "2026-09-15"
+    days = weekdays_after("2026-09-14", 5)    # 9/15 … 9/21: 5거래일 지남
+    hub._bars = {d: (11_000, 11_000) for d in days}
+    hub.clock.open()
+    await push_tick(hub, 11_000)
+    assert it.engine.phase == CzPhase.DONE and hub.broker.buys == []
+
+
+async def test_zone_and_candle_share_one_stock_rule(hub):
+    hub.candle_trades.add_zone(CODE, "테스트")
+    with pytest.raises(ValueError, match="구간 매매"):
+        add(hub)
+    with pytest.raises(ValueError):
+        hub.add_stock(CODE)

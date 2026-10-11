@@ -5,6 +5,9 @@
 - 재시작하면 기존 매매는 전부 수동 인계되지만, 대금 양봉 매매는 저장된 단계부터
   이어서 감시해야 한다(단, 계좌 잔고로 대조한 뒤에만 주문을 재개한다).
 
+구간 매매(kind="zone", 매입 구간을 사람이 정하는 같은 전략)도 이 관리자가 같은 목록에서
+다룬다 — 한 종목은 한 방식으로만이라는 점유 규칙을 그대로 공유한다.
+
 전략 엔진(``strategy/big_candle_trade.py``)이 모르는 하루치 맥락 — 전일 종가와
 기준일 이후 경과 거래일 — 은 여기서 세션마다 일봉을 조회해 넣는다. 같은 조회로
 기준일 일봉도 확인한다(장중 스냅샷으로 등록했다면 시가·종가가 확정값과 다르다).
@@ -81,7 +84,7 @@ class CandleTradeManager:
 
     # -- 조회 ----------------------------------------------------------------
     def occupied(self) -> set[str]:
-        """기존 매매 목록에 올릴 수 없는 종목(대금 양봉 매매가 설정 중이거나 운용 중)."""
+        """기존 매매 목록에 올릴 수 없는 종목(대금 양봉·구간 매매가 설정 중이거나 운용 중)."""
         return {c for c, it in self.items.items()
                 if it.engine.phase == CzPhase.DRAFT or it.engine.phase.active}
 
@@ -101,11 +104,14 @@ class CandleTradeManager:
             })
         zone = eng.zone()
         return {
-            "code": code, "name": it.name, "phase": eng.phase.value,
+            "code": code, "name": it.name, "kind": eng.kind, "phase": eng.phase.value,
             "config": eng.config.model_dump(), "legs": legs,
             "base": {"date": eng.base_date, "open": eng.base_open, "close": eng.base_close,
                      "confirmed": eng.base_confirmed},
             "zone": {"low": zone[0], "high": zone[1]} if zone else None,
+            "zone_editable": eng.kind == "zone" and not eng.bought
+            and (eng.phase == CzPhase.DRAFT or eng.phase.active),
+            "watch_from": eng.watch_from,
             "day": eng.day, "days_elapsed": eng.days_elapsed, "prev_close": eng.prev_close,
             "stop_armed": eng.stop_armed, "peak": eng.peak,
             "take_profit_price": eng.take_profit_price(), "trailing_stop": eng.trailing_stop(),
@@ -123,7 +129,9 @@ class CandleTradeManager:
             self.hub.broadcast({"type": "candle_trade", "item": p})
 
     def _log(self, code: str, text: str) -> None:
-        self.hub._log(f"[{code}] 대금양봉: {text}", event="candle_trade", code=code)
+        it = self.items.get(code)
+        label = "구간매매" if it is not None and it.engine.kind == "zone" else "대금양봉"
+        self.hub._log(f"[{code}] {label}: {text}", event="candle_trade", code=code)
 
     # -- 영속화 --------------------------------------------------------------
     def persist(self) -> None:
@@ -284,8 +292,7 @@ class CandleTradeManager:
     # -- 등록·설정 -----------------------------------------------------------
     def add(self, code: str, name: str = "", base: Optional[dict] = None) -> dict:
         """등록(설정 중). ``base``는 기준 캔들 {date, open, close} — 대금 양봉 조회일의 봉."""
-        if code in self.hub.stocks:
-            raise ValueError("이미 [매매] 목록에 있는 종목입니다. 한 종목은 한 방식으로만 운용합니다.")
+        self._check_free(code)
         base = base or {}
         date = str(base.get("date") or "").strip()
         try:
@@ -295,25 +302,58 @@ class CandleTradeManager:
         if not date or open_ <= 0 or close <= open_:
             raise ValueError("기준 캔들(조회일 양봉의 날짜·시가·종가)이 필요합니다.")
         existing = self.items.get(code)
-        if existing is not None:
-            if code in self.occupied():
-                return self.payload(code)
-            # 끝난 기록(DONE/MANUAL)은 새 등록으로 대체한다.
-            self.items.pop(code)
+        if existing is not None and code in self.occupied():
+            if existing.engine.kind != "candle":
+                raise ValueError("구간 매매에서 운용 중인 종목입니다. 한 종목은 한 방식으로만 운용합니다.")
+            return self.payload(code)
         eng = CandleTradeEngine(code, CandleTradeConfig(), log=self._engine_log(code))
         eng.set_base(date, open_, close, confirmed=False)
-        it = CandleItem(code=code, name=name or code, engine=eng,
-                        created_at=now_kst().isoformat(timespec="seconds"))
-        self.items[code] = it
-        self.persist()
+        self._insert(code, name, eng)
         self._log(code, f"등록(설정 중) — 기준 캔들 {date} 시가 {open_:,.0f} 종가 {close:,.0f}")
         self.broadcast(code)
         return self.payload(code)
 
+    def add_zone(self, code: str, name: str = "", zone: Optional[dict] = None) -> dict:
+        """구간 매매 등록(설정 중). 구간은 지금 주거나 나중에 ``set_zone``으로 정한다."""
+        self._check_free(code)
+        existing = self.items.get(code)
+        if existing is not None and code in self.occupied():
+            if existing.engine.kind != "zone":
+                raise ValueError("대금 양봉 매매에서 운용 중인 종목입니다. 한 종목은 한 방식으로만 운용합니다.")
+            return self.payload(code)
+        eng = CandleTradeEngine(code, CandleTradeConfig(), kind="zone", log=self._engine_log(code))
+        self._insert(code, name, eng)
+        self._log(code, "등록(설정 중)")
+        zone = zone or {}
+        if zone.get("low") and zone.get("high"):
+            eng.set_zone(zone["low"], zone["high"])
+            self.persist()
+        self.broadcast(code)
+        return self.payload(code)
+
+    def set_zone(self, code: str, low: float, high: float) -> dict:
+        it = self._get(code)
+        if not (it.engine.phase == CzPhase.DRAFT or it.engine.phase.active):
+            raise ValueError("종료된 매매는 구간을 바꿀 수 없습니다.")
+        it.engine.set_zone(low, high)
+        self.persist()
+        self.broadcast(code)
+        return self.payload(code)
+
+    def _check_free(self, code: str) -> None:
+        if code in self.hub.stocks:
+            raise ValueError("이미 [매매] 목록에 있는 종목입니다. 한 종목은 한 방식으로만 운용합니다.")
+
+    def _insert(self, code: str, name: str, eng: CandleTradeEngine) -> None:
+        # 끝난 기록(DONE/MANUAL)은 새 등록으로 대체한다.
+        self.items[code] = CandleItem(code=code, name=name or code, engine=eng,
+                                      created_at=now_kst().isoformat(timespec="seconds"))
+        self.persist()
+
     def set_config(self, code: str, config: CandleTradeConfig) -> dict:
         it = self._get(code)
         if not (it.engine.phase == CzPhase.DRAFT or it.engine.phase.active):
-            raise ValueError("종료된 대금 양봉 매매는 설정을 바꿀 수 없습니다.")
+            raise ValueError("종료된 매매는 설정을 바꿀 수 없습니다.")
         it.engine.reconfigure(config)
         self.persist()
         self.broadcast(code)
@@ -454,6 +494,16 @@ class CandleTradeManager:
             self._log(it.code, f"⚠️ 일봉 조회 실패 — 잠시 후 재시도({e})")
             return False
         days = sorted({_bar_date(b.time): b for b in bars}.items())
+        prev = [b for d, b in days if d < today]
+        prev_close = prev[-1].close if prev else None
+        if eng.kind == "zone":
+            # 구간 매매: 감시를 시작한 첫 세션부터 1거래일째로 센다.
+            if not eng.watch_from:
+                eng.watch_from = today
+            elapsed = sum(1 for d, _ in days if eng.watch_from <= d < today) + 1
+            eng.begin_day(today, prev_close, elapsed)
+            it.day_checked_at = 0.0
+            return True
         if today > eng.base_date and not eng.base_confirmed and not eng.phase.holding:
             base = dict(days).get(eng.base_date)
             if base is not None:
@@ -467,8 +517,6 @@ class CandleTradeManager:
                     eng.exit_reason = f"기준일({eng.base_date}) 일봉이 양봉으로 끝나지 않음"
                     self._log(it.code, eng.exit_reason)
                     return True
-        prev = [b for d, b in days if d < today]
-        prev_close = prev[-1].close if prev else None
         elapsed = 0 if today <= eng.base_date else \
             sum(1 for d, _ in days if eng.base_date < d < today) + 1
         eng.begin_day(today, prev_close, elapsed)

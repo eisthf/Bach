@@ -69,6 +69,11 @@ export const api = {
   candleTrades: (a) => req(`/api/${enc(a)}/candle-trades`),
   addCandleTrade: (a, code, name, base) =>
     req(`/api/${enc(a)}/candle-trades`, { method: 'POST', body: JSON.stringify({ code, name, base }) }),
+  // 구간 매매: 같은 목록·엔드포인트, 등록 시 kind='zone'. 구간은 나중에 setCandleZone 으로.
+  addZoneTrade: (a, code, name) =>
+    req(`/api/${enc(a)}/candle-trades`, { method: 'POST', body: JSON.stringify({ code, name, kind: 'zone' }) }),
+  setCandleZone: (a, code, low, high) =>
+    req(`/api/${enc(a)}/candle-trades/${enc(code)}/zone`, { method: 'PUT', body: JSON.stringify({ low, high }) }),
   setCandleConfig: (a, code, config) =>
     req(`/api/${enc(a)}/candle-trades/${enc(code)}/config`, { method: 'PUT', body: JSON.stringify(config) }),
   startCandle: (a, code) => req(`/api/${enc(a)}/candle-trades/${enc(code)}/start`, { method: 'POST' }),

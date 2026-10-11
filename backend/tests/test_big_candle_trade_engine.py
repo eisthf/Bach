@@ -368,3 +368,53 @@ async def test_gap_mode_on_big_candle_goes_deeper():
     assert len(br.buys) == 1
     await tick(eng, br, 10_360, D2)
     assert len(br.buys) == 2
+
+
+# ---------------------------------------------------------------------------
+# 구간 매매(kind="zone"): 매입 구간을 사람이 지정
+# ---------------------------------------------------------------------------
+def make_zone(low=10_200, high=11_800, **cfg):
+    logs = []
+    cfg.setdefault("add_mode", "fixed")
+    eng = CandleTradeEngine("000001", CandleTradeConfig(total_krw=1_000_000, **cfg),
+                            kind="zone", log=logs.append)
+    if low:
+        eng.set_zone(low, high)
+    return eng, Broker(), logs
+
+
+def test_zone_kind_requires_zone_before_start():
+    eng, _, _ = make_zone(low=0)
+    assert eng.zone() is None
+    with pytest.raises(ValueError, match="상단·하단"):
+        eng.start()
+    with pytest.raises(ValueError):
+        eng.set_zone(11_000, 10_000)          # 하단 ≥ 상단
+
+
+async def test_zone_kind_trades_from_first_watch_day():
+    eng, br, _ = make_zone()
+    eng.start()
+    day(eng, D1, 1)                           # 감시 시작일 = 1거래일째 — 바로 평가
+    await tick(eng, br, 11_000, D1)
+    assert br.buys == [500_000] and eng.zone() == (10_200, 11_800)
+    with pytest.raises(ValueError):           # 1차 후엔 구간 고정
+        eng.set_zone(10_000, 11_000)
+    eng.reconfigure(CandleTradeConfig(total_krw=1_000_000, add_mode="fixed", zone_margin_pct=30))
+    day(eng, D2, 2)
+    await tick(eng, br, 10_450, D2)           # 2차 규칙은 대금 양봉과 같다
+    assert len(br.buys) == 2
+
+
+async def test_zone_kind_expiry_message():
+    eng, br, _ = make_zone(entry_days=2)
+    eng.start()
+    day(eng, D3, 3)
+    assert eng.phase == CzPhase.DONE and "감시 시작일부터" in eng.exit_reason
+
+
+def test_zone_kind_roundtrip():
+    eng, _, _ = make_zone()
+    eng.watch_from = D1
+    back = CandleTradeEngine.from_dict("000001", eng.config, eng.to_dict())
+    assert back.kind == "zone" and back.zone() == (10_200, 11_800) and back.watch_from == D1

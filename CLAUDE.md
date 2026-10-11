@@ -61,8 +61,8 @@ cd backend && uv run python backtest.py 079650:20260903 --state real     --varia
 | `models.py` | Pydantic 모델 + enum. 프런트와 주고받는 모든 페이로드의 단일 정의처 |
 | `screener.py` | 상한가 종목 스크리너(D 종가 vs 직전 거래일 +29~30%) + 거래대금 상위 양봉 스크리너(거래대금 ≥150억 & 현재가/종가 > 시가, 시가 대비 상승률 필터). 거래일 탐색 + 합성 mock 소스 포함 |
 | `strategy/ulc.py` | 상한가 따라잡기(ULC) 자동매매 엔진. 틱 기반 진입필터·분할매수·익절/손절/트레일링 |
-| `strategy/big_candle_trade.py` | 대금 양봉 매매 엔진. 기준 캔들 몸통의 매입 구간에서 여러 거래일에 걸친 2분할 매수·절반 익절+트레일링·구간 이탈 손절. 틱/분 감시. 상태 직렬화 |
-| `big_candle_trade.py` | 계좌별 대금 양봉 매매 관리자. [매매] 목록과 분리된 목록·틱 루프·세션별 일봉 맥락(전일 종가·경과 거래일·기준 캔들 확정)·영속화(`state.{계좌}.candle.json`)·재시작 잔고 대조·수동 인계 |
+| `strategy/big_candle_trade.py` | 대금 양봉·구간 매매 엔진. 매입 구간(기준 캔들 몸통에서 자동 / `kind="zone"`이면 수동 지정)에서 여러 거래일에 걸친 2분할 매수·절반 익절+트레일링·구간 이탈 손절. 틱/분 감시. 상태 직렬화 |
+| `big_candle_trade.py` | 계좌별 대금 양봉·구간 매매 관리자(한 목록, `kind`로 구분). [매매] 목록과 분리된 목록·틱 루프·세션별 일봉 맥락(전일 종가·경과 거래일·기준 캔들 확정)·영속화(`state.{계좌}.candle.json`)·재시작 잔고 대조·수동 인계 |
 | `backtest.py` | ULC 백테스트. 1분봉 → 합성 틱으로 운영 엔진을 재생(CLI는 `backend/backtest.py`) |
 | `providers/base.py` | `DataProvider` / `Broker` ABC. `VALID_INTERVALS=(3,5,10,30,60,1440)`, `DAY_INTERVAL=1440` |
 | `providers/mock.py` | 자격증명 없는 합성 시뮬레이터(시드 기반 랜덤워크 봉 + 틱 + 즉시체결 브로커) |
@@ -77,9 +77,9 @@ cd backend && uv run python backtest.py 079650:20260903 --state real     --varia
 | `store.jsx` | 전역 상태(Context) + WebSocket. 메시지의 `account` 필드로 계좌별 슬라이스에 라우팅 |
 | `api.js` | REST 래퍼. 계좌 스코프는 `/api/{account}/...`, 전역은 `/api/market*`·`/api/screener/*` |
 | `indicators.js` | SMA 계산(전체 재계산 `sma`, 틱 갱신용 O(period) `lastSma`) |
-| `router.js` | 최소 해시 라우터(`#/`, `#/upper-limit`, `#/big-candle`, `#/candle-trade`). react-router 의존 없음 |
+| `router.js` | 최소 해시 라우터(`#/`, `#/upper-limit`, `#/big-candle`, `#/candle-trade`, `#/zone-trade`). react-router 의존 없음 |
 | `App.jsx` | 라우팅 + 공통 헤더, 계좌 컬럼 레이아웃, 계좌 필터 세그먼트 |
-| `pages/` | UpperLimitPage — 상한가 종목 조회/표, BigCandlePage — 거래대금 상위 양봉 조회/표, CandleTradePage — 대금 양봉 매매 카드 |
+| `pages/` | UpperLimitPage — 상한가 종목 조회/표, BigCandlePage — 거래대금 상위 양봉 조회/표, CandleTradePage — 대금 양봉 매매, ZoneTradePage — 구간 매매(둘 다 `components/CandleTradeCard`) |
 | `components/` | Chart, PriceTicker, StateButton, ManualTradePanel, AutoConfigForm, IntervalSelector, StockInput, StockPanel, MarketControls, AccountSummary, LogPanel, PageNav |
 
 ## 핵심 개념
@@ -133,6 +133,12 @@ cd backend && uv run python backtest.py 079650:20260903 --state real     --varia
   수동 인계, 조회 실패면 주문 보류). 이전 '종가 매매' 기록(`.close.json`)은 옮기지 않는다.
   **한 종목은 한 방식으로만**: 대금 양봉 매매 중인 종목은 [매매]에 추가 불가(그 반대도), 재시작
   잔고 가져오기에서도 제외. [수동 전환]은 엔진을 멈추고 [매매] 목록(수동매매)으로 옮긴다.
+- **구간 매매**(`#/zone-trade`, 엔진 `kind="zone"`): 임의 종목에 같은 전략을 쓰되 매입 구간 상단·하단을
+  사람이 정한다(차트 클릭으로 수평선, 호가 단위로 맞춤 / 숫자 입력, `PUT .../candle-trades/{code}/zone`).
+  기준 캔들이 없으므로 **감시를 시작한 거래일부터** 평가하고 기한도 그날을 1일째로 센다(`watch_from`).
+  구간은 1차 매수 전까지만 바꿀 수 있다. 같은 목록·엔드포인트(등록 시 `kind: "zone"`)라 한 종목
+  한 방식 규칙·예수금 가드·재시작 복원을 그대로 공유한다. ('수동매매'는 [매매]의 MANUAL_TRADING이라
+  이름을 피했다.)
 - **상한가 매매와의 병행**: 서로 다른 종목이면 두 전략이 동시에 돈다. 공유 자원은 계좌 현금과
   REST 게이트뿐이라 두 가지를 보완했다 — (1) **예수금 가드**: [감시 시작] 전에 주문가능금액
   (kt00001)을 조회해 `다른 전략 약정(다른 대금 양봉 매매 남은 차수 + MONITOR/AUTO 종목의

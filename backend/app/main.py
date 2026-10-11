@@ -167,8 +167,9 @@ def remove_stock(account: str, code: str):
 
 
 # ---------------------------------------------------------------------------
-# 대금 양봉 매매 (계좌 스코프) — 기준 캔들 매입 구간에서 여러 거래일에 걸친 2분할
-# 매수·절반 익절·트레일링. [매매] 목록과 분리.
+# 대금 양봉 매매·구간 매매 (계좌 스코프) — 매입 구간에서 여러 거래일에 걸친 2분할
+# 매수·절반 익절·트레일링. [매매] 목록과 분리. 구간 매매(kind="zone")는 구간을
+# 사람이 정하는 같은 전략이라 같은 목록·엔드포인트를 쓴다(등록·구간 지정만 다름).
 # ---------------------------------------------------------------------------
 def _candle(account: str):
     return _hub(account).candle_trades
@@ -178,7 +179,7 @@ def _candle_call(fn, *args):
     try:
         return fn(*args)
     except KeyError:
-        raise HTTPException(404, "대금 양봉 매매에 없는 종목입니다.")
+        raise HTTPException(404, "대금 양봉·구간 매매에 없는 종목입니다.")
     except ValueError as e:
         raise HTTPException(409, str(e))
 
@@ -187,7 +188,7 @@ async def _candle_acall(fn, *args):
     try:
         return await fn(*args)
     except KeyError:
-        raise HTTPException(404, "대금 양봉 매매에 없는 종목입니다.")
+        raise HTTPException(404, "대금 양봉·구간 매매에 없는 종목입니다.")
     except ValueError as e:
         raise HTTPException(409, str(e))
 
@@ -199,8 +200,9 @@ def list_candle_trades(account: str):
 
 @app.post("/api/{account}/candle-trades")
 async def add_candle_trade(account: str, payload: dict):
-    """대금 양봉 매매 등록(설정 중). 주문은 나가지 않는다.
-    body: {code, name?, base: {date, open, close}} — base는 조회일의 기준 캔들."""
+    """등록(설정 중). 주문은 나가지 않는다.
+    대금 양봉: {code, name?, base: {date, open, close}} — base는 조회일의 기준 캔들.
+    구간 매매: {code, name?, kind: "zone", zone?: {low, high}}."""
     hub = _hub(account)
     code = (payload.get("code") or "").strip()
     name = (payload.get("name") or "").strip()
@@ -211,7 +213,19 @@ async def add_candle_trade(account: str, payload: dict):
             name = await asyncio.to_thread(hub.data.stock_name, code) or ""
         except Exception:
             name = ""
+    if payload.get("kind") == "zone":
+        return _candle_call(hub.candle_trades.add_zone, code, name, payload.get("zone") or {})
     return _candle_call(hub.candle_trades.add, code, name, payload.get("base") or {})
+
+
+@app.put("/api/{account}/candle-trades/{code}/zone")
+def set_candle_trade_zone(account: str, code: str, payload: dict):
+    """구간 매매의 매입 구간 지정 {low, high}. 1차 매수 전까지만."""
+    try:
+        low, high = float(payload.get("low")), float(payload.get("high"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "low·high 숫자 필요")
+    return _candle_call(_candle(account).set_zone, code, low, high)
 
 
 @app.put("/api/{account}/candle-trades/{code}/config")
