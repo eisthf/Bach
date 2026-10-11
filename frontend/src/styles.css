@@ -584,18 +584,18 @@ input:focus { outline: none; border-color: var(--accent); }
 }
 
 /* 종가 매매 페이지 */
-.close-trade { padding: 16px 20px 32px; display: flex; flex-direction: column; gap: 14px; }
-.close-trade-intro {
+.candle-trade { padding: 16px 20px 32px; display: flex; flex-direction: column; gap: 14px; }
+.candle-trade-intro {
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
   background: var(--card); border: 1px solid var(--border); border-radius: 10px;
   padding: 12px 14px; font-size: 13px;
 }
-.close-trade-intro button {
+.candle-trade-intro button {
   margin-left: auto; border: 1px solid var(--border); background: var(--card);
   border-radius: 6px; padding: 6px 12px; font-size: 13px;
 }
-.close-card.tone-live { border-color: var(--accent); }
-.close-card.tone-end { opacity: 0.85; }
+.candle-card.tone-live { border-color: var(--accent); }
+.candle-card.tone-end { opacity: 0.85; }
 .ct-phase { font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 999px; background: #eef1f6; color: var(--muted); }
 .ct-phase.ct-wait { background: #fff4e2; color: #80521d; }
 .ct-phase.ct-live { background: var(--accent); color: #fff; }
@@ -611,6 +611,8 @@ input:focus { outline: none; border-color: var(--accent); }
 .ct-config input[type='number'][min='10000'] { width: 120px; }
 .ct-ratios { display: flex; gap: 10px; flex-wrap: wrap; }
 .ct-ratios input { width: 64px; }
+.ct-rule { font-size: 12px; margin: 8px 0 0; }
+.ct-maxdrop { font-size: 12px; margin-top: 2px; }
 .ct-error, .ct-msg { font-size: 12px; margin-top: 8px; }
 .ct-error { color: var(--down); }
 .ct-legs { font-size: 13px; }
@@ -628,6 +630,6 @@ input:focus { outline: none; border-color: var(--accent); }
 .screener-chart-actions { display: flex; gap: 8px; }
 .screener-chart-actions button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 @media (max-width: 760px) {
-  .close-trade { padding: 10px 8px 28px; }
-  .close-trade-intro button { margin-left: 0; }
+  .candle-trade { padding: 10px 8px 28px; }
+  .candle-trade-intro button { margin-left: 0; }
 }

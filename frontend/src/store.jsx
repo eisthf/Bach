@@ -21,8 +21,8 @@ export function StoreProvider({ children }) {
   const [order, setOrder] = useState({})           // acc -> [codes]
   const [ticks, setTicks] = useState({})           // acc -> {code: tick}
   const [orders, setOrders] = useState({})         // acc -> {code: [orders]}
-  const [closeTrades, setCloseTrades] = useState({}) // acc -> {code: 종가매매 항목}
-  const [closePositions, setClosePositions] = useState({}) // acc -> {code: 계좌 포지션}
+  const [candleTrades, setCandleTrades] = useState({}) // acc -> {code: 대금 양봉 매매 항목}
+  const [candlePositions, setCandlePositions] = useState({}) // acc -> {code: 계좌 포지션}
   const [hidden, setHidden] = useState({})         // acc -> Set(codes)
   const [compact, setCompact] = useState({})       // acc -> Set(codes)
   const [phase, setPhase] = useState('PRE_OPEN')
@@ -57,10 +57,10 @@ export function StoreProvider({ children }) {
       setHidden(h)
       setCompact(c)
       list.forEach((a) => {
-        api.closeTrades(a.id).then((rows) => {
+        api.candleTrades(a.id).then((rows) => {
           const map = {}
           rows.forEach((it) => (map[it.code] = it))
-          setIn(setCloseTrades, a.id, () => map)
+          setIn(setCandleTrades, a.id, () => map)
         }).catch(() => {})
         api.listStocks(a.id).then((rows) => {
           const map = {}
@@ -105,17 +105,17 @@ export function StoreProvider({ children }) {
           setIn(setStocks, acc, (m) => ({ ...(m || {}), [s.code]: s }))
           setIn(setOrder, acc, (arr) =>
             (arr || []).includes(s.code) ? arr : [...(arr || []), s.code])
-        } else if (msg.type === 'close_trade') {
+        } else if (msg.type === 'candle_trade') {
           const it = msg.item
-          setIn(setCloseTrades, acc, (m) => ({ ...(m || {}), [it.code]: it }))
-        } else if (msg.type === 'close_trade_removed') {
-          setIn(setCloseTrades, acc, (m) => {
+          setIn(setCandleTrades, acc, (m) => ({ ...(m || {}), [it.code]: it }))
+        } else if (msg.type === 'candle_trade_removed') {
+          setIn(setCandleTrades, acc, (m) => {
             const n = { ...(m || {}) }
             delete n[msg.code]
             return n
           })
-        } else if (msg.type === 'close_trade_position') {
-          setIn(setClosePositions, acc, (m) => ({ ...(m || {}), [msg.code]: msg.position }))
+        } else if (msg.type === 'candle_trade_position') {
+          setIn(setCandlePositions, acc, (m) => ({ ...(m || {}), [msg.code]: msg.position }))
         } else if (msg.type === 'orders') {
           setIn(setOrders, acc, () => msg.orders || {})
         } else if (msg.type === 'market') {
@@ -195,22 +195,21 @@ export function StoreProvider({ children }) {
     putConfig: async (acc, code, config) => {
       await api.putConfig(acc, code, config)
     },
-    // 종가 매매. 실전 계좌의 주문·인계는 확인을 한 번 더 받는다.
-    addCloseTrade: (acc, code, name) => api.addCloseTrade(acc, code, name),
-    setCloseConfig: (acc, code, config) => api.setCloseConfig(acc, code, config),
-    enterClose: (acc, code, message) => {
+    // 대금 양봉 매매. 실전 계좌의 감시 시작(이후 자동 주문)은 확인을 한 번 더 받는다.
+    setCandleConfig: (acc, code, config) => api.setCandleConfig(acc, code, config),
+    startCandle: (acc, code, message) => {
       if (dangerRef.current[acc] && !window.confirm(message)) return Promise.resolve(null)
-      return api.enterClose(acc, code)
+      return api.startCandle(acc, code)
     },
-    cancelClose: (acc, code) => api.cancelClose(acc, code),
-    handoffClose: (acc, code) => {
-      if (!window.confirm(`${code} 종가 매매를 멈추고 [매매] 목록의 수동매매로 넘길까요?
-이후 자동 추가매수·익절·손절은 하지 않습니다.`)) {
+    stopCandle: (acc, code) => api.stopCandle(acc, code),
+    handoffCandle: (acc, code) => {
+      if (!window.confirm(`${code} 대금 양봉 매매를 멈추고 [매매] 목록의 수동매매로 넘길까요?
+이후 자동 추가매수·익절·트레일링·손절은 하지 않습니다.`)) {
         return Promise.resolve(null)
       }
-      return api.handoffClose(acc, code)
+      return api.handoffCandle(acc, code)
     },
-    removeClose: (acc, code) => api.removeClose(acc, code),
+    removeCandle: (acc, code) => api.removeCandle(acc, code),
     marketOpen: () => api.marketOpen(),
     marketClose: () => api.marketClose(),
     marketReset: () => api.marketReset(),
@@ -221,7 +220,7 @@ export function StoreProvider({ children }) {
     accounts.length > 1 && accounts.some((a) => a.id === accountView) ? accountView : 'ALL'
 
   const value = {
-    accounts, stocks, order, ticks, orders, hidden, compact, closeTrades, closePositions,
+    accounts, stocks, order, ticks, orders, hidden, compact, candleTrades, candlePositions,
     phase, marketAuto, logs, connected, accountView: viewAcc, actions,
   }
   return <StoreCtx.Provider value={value}>{children}</StoreCtx.Provider>

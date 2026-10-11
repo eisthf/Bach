@@ -65,14 +65,14 @@ export const api = {
 
   push: (a, code) => req(`/api/${enc(a)}/state/${code}/push`, { method: 'POST' }),
 
-  // 종가 매매 (계좌 스코프, [매매] 목록과 분리)
-  closeTrades: (a) => req(`/api/${enc(a)}/close-trades`),
-  addCloseTrade: (a, code, name) =>
-    req(`/api/${enc(a)}/close-trades`, { method: 'POST', body: JSON.stringify({ code, name }) }),
-  setCloseConfig: (a, code, config) =>
-    req(`/api/${enc(a)}/close-trades/${enc(code)}/config`, { method: 'PUT', body: JSON.stringify(config) }),
-  enterClose: (a, code) => req(`/api/${enc(a)}/close-trades/${enc(code)}/enter`, { method: 'POST' }),
-  cancelClose: (a, code) => req(`/api/${enc(a)}/close-trades/${enc(code)}/cancel`, { method: 'POST' }),
-  handoffClose: (a, code) => req(`/api/${enc(a)}/close-trades/${enc(code)}/handoff`, { method: 'POST' }),
-  removeClose: (a, code) => req(`/api/${enc(a)}/close-trades/${enc(code)}`, { method: 'DELETE' }),
+  // 대금 양봉 매매 (계좌 스코프, [매매] 목록과 분리). base = 기준 캔들 {date, open, close}
+  candleTrades: (a) => req(`/api/${enc(a)}/candle-trades`),
+  addCandleTrade: (a, code, name, base) =>
+    req(`/api/${enc(a)}/candle-trades`, { method: 'POST', body: JSON.stringify({ code, name, base }) }),
+  setCandleConfig: (a, code, config) =>
+    req(`/api/${enc(a)}/candle-trades/${enc(code)}/config`, { method: 'PUT', body: JSON.stringify(config) }),
+  startCandle: (a, code) => req(`/api/${enc(a)}/candle-trades/${enc(code)}/start`, { method: 'POST' }),
+  stopCandle: (a, code) => req(`/api/${enc(a)}/candle-trades/${enc(code)}/stop`, { method: 'POST' }),
+  handoffCandle: (a, code) => req(`/api/${enc(a)}/candle-trades/${enc(code)}/handoff`, { method: 'POST' }),
+  removeCandle: (a, code) => req(`/api/${enc(a)}/candle-trades/${enc(code)}`, { method: 'DELETE' }),
 }

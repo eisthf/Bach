@@ -92,9 +92,9 @@ class Hub:
         self._restoring = False
         from .trade_history import TradeHistory
         self.trade_history = TradeHistory(self._state_path.with_suffix(".trades.json"))
-        # 종가 매매: 여러 거래일에 걸친 별도 목록(상태머신·장 마감 초기화와 무관).
-        from .close_trade import CloseTradeManager
-        self.close_trades = CloseTradeManager(self)
+        # 대금 양봉 매매: 여러 거래일에 걸친 별도 목록(상태머신·장 마감 초기화와 무관).
+        from .big_candle_trade import CandleTradeManager
+        self.candle_trades = CandleTradeManager(self)
         self.data.trade_history = self.trade_history
         self.recovery_notice = ""
         # 주문체결(00) 이벤트 → 포지션 즉시 갱신(폴링 대신 이벤트 기반).
@@ -124,9 +124,9 @@ class Hub:
     def add_stock(self, code: str, name: str = "") -> Stock:
         if code in self.stocks:
             return self.stocks[code]
-        if code in self.close_trades.occupied():
+        if code in self.candle_trades.occupied():
             # 한 종목은 한 방식으로만 운용한다(포지션 진실원이 계좌 하나뿐이다).
-            raise ValueError("종가 매매에서 운용 중인 종목입니다. 먼저 종가 매매에서 수동 전환하세요.")
+            raise ValueError("대금 양봉 매매에서 운용 중인 종목입니다. 먼저 대금 양봉 매매에서 감시 중지·수동 전환하세요.")
         stock = Stock(
             code=code,
             name=name or code,
@@ -219,9 +219,9 @@ class Hub:
             logger.exception("[%s] 재시작 잔고 확인 실패", self.account)
             self.recovery_notice = "재시작 잔고 확인 실패 — 보유 종목·미체결을 계좌에서 직접 확인 필요"
             self._log(f"⚠️ {self.recovery_notice}")
-        # 종가 매매를 먼저 복원한다 — 그 종목의 잔고를 [매매]로 끌어오지 않도록.
-        await self.close_trades.restore(None if position_error else positions)
-        occupied = self.close_trades.occupied()
+        # 대금 양봉 매매를 먼저 복원한다 — 그 종목의 잔고를 [매매]로 끌어오지 않도록.
+        await self.candle_trades.restore(None if position_error else positions)
+        occupied = self.candle_trades.occupied()
         self._restoring = True
         try:
             for code in dict.fromkeys([*saved, *positions]):
@@ -315,7 +315,7 @@ class Hub:
             logger.warning("보유 종목 조회 실패: %s", e)
             return []
         added: List[str] = []
-        occupied = self.close_trades.occupied()
+        occupied = self.candle_trades.occupied()
         for p in positions:
             if p.quantity <= 0 or p.code in self.stocks or p.code in occupied:
                 continue
@@ -364,8 +364,8 @@ class Hub:
                 self._resync_task = asyncio.create_task(self._refresh_all_positions())
             return
         code = fill.get("code")
-        if code and code not in self.stocks and code in self.close_trades.items:
-            self.close_trades.on_fill(fill)
+        if code and code not in self.stocks and code in self.candle_trades.items:
+            self.candle_trades.on_fill(fill)
             asyncio.create_task(self.refresh_orders())
             return
         if not code or code not in self.stocks:
@@ -452,7 +452,7 @@ class Hub:
         while True:
             try:
                 await asyncio.sleep(5)
-                if self.stocks or self.close_trades.items:
+                if self.stocks or self.candle_trades.items:
                     await self.refresh_orders()
             except asyncio.CancelledError:
                 break
@@ -993,7 +993,7 @@ class Hub:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
-        await self.close_trades.close()
+        await self.candle_trades.close()
         await self.data.close()
         await asyncio.to_thread(self.trade_history.close)
 

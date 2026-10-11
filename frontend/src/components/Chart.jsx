@@ -22,7 +22,8 @@ const volumePoint = (bar) => ({
 })
 
 // anchorDate: 일봉일 때 이 날짜(YYYY-MM-DD) 앞 20거래일부터 60거래일을 보여준다(스크리너 조회일).
-export default function Chart({ account, code, interval, tick, height = 360, sessionOnly = false, includeToday = false, extended = false, anchorDate = null, onSessionDate }) {
+// priceLines: [{price, color, title, dashed}] 수평 가격선(예: 대금 양봉 매매 구간·익절선).
+export default function Chart({ account, code, interval, tick, height = 360, sessionOnly = false, includeToday = false, extended = false, anchorDate = null, priceLines = null, onSessionDate }) {
   const anchor = interval === 1440 ? anchorDate : null
   const anchorRef = useRef(anchor)
   anchorRef.current = anchor
@@ -148,6 +149,18 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
       maRefs.current = []
     }
   }, [])
+
+  // 수평 가격선. 내용이 바뀔 때만 다시 그린다(부모가 매 렌더 새 배열을 넘겨도).
+  const linesKey = JSON.stringify(priceLines || [])
+  useEffect(() => {
+    const candle = candleRef.current
+    if (!candle) return undefined
+    const created = (priceLines || []).filter((l) => l && l.price > 0).map((l) => candle.createPriceLine({
+      price: l.price, color: l.color || '#888', lineWidth: 1, lineStyle: l.dashed ? 2 : 0,
+      axisLabelVisible: true, title: l.title || '',
+    }))
+    return () => created.forEach((line) => candleRef.current?.removePriceLine(line))
+  }, [linesKey])
 
   // 봉 데이터 로드 (interval 변경 시)
   useEffect(() => {

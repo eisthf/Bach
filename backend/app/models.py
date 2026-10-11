@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -186,30 +186,30 @@ class UpperLimitResult(BaseModel):
     stocks: list[UpperLimitStock] = []
 
 
-class CloseTradeConfig(BaseModel):
-    """종가 매매 설정. 차수는 1~3개, 비율 합은 100%."""
+class CandleTradeConfig(BaseModel):
+    """대금 양봉 매매 설정.
+
+    매입 구간 = 기준 캔들 몸통(시가~종가)의 양 끝에서 각각 몸통 길이의
+    ``zone_margin_pct``% 만큼 안쪽으로 들어온 가격 범위.
+    """
     total_krw: int = Field(1_000_000, ge=10_000, description="총 투자액(원)")
-    ratios: list[float] = Field(default_factory=lambda: [20.0, 30.0, 50.0],
-                                description="차수별 투자 비율(%), 합 100")
-    add_drop_pcts: list[float] = Field(default_factory=lambda: [5.0, 5.0],
-                                       description="2·3차 매수 조건: 직전 차수 체결가 대비 하락률(%)")
-    early_tp_pct: float = Field(5.0, gt=0, le=100, description="분할 완료 전 익절(평단 대비 %)")
-    tp_pct: float = Field(5.0, gt=0, le=100, description="분할 완료 후 익절(평단 대비 %)")
-    sl_pct: float = Field(5.0, gt=0, lt=100, description="분할 완료 후 손절(평단 대비 %)")
+    first_ratio_pct: float = Field(50.0, ge=10, le=90, description="1차 매수 비중(%). 나머지가 2차")
+    zone_margin_pct: float = Field(10.0, ge=0, lt=50, description="매입 구간: 몸통 양 끝에서 안쪽으로(몸통 대비 %)")
+    add_drop_pct: float = Field(5.0, gt=0, lt=100, description="2차 매수: 1차 매수가 대비 하락률(%)")
+    take_profit_pct: float = Field(20.0, gt=0, le=500, description="절반 익절: 평단 대비 상승률(%)")
+    trailing_pct: float = Field(5.0, gt=0, lt=100, description="나머지 트레일링 스톱: 고점 대비 하락률(%)")
+    entry_days: int = Field(5, ge=1, le=60, description="1차 매수 기한: 기준일 이후 거래일 수")
+    watch_mode: Literal["tick", "minute"] = Field("tick", description="가격 감시 단위")
+    watch_minutes: int = Field(3, description="분 단위 감시의 봉 길이(분)")
 
     @model_validator(mode="after")
-    def _check(self) -> "CloseTradeConfig":
-        if not 1 <= len(self.ratios) <= 3:
-            raise ValueError("분할 차수는 1~3개여야 합니다.")
-        if any(r <= 0 for r in self.ratios):
-            raise ValueError("분할 비율은 0보다 커야 합니다.")
-        if abs(sum(self.ratios) - 100) > 0.01:
-            raise ValueError(f"분할 비율 합이 100%가 아닙니다({sum(self.ratios):g}%).")
-        if len(self.add_drop_pcts) < len(self.ratios) - 1:
-            raise ValueError("추가 차수마다 하락률이 필요합니다.")
-        if any(not 0 < d < 100 for d in self.add_drop_pcts):
-            raise ValueError("하락률은 0~100% 사이여야 합니다.")
+    def _check(self) -> "CandleTradeConfig":
+        if self.watch_minutes not in WATCH_MINUTES:
+            raise ValueError(f"분 단위 감시는 {', '.join(map(str, WATCH_MINUTES))}분 중 하나여야 합니다.")
         return self
+
+
+WATCH_MINUTES = (1, 3, 5, 10, 15, 30, 60)
 
 
 class BigCandleStock(BaseModel):

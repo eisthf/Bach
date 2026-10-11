@@ -61,8 +61,8 @@ cd backend && uv run python backtest.py 079650:20260903 --state real     --varia
 | `models.py` | Pydantic 모델 + enum. 프런트와 주고받는 모든 페이로드의 단일 정의처 |
 | `screener.py` | 상한가 종목 스크리너(D 종가 vs 직전 거래일 +29~30%) + 거래대금 상위 양봉 스크리너(거래대금 ≥150억 & 현재가/종가 > 시가, 시가 대비 상승률 필터). 거래일 탐색 + 합성 mock 소스 포함 |
 | `strategy/ulc.py` | 상한가 따라잡기(ULC) 자동매매 엔진. 틱 기반 진입필터·분할매수·익절/손절/트레일링 |
-| `strategy/close_trade.py` | 종가 매매 엔진. 여러 거래일에 걸친 분할매수(직전 차수 체결가 기준)·조기익절·분할 후 익절/손절. 상태 직렬화 |
-| `close_trade.py` | 계좌별 종가 매매 관리자. [매매] 목록과 분리된 목록·틱 루프·영속화(`state.{계좌}.close.json`)·재시작 잔고 대조·수동 인계 |
+| `strategy/big_candle_trade.py` | 대금 양봉 매매 엔진. 기준 캔들 몸통의 매입 구간에서 여러 거래일에 걸친 2분할 매수·절반 익절+트레일링·구간 이탈 손절. 틱/분 감시. 상태 직렬화 |
+| `big_candle_trade.py` | 계좌별 대금 양봉 매매 관리자. [매매] 목록과 분리된 목록·틱 루프·세션별 일봉 맥락(전일 종가·경과 거래일·기준 캔들 확정)·영속화(`state.{계좌}.candle.json`)·재시작 잔고 대조·수동 인계 |
 | `backtest.py` | ULC 백테스트. 1분봉 → 합성 틱으로 운영 엔진을 재생(CLI는 `backend/backtest.py`) |
 | `providers/base.py` | `DataProvider` / `Broker` ABC. `VALID_INTERVALS=(3,5,10,30,60,1440)`, `DAY_INTERVAL=1440` |
 | `providers/mock.py` | 자격증명 없는 합성 시뮬레이터(시드 기반 랜덤워크 봉 + 틱 + 즉시체결 브로커) |
@@ -77,9 +77,9 @@ cd backend && uv run python backtest.py 079650:20260903 --state real     --varia
 | `store.jsx` | 전역 상태(Context) + WebSocket. 메시지의 `account` 필드로 계좌별 슬라이스에 라우팅 |
 | `api.js` | REST 래퍼. 계좌 스코프는 `/api/{account}/...`, 전역은 `/api/market*`·`/api/screener/*` |
 | `indicators.js` | SMA 계산(전체 재계산 `sma`, 틱 갱신용 O(period) `lastSma`) |
-| `router.js` | 최소 해시 라우터(`#/`, `#/upper-limit`, `#/big-candle`, `#/close-trade`). react-router 의존 없음 |
+| `router.js` | 최소 해시 라우터(`#/`, `#/upper-limit`, `#/big-candle`, `#/candle-trade`). react-router 의존 없음 |
 | `App.jsx` | 라우팅 + 공통 헤더, 계좌 컬럼 레이아웃, 계좌 필터 세그먼트 |
-| `pages/` | UpperLimitPage — 상한가 종목 조회/표, BigCandlePage — 거래대금 상위 양봉 조회/표, CloseTradePage — 종가 매매 카드 |
+| `pages/` | UpperLimitPage — 상한가 종목 조회/표, BigCandlePage — 거래대금 상위 양봉 조회/표, CandleTradePage — 대금 양봉 매매 카드 |
 | `components/` | Chart, PriceTicker, StateButton, ManualTradePanel, AutoConfigForm, IntervalSelector, StockInput, StockPanel, MarketControls, AccountSummary, LogPanel, PageNav |
 
 ## 핵심 개념
@@ -118,20 +118,25 @@ cd backend && uv run python backtest.py 079650:20260903 --state real     --varia
   종목코드로 결합한다 — 장중엔 현재가, 15:30 이후엔 종가 기준. 과거일은 KRX 확정
   일별 자료(`ACC_TRDVAL`). 장중 스냅샷 종목의 차트는 `include_today`로 진행 중인
   오늘 세션을 보여준다(상한가 스크리너는 완료된 세션만).
-- **종가 매매**(`/api/{account}/close-trades`, `#/close-trade`): 대금 양봉 차트의 [종가 매매
-  등록]으로 '설정 중' 추가 → [1차 매수]. 장중이면 즉시 시장가 후 **다음 거래일부터** 감시,
-  장외면 다음 장 시가에 1차 후 곧바로 감시. 2·3차는 **직전 차수 실체결가** 대비 하락률,
-  분할 중엔 평단 기준 조기 익절만, 분할 완료 후 익절/손절. 상태머신·MARKET-CLOSE와 무관하고
-  재시작 시 저장 단계부터 이어간다(계좌 잔고로 대조 — 부족하면 수동 인계, 조회 실패면 주문 보류).
-  **한 종목은 한 방식으로만**: 종가 매매 중인 종목은 [매매]에 추가 불가(그 반대도), 재시작
+- **대금 양봉 매매**(`/api/{account}/candle-trades`, `#/candle-trade`): 대금 양봉 차트의 [대금
+  양봉 매매 등록]으로 조회일 봉을 **기준 캔들**로 '설정 중' 추가 → [감시 시작]. 매입 구간 =
+  몸통(시가~종가) 양 끝에서 몸통의 x%(기본 10)씩 안쪽. 기준일 **다음 거래일부터** 가격이 구간에
+  들어오면 1차(50%), 기한(기본 5거래일) 넘기면 매매 없이 종료. 2차는 1차 다음 날부터 구간 안 &
+  1차가 −u%(5). 평단 +p%(20)면 절반 매도·남은 계획 취소 후 나머지는 고점 −t%(5) 트레일링.
+  전일 종가 < 구간 하단이면 그날 하단 아래 가격에서 전량 매도(1차 다음 날부터). 감시는 틱(기본)
+  또는 완성된 N분봉 종가. 전일 종가·경과 거래일은 세션 첫 틱에 **일봉**으로 계산(조회 실패면
+  주문 보류)하고, 같은 조회로 기준일 일봉 확정값을 반영한다(장중 스냅샷 등록 대비).
+  상태머신·MARKET-CLOSE와 무관하고 재시작 시 저장 단계부터 이어간다(계좌 잔고로 대조 — 부족하면
+  수동 인계, 조회 실패면 주문 보류). 이전 '종가 매매' 기록(`.close.json`)은 옮기지 않는다.
+  **한 종목은 한 방식으로만**: 대금 양봉 매매 중인 종목은 [매매]에 추가 불가(그 반대도), 재시작
   잔고 가져오기에서도 제외. [수동 전환]은 엔진을 멈추고 [매매] 목록(수동매매)으로 옮긴다.
 - **상한가 매매와의 병행**: 서로 다른 종목이면 두 전략이 동시에 돈다. 공유 자원은 계좌 현금과
-  REST 게이트뿐이라 두 가지를 보완했다 — (1) **예수금 가드**: [1차 매수] 전에 주문가능금액
-  (kt00001)을 조회해 `다른 전략 약정(다른 종가매매 남은 차수 + MONITOR/AUTO 종목의
+  REST 게이트뿐이라 두 가지를 보완했다 — (1) **예수금 가드**: [감시 시작] 전에 주문가능금액
+  (kt00001)을 조회해 `다른 전략 약정(다른 대금 양봉 매매 남은 차수 + MONITOR/AUTO 종목의
   max_buy_amount) + 1차 금액`을 못 대면 409로 막고, 계획 전체를 못 대면 경고만 남긴다
   (주문가능금액을 못 얻는 mock 등에서는 검사를 건너뛴다). (2) **09:00 주문 우선순위**:
-  시가 매수 예약은 [매매]에 1차 주문을 아직 못 낸 AUTO_TRADING 종목이 있으면 양보한다
-  (최대 `ULC_YIELD_MAX_SEC`=90초). ULC는 시가 직후 몇 초가 전부지만 종가 매매는 급하지 않다.
+  대금 양봉 1차 매수는 [매매]에 1차 주문을 아직 못 낸 AUTO_TRADING 종목이 있으면 양보한다
+  (최대 `ULC_YIELD_MAX_SEC`=90초). ULC는 시가 직후 몇 초가 전부지만 대금 양봉 매매는 급하지 않다.
 
 ## 규칙 / 관례
 

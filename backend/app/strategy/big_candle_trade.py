@@ -1,0 +1,412 @@
+"""대금 양봉 매매 전략 엔진.
+
+거래대금 상위 양봉 조회에서 고른 종목을, 조회일의 **기준 캔들**(큰 양봉) 몸통 안쪽
+'매입 구간'에서 여러 거래일에 걸쳐 2분할 매수하고, 절반 익절 + 트레일링 스톱으로
+청산한다. 하루로 끝나지 않으므로 상태 전체를 직렬화(``to_dict``/``from_dict``)해
+재시작 후에도 이어간다.
+
+매입 구간 (몸통 = 종가 − 시가, x = zone_margin_pct):
+  상단 = 종가 − 몸통 × x%,   하단 = 시가 + 몸통 × x%
+
+흐름 (기준일 D 당일에는 아무것도 평가하지 않는다 — D+1 거래일부터):
+  DRAFT ──[감시 시작]→ WATCHING
+  WATCHING:
+    - 가격이 매입 구간 안 → 1차 매수(총 투자액 × 1차 비중) → ACCUMULATING
+    - D+entry_days 거래일까지 1차 조건이 없으면 → DONE(기한 만료, 매매 안 함)
+  ACCUMULATING (1차만 보유, 2차 대기):
+    - 2차: 1차 매수일 **다음 날부터**, 가격이 매입 구간 안이면서
+           1차 매수가 × (1 − u%) 이하 → 나머지 금액 매수 → HOLDING
+  ACCUMULATING / HOLDING:
+    - 절반 익절: 가격 ≥ 평단 × (1 + p%) → 보유의 절반 매도, 남은 매수 계획 취소 → TRAILING
+  TRAILING: 고점 × (1 − t%) 이하 → 나머지 전량 매도 → DONE
+  구간 이탈 손절 (ACCUMULATING / HOLDING / TRAILING, 1차 매수 다음 날부터):
+    전일 종가 < 매입 구간 하단이면, 그날 가격이 하단 아래로 내려오는 순간 전량 매도 → DONE
+  MANUAL: 사람이 수동매매로 인계받음(엔진 정지)
+
+'가격'은 감시 단위 설정에 따른다 — 틱(기본)이면 틱마다, 분이면 완성된 N분봉의
+종가(구간의 마지막 틱)로 평가한다.
+
+하루치 정보(전일 종가, 기준일 이후 경과 거래일)는 엔진이 스스로 알 수 없어 호출측이
+매 세션 첫 평가 전에 ``begin_day``로 넣는다(일봉 조회 결과).
+
+주문은 콜백(awaitable)으로 위임한다 — buy_fn(amount) -> 추정 체결가(실패 0),
+sell_fn(qty) -> 실제 주문 수량(실패 0). 장 시간 판정은 호출측 책임이다.
+"""
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass, field
+from enum import Enum
+from typing import Awaitable, Callable, List, Optional, Tuple
+
+from ..models import CandleTradeConfig, Tick
+
+BuyFn = Callable[[int], Awaitable[float]]
+SellFn = Callable[[int], Awaitable[int]]
+
+
+class CzPhase(str, Enum):
+    DRAFT = "DRAFT"                  # 설정 중. 주문 없음
+    WATCHING = "WATCHING"            # 매입 구간 진입(1차 매수) 대기
+    ACCUMULATING = "ACCUMULATING"    # 1차 보유, 2차 매수 대기
+    HOLDING = "HOLDING"              # 2차까지 보유(또는 2차 실패), 익절 대기
+    TRAILING = "TRAILING"            # 절반 익절 후 나머지 트레일링 스톱
+    DONE = "DONE"                    # 청산 완료(또는 기한 만료 등으로 종료)
+    MANUAL = "MANUAL"                # 수동매매 인계
+
+    @property
+    def active(self) -> bool:
+        return self in (CzPhase.WATCHING, CzPhase.ACCUMULATING,
+                        CzPhase.HOLDING, CzPhase.TRAILING)
+
+    @property
+    def holding(self) -> bool:
+        return self in (CzPhase.ACCUMULATING, CzPhase.HOLDING, CzPhase.TRAILING)
+
+
+@dataclass
+class CzLeg:
+    ratio: float                     # 총 투자액 대비 비율(%)
+    amount: int                      # 배정 금액(원)
+    status: str = "waiting"          # waiting | filled | failed | canceled
+    est_qty: int = 0                 # 주문 응답 기준 잠정 수량
+    est_price: float = 0.0           # 주문 응답 기준 잠정 체결가(직전 틱)
+    fill_qty: int = 0                # 체결 이벤트 누적 수량
+    fill_avg: float = 0.0            # 체결 이벤트 평균 체결가
+    date: str = ""                   # 체결 세션 날짜(YYYY-MM-DD)
+
+    @property
+    def qty(self) -> int:
+        return self.fill_qty if self.fill_qty else self.est_qty
+
+    @property
+    def price(self) -> float:
+        """이 차수의 체결가 — 실체결 이벤트가 있으면 그 평균, 없으면 잠정값."""
+        return self.fill_avg if self.fill_qty else self.est_price
+
+
+def build_legs(config: CandleTradeConfig) -> List[CzLeg]:
+    first = config.first_ratio_pct
+    return [CzLeg(ratio=r, amount=int(config.total_krw * r / 100)) for r in (first, 100 - first)]
+
+
+@dataclass
+class CandleTradeEngine:
+    code: str
+    config: CandleTradeConfig
+    # 기준 캔들(조회일의 양봉)
+    base_date: str = ""
+    base_open: float = 0.0
+    base_close: float = 0.0
+    # 기준일 일봉을 실제 차트 데이터로 확인했는가(장중 스냅샷으로 등록했을 수 있다).
+    base_confirmed: bool = False
+    log: Callable[[str], None] = field(default=lambda _: None, repr=False)
+
+    phase: CzPhase = CzPhase.DRAFT
+    legs: List[CzLeg] = field(default_factory=list)
+    sold_qty: int = 0                # 엔진이 낸 매도 수량 누계
+    peak: float = 0.0                # 트레일링 고점
+    exit_reason: str = ""
+    # 체결 이벤트를 귀속시킬 차수(방금 주문한 차수). 영속화한다 — 재시작 직후
+    # 늦게 도착한 체결도 올바른 차수에 붙도록.
+    active_leg: Optional[int] = None
+    # 하루치 맥락(begin_day). day 가 오늘이 아니면 평가하지 않는다.
+    day: str = ""
+    days_elapsed: int = 0            # 기준일 이후 경과 거래일(오늘 포함)
+    prev_close: Optional[float] = None
+    stop_armed: bool = False         # 오늘 구간 이탈 손절이 켜져 있는가
+    # 분 단위 감시 버퍼(영속화하지 않음)
+    _bar_bucket: Optional[int] = field(default=None, repr=False)
+    _bar_close: Optional[float] = field(default=None, repr=False)
+
+    def __post_init__(self) -> None:
+        if not self.legs:
+            self.legs = build_legs(self.config)
+
+    # -- 파생 값 ------------------------------------------------------------
+    @property
+    def bought_qty(self) -> int:
+        return sum(leg.qty for leg in self.legs if leg.status == "filled")
+
+    @property
+    def shares(self) -> int:
+        return max(0, self.bought_qty - self.sold_qty)
+
+    @property
+    def avg_cost(self) -> float:
+        filled = [leg for leg in self.legs if leg.status == "filled" and leg.qty > 0]
+        qty = sum(leg.qty for leg in filled)
+        return sum(leg.price * leg.qty for leg in filled) / qty if qty else 0.0
+
+    @property
+    def first_date(self) -> str:
+        return self.legs[0].date if self.legs and self.legs[0].status == "filled" else ""
+
+    def zone(self) -> Optional[Tuple[float, float]]:
+        """매입 구간 (하단, 상단). 기준 캔들이 양봉이 아니면 None."""
+        body = self.base_close - self.base_open
+        if self.base_open <= 0 or body <= 0:
+            return None
+        margin = body * self.config.zone_margin_pct / 100
+        return self.base_open + margin, self.base_close - margin
+
+    def in_zone(self, price: float) -> bool:
+        z = self.zone()
+        return z is not None and z[0] <= price <= z[1]
+
+    def add_trigger(self) -> Optional[float]:
+        """2차 매수 상한가(1차 매수가 × (1 − u%)). 1차 전이거나 2차가 끝났으면 None."""
+        if len(self.legs) < 2 or self.legs[0].status != "filled" or self.legs[1].status != "waiting":
+            return None
+        p = self.legs[0].price
+        return p * (1 - self.config.add_drop_pct / 100) if p > 0 else None
+
+    def take_profit_price(self) -> Optional[float]:
+        if self.phase not in (CzPhase.ACCUMULATING, CzPhase.HOLDING):
+            return None
+        avg = self.avg_cost
+        return avg * (1 + self.config.take_profit_pct / 100) if avg > 0 else None
+
+    def trailing_stop(self) -> Optional[float]:
+        if self.phase != CzPhase.TRAILING or self.peak <= 0:
+            return None
+        return self.peak * (1 - self.config.trailing_pct / 100)
+
+    # -- 설정 ----------------------------------------------------------------
+    def set_base(self, date: str, open_: float, close: float, confirmed: bool) -> None:
+        self.base_date, self.base_open, self.base_close = date, float(open_), float(close)
+        self.base_confirmed = confirmed
+
+    def reconfigure(self, config: CandleTradeConfig) -> None:
+        """설정 변경. 1차 매수 전엔 차수 계획을 다시 짜고, 그 뒤엔 1차 비중은 고정하고
+        남은 차수 금액·조건값만 바꾼다. 매입 구간 폭은 매수 시작 후 바꿀 수 없다
+        (평단·손절 기준이 흔들린다)."""
+        if not any(leg.status == "filled" for leg in self.legs):
+            self.config = config
+            self.legs = build_legs(config)
+            return
+        if abs(config.first_ratio_pct - self.config.first_ratio_pct) > 1e-9:
+            raise ValueError("1차 매수 후에는 1차 비중을 바꿀 수 없습니다.")
+        if abs(config.zone_margin_pct - self.config.zone_margin_pct) > 1e-9:
+            raise ValueError("1차 매수 후에는 매입 구간을 바꿀 수 없습니다.")
+        if config.total_krw != self.config.total_krw:
+            for leg in self.legs:
+                if leg.status == "waiting":
+                    leg.amount = int(config.total_krw * leg.ratio / 100)
+        if (config.watch_mode, config.watch_minutes) != (self.config.watch_mode, self.config.watch_minutes):
+            self._reset_bar()
+        self.config = config
+
+    # -- 시작·중지·인계 ------------------------------------------------------
+    def start(self) -> None:
+        if self.phase != CzPhase.DRAFT:
+            raise ValueError("설정 중인 종목만 감시를 시작할 수 있습니다.")
+        if self.zone() is None:
+            raise ValueError("기준 캔들이 양봉이 아니라 매입 구간을 정할 수 없습니다.")
+        self.phase = CzPhase.WATCHING
+        self.day = ""
+        lo, hi = self.zone()
+        self.log(f"감시 시작 — 매입 구간 {lo:,.0f} ~ {hi:,.0f}, "
+                 f"기준일({self.base_date}) 이후 {self.config.entry_days}거래일 안에 진입")
+
+    def stop(self) -> bool:
+        """1차 매수 전 감시 중지(설정 중으로 되돌림)."""
+        if self.phase != CzPhase.WATCHING:
+            return False
+        self.phase = CzPhase.DRAFT
+        self.day = ""
+        self.log("감시 중지")
+        return True
+
+    def hand_off(self, reason: str = "수동 전환") -> None:
+        self.phase = CzPhase.MANUAL
+        self.exit_reason = reason
+        self.log(f"수동매매 인계: {reason}")
+
+    # -- 하루 맥락 -----------------------------------------------------------
+    def needs_day(self, today: str) -> bool:
+        return self.phase.active and self.day != today
+
+    def begin_day(self, today: str, prev_close: Optional[float], days_elapsed: int) -> None:
+        """세션 첫 평가 전에 호출. ``days_elapsed``는 기준일 이후 경과 거래일(오늘 포함,
+        기준일 당일이면 0)."""
+        self.day = today
+        self.days_elapsed = days_elapsed
+        self.prev_close = prev_close
+        self.stop_armed = False
+        self._reset_bar()
+        if days_elapsed <= 0:
+            return
+        if self.phase == CzPhase.WATCHING and days_elapsed > self.config.entry_days:
+            self.phase = CzPhase.DONE
+            self.exit_reason = f"기한 만료: 기준일 이후 {self.config.entry_days}거래일 안에 매입 구간 진입 없음"
+            self.log(self.exit_reason)
+            return
+        z = self.zone()
+        if (self.phase.holding and z and self.first_date and self.first_date < today
+                and prev_close is not None and prev_close < z[0]):
+            self.stop_armed = True
+            self.log(f"전일 종가 {prev_close:,.0f} < 구간 하단 {z[0]:,.0f} — "
+                     f"오늘 하단 아래 가격에서 전량 매도")
+
+    # -- 틱 평가 -------------------------------------------------------------
+    async def on_tick(self, tick: Tick, today: str, buy_fn: BuyFn, sell_fn: SellFn) -> None:
+        """정규장 틱 1개. 호출측이 장중에, ``begin_day(today, …)`` 뒤에 호출한다."""
+        if tick.price <= 0 or not self.phase.active or self.day != today or self.days_elapsed <= 0:
+            return
+        if self.config.watch_mode == "tick":
+            await self._evaluate(tick.price, today, buy_fn, sell_fn)
+            return
+        # 분 단위: 다음 구간의 첫 틱이 와야 직전 봉 종가가 확정된다(ULC 3분봉과 같은 방식).
+        if tick.time <= 0:
+            return
+        bucket = tick.time // (self.config.watch_minutes * 60)
+        if self._bar_bucket is None or bucket > self._bar_bucket:
+            completed = self._bar_close if self._bar_bucket is not None else None
+            self._bar_bucket, self._bar_close = bucket, tick.price
+            if completed is not None:
+                await self._evaluate(completed, today, buy_fn, sell_fn)
+        elif bucket == self._bar_bucket:
+            self._bar_close = tick.price
+        # bucket < 현재: 재연결 등으로 늦게 온 과거 틱 — 무시
+
+    def _reset_bar(self) -> None:
+        self._bar_bucket = None
+        self._bar_close = None
+
+    async def _evaluate(self, price: float, today: str, buy_fn: BuyFn, sell_fn: SellFn) -> None:
+        z = self.zone()
+        if z is None:
+            return
+        lo, hi = z
+        c = self.config
+
+        if self.phase == CzPhase.WATCHING:
+            if lo <= price <= hi:
+                if await self._buy(0, price, today, buy_fn):
+                    self.phase = CzPhase.ACCUMULATING
+                    self.log(f"2차 매수: 다음 거래일부터 구간 안 & ≤ {self.add_trigger() or 0:,.0f}, "
+                             f"절반 익절: 평단 +{c.take_profit_pct:g}%")
+                else:
+                    self.phase = CzPhase.DONE
+                    self.exit_reason = "1차 매수 실패"
+                    self.log("1차 매수 실패 — 종료(설정·예수금을 확인하고 다시 등록하세요)")
+            return
+
+        if self.shares <= 0:
+            return
+
+        if self.stop_armed and price < lo:
+            await self._exit(sell_fn, f"구간 이탈 손절: 전일 종가 < 하단, 하단 {lo:,.0f} 아래 {price:,.0f}")
+            return
+
+        if self.phase == CzPhase.TRAILING:
+            self.peak = max(self.peak, price)
+            stop = self.trailing_stop()
+            if stop is not None and price <= stop:
+                await self._exit(sell_fn, f"트레일링 스톱: 고점 {self.peak:,.0f} −{c.trailing_pct:g}%")
+            return
+
+        avg = self.avg_cost
+        if avg > 0 and price >= avg * (1 + c.take_profit_pct / 100):
+            await self._take_half(price, sell_fn)
+            return
+
+        if self.phase == CzPhase.ACCUMULATING:
+            trigger = self.add_trigger()
+            if (trigger is not None and self.first_date < today
+                    and lo <= price <= hi and price <= trigger):
+                if await self._buy(1, price, today, buy_fn):
+                    self.phase = CzPhase.HOLDING
+                else:
+                    # 실패한 차수는 재시도하지 않는다(틱마다 주문이 반복되지 않게).
+                    self.phase = CzPhase.HOLDING
+                    self.log("2차 매수 실패 — 추가매수 중단, 보유분 익절·손절 감시")
+
+    async def _buy(self, i: int, price: float, today: str, buy_fn: BuyFn) -> bool:
+        leg = self.legs[i]
+        self.active_leg = i
+        est = await buy_fn(leg.amount)
+        if est <= 0:
+            leg.status = "failed"
+            return False
+        leg.status = "filled"
+        leg.date = today
+        leg.est_price = est
+        leg.est_qty = int(leg.amount // est)
+        self.log(f"{i + 1}차 매수 {leg.qty}주 @ {leg.price:,.0f} (감시가 {price:,.0f}, 평단 {self.avg_cost:,.0f})")
+        return True
+
+    def _cancel_waiting(self) -> None:
+        for leg in self.legs:
+            if leg.status == "waiting":
+                leg.status = "canceled"
+
+    async def _take_half(self, price: float, sell_fn: SellFn) -> None:
+        c = self.config
+        half = self.shares // 2
+        if half <= 0:      # 1주뿐이면 절반이 없다 — 전량 익절
+            self._cancel_waiting()
+            await self._exit(sell_fn, f"익절 +{c.take_profit_pct:g}% (1주라 전량)")
+            return
+        sold = await sell_fn(half)
+        if sold <= 0:
+            self.hand_off("절반 익절 매도 실패 — 계좌에서 확인 필요")
+            return
+        self.sold_qty += sold
+        self._cancel_waiting()
+        self.phase = CzPhase.TRAILING
+        self.peak = price
+        self.log(f"절반 익절 +{c.take_profit_pct:g}%: {sold}주 매도, 남은 매수 계획 취소 → "
+                 f"나머지 {self.shares}주 트레일링(고점 −{c.trailing_pct:g}%)")
+
+    async def _exit(self, sell_fn: SellFn, reason: str) -> None:
+        qty = self.shares
+        sold = await sell_fn(qty)
+        self.sold_qty += max(0, sold)
+        self._cancel_waiting()
+        self.phase = CzPhase.DONE
+        self.exit_reason = reason
+        self.log(f"{reason}: 전량 {qty}주 매도" + ("" if sold > 0 else " 실패"))
+
+    # -- 체결 이벤트 ---------------------------------------------------------
+    def on_fill(self, side: str, qty: int, price: float) -> None:
+        """실시간 체결(00) — 방금 주문한 차수의 실체결 수량·평균가를 누적한다."""
+        if side != "buy" or qty <= 0 or price <= 0 or self.active_leg is None:
+            return
+        leg = self.legs[self.active_leg]
+        total = leg.fill_qty + qty
+        leg.fill_avg = (leg.fill_avg * leg.fill_qty + price * qty) / total
+        leg.fill_qty = total
+        if leg.status == "waiting":   # 주문 응답보다 체결 이벤트가 먼저 온 경우
+            leg.status = "filled"
+
+    # -- 영속화 --------------------------------------------------------------
+    def to_dict(self) -> dict:
+        return {
+            "phase": self.phase.value,
+            "base": {"date": self.base_date, "open": self.base_open, "close": self.base_close,
+                     "confirmed": self.base_confirmed},
+            "legs": [asdict(leg) for leg in self.legs],
+            "sold_qty": self.sold_qty,
+            "peak": self.peak,
+            "exit_reason": self.exit_reason,
+            "active_leg": self.active_leg,
+        }
+
+    @classmethod
+    def from_dict(cls, code: str, config: CandleTradeConfig, data: dict,
+                  log: Callable[[str], None] = lambda _: None) -> "CandleTradeEngine":
+        base = data.get("base") or {}
+        legs = [CzLeg(**leg) for leg in data.get("legs") or []] or build_legs(config)
+        return cls(
+            code=code, config=config, log=log,
+            base_date=str(base.get("date") or ""),
+            base_open=float(base.get("open") or 0), base_close=float(base.get("close") or 0),
+            base_confirmed=bool(base.get("confirmed")),
+            phase=CzPhase(data.get("phase", CzPhase.DRAFT.value)),
+            legs=legs,
+            sold_qty=int(data.get("sold_qty") or 0),
+            peak=float(data.get("peak") or 0),
+            exit_reason=data.get("exit_reason", ""),
+            active_leg=data.get("active_leg"),
+        )
