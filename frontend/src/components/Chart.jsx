@@ -24,7 +24,10 @@ const volumePoint = (bar) => ({
 // anchorDate: 일봉일 때 이 날짜(YYYY-MM-DD) 앞 20거래일부터 60거래일을 보여준다(스크리너 조회일).
 // priceLines: [{price, color, title, dashed}] 수평 가격선(예: 대금 양봉 매매 구간·익절선).
 // onPriceClick: 지정하면 차트를 누른 위치의 가격으로 호출된다(구간 매매의 수평선 지정). 커서가 십자로 바뀐다.
-export default function Chart({ account, code, interval, tick, height = 360, sessionOnly = false, includeToday = false, extended = false, anchorDate = null, priceLines = null, onPriceClick = null, onSessionDate }) {
+// draggableLines: [{id, price}] 마우스·터치로 위아래로 끌 수 있는 선. 같은 선을 priceLines에
+//   dragId: id 로 넘기면, 끄는 동안엔 차트 안에서만 그 선을 옮긴다(부모 재렌더·레이아웃 이동 없음).
+// onLineDrag(id, price): 놓을 때 한 번, 마지막 가격으로 호출.
+export default function Chart({ account, code, interval, tick, height = 360, sessionOnly = false, includeToday = false, extended = false, anchorDate = null, priceLines = null, onPriceClick = null, draggableLines = null, onLineDrag = null, onSessionDate }) {
   const anchor = interval === 1440 ? anchorDate : null
   const anchorRef = useRef(anchor)
   anchorRef.current = anchor
@@ -159,7 +162,8 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
     if (!chart) return undefined
     const onClick = (param) => {
       const cb = priceClickRef.current
-      if (!cb || !param.point || !candleRef.current) return
+      // 선을 끌고 놓은 직후의 클릭은 '찍기'로 치지 않는다.
+      if (!cb || !param.point || !candleRef.current || Date.now() < suppressClickUntilRef.current) return
       const price = candleRef.current.coordinateToPrice(param.point.y)
       if (price !== null && price > 0) cb(price)
     }
@@ -167,15 +171,112 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
     return () => chart.unsubscribeClick(onClick)
   }, [])
 
+  // 선 끌기. 선 근처(마우스 6px, 터치 16px)에서 누르면 그 선을 잡는다. 잡은 동안엔 차트의
+  // 스크롤·확대와 페이지 스크롤(터치)을 막는다. 캡처 단계에서 가로채 차트 캔버스까지 가지 않게 한다.
+  const dragLinesRef = useRef(draggableLines)
+  dragLinesRef.current = draggableLines
+  const lineDragRef = useRef(onLineDrag)
+  lineDragRef.current = onLineDrag
+  const suppressClickUntilRef = useRef(0)
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return undefined
+    let dragging = null
+    const yOf = (e) => {
+      const t = e.touches ? (e.touches[0] || e.changedTouches[0]) : e
+      return t.clientY - el.getBoundingClientRect().top
+    }
+    const hit = (y, touch) => {
+      const candle = candleRef.current
+      if (!candle || !lineDragRef.current) return null
+      const tol = touch ? 16 : 6
+      let best = null
+      let bestD = Infinity
+      for (const line of dragLinesRef.current || []) {
+        if (!(line.price > 0)) continue
+        const c = candle.priceToCoordinate(line.price)
+        if (c === null) continue
+        const d = Math.abs(c - y)
+        if (d <= tol && d < bestD) { best = line.id; bestD = d }
+      }
+      return best
+    }
+    let lastPrice = null
+    const move = (e) => {
+      if (!dragging) return
+      if (e.cancelable) e.preventDefault()
+      const price = candleRef.current?.coordinateToPrice(yOf(e))
+      if (price === null || !(price > 0)) return
+      lastPrice = price
+      dragLineObjsRef.current[dragging]?.applyOptions({ price })
+    }
+    const end = () => {
+      if (!dragging) return
+      const id = dragging
+      const price = lastPrice
+      dragging = null
+      lastPrice = null
+      chartRef.current?.applyOptions({ handleScroll: true, handleScale: true })
+      el.classList.remove('dragging-line')
+      suppressClickUntilRef.current = Date.now() + 400
+      window.removeEventListener('mousemove', move)
+      window.removeEventListener('touchmove', move)
+      window.removeEventListener('mouseup', end)
+      window.removeEventListener('touchend', end)
+      window.removeEventListener('touchcancel', end)
+      if (price !== null) lineDragRef.current?.(id, price)
+    }
+    const start = (e) => {
+      const touch = e.type === 'touchstart'
+      if (touch && e.touches.length !== 1) return
+      if (!touch && e.button !== 0) return
+      const id = hit(yOf(e), touch)
+      if (!id) return
+      e.stopPropagation()
+      if (e.cancelable) e.preventDefault()
+      dragging = id
+      chartRef.current?.applyOptions({ handleScroll: false, handleScale: false })
+      el.classList.add('dragging-line')
+      if (touch) {
+        window.addEventListener('touchmove', move, { passive: false })
+        window.addEventListener('touchend', end)
+        window.addEventListener('touchcancel', end)
+      } else {
+        window.addEventListener('mousemove', move)
+        window.addEventListener('mouseup', end)
+      }
+    }
+    const hover = (e) => {
+      if (!dragging) el.classList.toggle('line-hover', !!hit(yOf(e), false))
+    }
+    el.addEventListener('mousedown', start, true)
+    el.addEventListener('touchstart', start, { capture: true, passive: false })
+    el.addEventListener('mousemove', hover)
+    return () => {
+      end()
+      el.removeEventListener('mousedown', start, true)
+      el.removeEventListener('touchstart', start, { capture: true })
+      el.removeEventListener('mousemove', hover)
+    }
+  }, [])
+
   // 수평 가격선. 내용이 바뀔 때만 다시 그린다(부모가 매 렌더 새 배열을 넘겨도).
+  // dragId 가 있는 선은 끌기 중에 직접 옮길 수 있게 객체를 들고 있는다.
+  const dragLineObjsRef = useRef({})
   const linesKey = JSON.stringify(priceLines || [])
   useEffect(() => {
     const candle = candleRef.current
     if (!candle) return undefined
-    const created = (priceLines || []).filter((l) => l && l.price > 0).map((l) => candle.createPriceLine({
-      price: l.price, color: l.color || '#888', lineWidth: 1, lineStyle: l.dashed ? 2 : 0,
-      axisLabelVisible: true, title: l.title || '',
-    }))
+    const objs = {}
+    const created = (priceLines || []).filter((l) => l && l.price > 0).map((l) => {
+      const line = candle.createPriceLine({
+        price: l.price, color: l.color || '#888', lineWidth: 1, lineStyle: l.dashed ? 2 : 0,
+        axisLabelVisible: true, title: l.title || '',
+      })
+      if (l.dragId) objs[l.dragId] = line
+      return line
+    })
+    dragLineObjsRef.current = objs
     return () => created.forEach((line) => candleRef.current?.removePriceLine(line))
   }, [linesKey])
 

@@ -640,6 +640,8 @@ input:focus { outline: none; border-color: var(--accent); }
 .ct-rule { font-size: 12px; margin: 8px 0 0; }
 .ct-maxdrop { font-size: 12px; margin-top: 2px; }
 .chart-canvas.picking, .chart-canvas.picking * { cursor: crosshair !important; }
+.chart-canvas.line-hover, .chart-canvas.line-hover *,
+.chart-canvas.dragging-line, .chart-canvas.dragging-line * { cursor: ns-resize !important; }
 .ct-zone { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; margin: 8px 0 4px;
   padding: 8px 10px; border: 1px dashed #2e7d32; border-radius: 8px; background: #f3faf3; }
 .ct-zone input { width: 96px; padding: 4px 6px; border: 1px solid var(--border, #ccc); border-radius: 6px; }

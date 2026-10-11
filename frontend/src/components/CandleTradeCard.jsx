@@ -88,6 +88,8 @@ export default function CandleTradeCard({ account, item }) {
     : !(zLow > 0 && zHigh > 0) ? '상단·하단을 모두 정하세요.'
       : !(zLow < zHigh) ? '하단은 상단보다 낮아야 합니다.' : ''
   const setZoneAt = (key, value) => { setZoneForm((z) => ({ ...z, [key]: value })); setZoneDirty(true) }
+  // 상단·하단 선 끌기(마우스·터치). 놓으면 입력값이 바뀌고, [구간 저장]으로 확정한다.
+  const onLineDrag = (id, p) => setZoneAt(id, roundToTick(p))
   const onPriceClick = pick && item.zone_editable ? (p) => {
     setZoneAt(pick, roundToTick(p))
     // 상단 다음엔 하단을 바로 찍을 수 있게(비어 있을 때만).
@@ -155,12 +157,13 @@ export default function CandleTradeCard({ account, item }) {
 
   const lines = useMemo(() => {
     const out = []
-    if (zone) {
-      out.push({ price: zone.high, color: '#2e7d32', title: '구간 상단', dashed: isZone && zoneDirty })
-      out.push({ price: zone.low, color: '#2e7d32', title: '구간 하단', dashed: isZone && zoneDirty })
-    } else if (isZone) {   // 하나만 찍은 상태도 보여 준다
-      if (zHigh > 0) out.push({ price: zHigh, color: '#2e7d32', title: '구간 상단', dashed: true })
-      if (zLow > 0) out.push({ price: zLow, color: '#2e7d32', title: '구간 하단', dashed: true })
+    if (isZone) {
+      // 입력값 그대로(하나만 찍었거나 끄는 중 상·하단이 뒤바뀐 상태도 보여 준다). 저장 전엔 점선.
+      if (zHigh > 0) out.push({ price: zHigh, color: '#2e7d32', title: '구간 상단', dashed: zoneDirty, dragId: 'high' })
+      if (zLow > 0) out.push({ price: zLow, color: '#2e7d32', title: '구간 하단', dashed: zoneDirty, dragId: 'low' })
+    } else if (zone) {
+      out.push({ price: zone.high, color: '#2e7d32', title: '구간 상단' })
+      out.push({ price: zone.low, color: '#2e7d32', title: '구간 하단' })
     }
     if (item.legs[1]?.trigger && item.legs[1].possible) out.push({ price: item.legs[1].trigger, color: '#6a1b9a', title: '2차 ≤', dashed: true })
     if (item.avg_cost > 0 && holding) out.push({ price: item.avg_cost, color: '#555', title: '평단', dashed: true })
@@ -242,20 +245,25 @@ export default function CandleTradeCard({ account, item }) {
             onChange={(e) => setZoneAt('low', e.target.value)} /></label>
           <button className={pick === 'low' ? 'on' : ''} disabled={!item.zone_editable || busy}
             aria-pressed={pick === 'low'} onClick={() => setPick(pick === 'low' ? null : 'low')}>차트에서 하단 찍기</button>
-          {zoneDirty && (
-            <button className="on" disabled={busy || !!zoneFormError} onClick={saveZone}>구간 저장</button>
+          {/* 항상 자리를 차지하게 둔다 — 선을 끄는 도중에 버튼이 나타나며 차트가 밀리면 끌기가 튄다. */}
+          {item.zone_editable && (
+            <button className={zoneDirty ? 'on' : ''} disabled={busy || !zoneDirty || !!zoneFormError} onClick={saveZone}>
+              {zoneDirty ? '구간 저장' : '저장됨'}
+            </button>
           )}
           <span className={`ct-zone-hint ${zoneFormError ? 'down' : 'muted'}`}>
             {zoneFormError
               || (!item.zone_editable ? '1차 매수 후에는 구간을 바꿀 수 없습니다.'
                 : pick ? `차트에서 ${pick === 'high' ? '상단' : '하단'} 가격을 누르세요(호가 단위로 맞춤).`
-                  : zone ? `폭 ${((1 - zone.low / zone.high) * 100).toFixed(1)}% — 예: 10일선 눌림목 부근을 잡으세요.`
+                  : zone ? `폭 ${((1 - zone.low / zone.high) * 100).toFixed(1)}% — 차트의 구간 선을 끌어 옮길 수 있습니다.`
                     : '상단·하단 가격을 차트에서 찍거나 직접 입력하세요.')}
           </span>
         </div>
       )}
       <Chart account={account.id} code={item.code} interval={interval} tick={tick} height={isZone ? 320 : 260}
-        anchorDate={isZone ? null : item.base.date} priceLines={lines} onPriceClick={onPriceClick} />
+        anchorDate={isZone ? null : item.base.date} priceLines={lines} onPriceClick={onPriceClick}
+        draggableLines={isZone && item.zone_editable ? [{ id: 'high', price: zHigh }, { id: 'low', price: zLow }] : null}
+        onLineDrag={isZone && item.zone_editable ? onLineDrag : null} />
 
       <div className="panels">
         <div className="ct-config">
