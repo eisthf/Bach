@@ -148,6 +148,14 @@ input:focus { outline: none; border-color: var(--accent); }
 .chip-state-manual_trading { color: var(--accent); }
 .chip-state-monitor { color: var(--amber); }
 .chip-state-auto_trading { color: #fff; background: var(--green); border-color: var(--green); }
+/* 대금 양봉·구간 매매 칩: 단계별 꼬리표 색 */
+.trade-chip-bar { padding: 0; }
+.chip-phase-draft, .chip-phase-done, .chip-phase-manual { color: var(--muted, #888); }
+.chip-phase-watching { color: var(--amber); }
+.chip-phase-accumulating, .chip-phase-holding, .chip-phase-trailing {
+  color: #fff; background: var(--green); border-color: var(--green);
+}
+.chip-acc { font-size: 11px; font-weight: 600; opacity: .8; }
 .code-input { width: 200px; }
 .name-input { width: 160px; }
 .add-btn {
@@ -522,6 +530,7 @@ input:focus { outline: none; border-color: var(--accent); }
     scrollbar-width: thin;
   }
   .stock-chip { flex: 0 0 auto; min-height: 38px; }
+  .trade-chip-bar { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; padding-bottom: 2px; }
   .account-col .panels-col { padding: 10px 0 0; }
 
   .stock-panel { border-left: 0; border-right: 0; border-radius: 0; padding: 12px 10px; }
@@ -639,6 +648,8 @@ input:focus { outline: none; border-color: var(--accent); }
 .ct-zone button:disabled { opacity: .5; cursor: default; }
 .ct-zone .ct-zone-hint { flex-basis: 100%; }
 .zone-add { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.candle-trade-intro .zone-add .add-btn { background: var(--accent); color: #fff; border: none; margin-left: 0; }
+.candle-trade-intro .zone-add .add-btn:hover:not(:disabled) { background: #2f4ac0; }
 .zone-add input, .zone-add select { padding: 6px 8px; border: 1px solid var(--border, #ccc); border-radius: 6px; }
 .ct-config label.ct-sub { padding-left: 14px; }
 .ct-error, .ct-msg { font-size: 12px; margin-top: 8px; }

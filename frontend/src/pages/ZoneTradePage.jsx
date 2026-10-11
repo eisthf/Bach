@@ -7,6 +7,7 @@
 import React, { useMemo, useState } from 'react'
 import { useStore } from '../store'
 import CandleTradeCard, { ACTIVE } from '../components/CandleTradeCard'
+import TradeChipBar, { useHiddenCards } from '../components/TradeChipBar'
 
 export default function ZoneTradePage() {
   const { accounts, candleTrades } = useStore()
@@ -21,6 +22,8 @@ export default function ZoneTradePage() {
     return out.sort((x, y) => rank(x.item.phase) - rank(y.item.phase)
       || String(y.item.created_at).localeCompare(String(x.item.created_at)))
   }, [accounts, candleTrades])
+  const { isHidden, toggle } = useHiddenCards('bach.hidden.zoneTrade')
+  const shown = rows.filter(({ account, item }) => !isHidden(account, item))
 
   return (
     <main className="candle-trade">
@@ -32,11 +35,15 @@ export default function ZoneTradePage() {
         </span>
         <ZoneAddForm accounts={accounts} />
       </div>
+      <TradeChipBar rows={rows} isHidden={isHidden} toggle={toggle} showAccount={accounts.length > 1} />
       {rows.length === 0 && (
         <div className="screener-empty">등록된 구간 매매 종목이 없습니다.</div>
       )}
+      {rows.length > 0 && shown.length === 0 && (
+        <div className="screener-empty">모든 종목이 숨김 상태입니다. 위 종목 배지를 누르면 다시 보입니다.</div>
+      )}
       <div className="panels-col">
-        {rows.map(({ account, item }) => (
+        {shown.map(({ account, item }) => (
           <CandleTradeCard key={`${account.id}:${item.code}`} account={account} item={item} />
         ))}
       </div>

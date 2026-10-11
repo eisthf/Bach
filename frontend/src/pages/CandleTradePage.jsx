@@ -11,6 +11,7 @@ import React, { useMemo } from 'react'
 import { useStore } from '../store'
 import { ROUTES, navigate } from '../router'
 import CandleTradeCard, { ACTIVE } from '../components/CandleTradeCard'
+import TradeChipBar, { useHiddenCards } from '../components/TradeChipBar'
 
 export default function CandleTradePage() {
   const { accounts, candleTrades } = useStore()
@@ -25,6 +26,8 @@ export default function CandleTradePage() {
     return out.sort((x, y) => rank(x.item.phase) - rank(y.item.phase)
       || String(y.item.created_at).localeCompare(String(x.item.created_at)))
   }, [accounts, candleTrades])
+  const { isHidden, toggle } = useHiddenCards('bach.hidden.candleTrade')
+  const shown = rows.filter(({ account, item }) => !isHidden(account, item))
 
   return (
     <main className="candle-trade">
@@ -36,11 +39,15 @@ export default function CandleTradePage() {
         </span>
         <button className="ghost" onClick={() => navigate(ROUTES.BIG_CANDLE)}>대금 양봉에서 고르기</button>
       </div>
+      <TradeChipBar rows={rows} isHidden={isHidden} toggle={toggle} showAccount={accounts.length > 1} />
       {rows.length === 0 && (
         <div className="screener-empty">등록된 대금 양봉 매매 종목이 없습니다.</div>
       )}
+      {rows.length > 0 && shown.length === 0 && (
+        <div className="screener-empty">모든 종목이 숨김 상태입니다. 위 종목 배지를 누르면 다시 보입니다.</div>
+      )}
       <div className="panels-col">
-        {rows.map(({ account, item }) => (
+        {shown.map(({ account, item }) => (
           <CandleTradeCard key={`${account.id}:${item.code}`} account={account} item={item} />
         ))}
       </div>
