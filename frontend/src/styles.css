@@ -613,6 +613,7 @@ input:focus { outline: none; border-color: var(--accent); }
 .ct-ratios input { width: 64px; }
 .ct-rule { font-size: 12px; margin: 8px 0 0; }
 .ct-maxdrop { font-size: 12px; margin-top: 2px; }
+.ct-config label.ct-sub { padding-left: 14px; }
 .ct-error, .ct-msg { font-size: 12px; margin-top: 8px; }
 .ct-error { color: var(--down); }
 .ct-legs { font-size: 13px; }

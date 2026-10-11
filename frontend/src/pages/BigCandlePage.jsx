@@ -10,7 +10,7 @@ import { api } from '../api'
 import ScreenerChart from '../components/ScreenerChart'
 import SortHeader, { sortRows, useSort } from '../components/SortHeader'
 import { ROUTES, navigate } from '../router'
-import { DEFAULT_ADD_DROP_PCT, DEFAULT_ZONE_MARGIN_PCT, secondLegCheck, zoneOf } from '../candleZone'
+import { DEFAULT_CANDLE_CONFIG, addRuleText, secondLegCheck, zoneOf } from '../candleZone'
 
 const RISE_KEY = 'bach.bigCandle.minRise'
 const CHANGE_KEY = 'bach.bigCandle.minChange'
@@ -288,13 +288,14 @@ export default function BigCandlePage() {
             title: (account) => `${account.label} 계좌의 대금 양봉 매매 목록에 추가합니다(주문은 나가지 않음). `
               + `${data.date} 봉(시가 ${won(selectedStock.open)} → ${priceLabel} ${won(selectedStock.close)})이 기준 캔들입니다.`,
             run: async (account) => {
-              // 기본 설정(매입 구간 여백·2차 하락률)으로 2차 매수가 가능한 캔들인지 먼저 알린다.
-              const leg2 = secondLegCheck(zoneOf(selectedStock, DEFAULT_ZONE_MARGIN_PCT), DEFAULT_ADD_DROP_PCT)
+              // 기본 설정(매입 구간 여백·2차 기준)으로 2차 매수가 가능한 캔들인지 먼저 알린다.
+              const cfg = DEFAULT_CANDLE_CONFIG
+              const leg2 = secondLegCheck(zoneOf(selectedStock, cfg.zone_margin_pct), cfg)
               if (leg2 && !leg2.possible && !window.confirm(
                 `⚠️ 이 캔들은 2차 매수가 불가능합니다.
 `
                 + `몸통(시가 대비 +${selectedStock.rise_pct.toFixed(2)}%)이 작아 매입 구간 안 최대 하락률이 `
-                + `${leg2.maxDropPct.toFixed(1)}%로, 2차 조건(1차가 −${DEFAULT_ADD_DROP_PCT}%)보다 작습니다.
+                + `${leg2.maxDropPct.toFixed(1)}%뿐이라 2차 조건(${addRuleText(cfg)})을 만족할 수 없습니다.
 `
                 + `기본 설정으로는 1차만 매수됩니다. 그래도 등록할까요?`)) return
               try {

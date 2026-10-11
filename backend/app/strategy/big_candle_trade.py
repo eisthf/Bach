@@ -14,8 +14,14 @@
     - 가격이 매입 구간 안 → 1차 매수(총 투자액 × 1차 비중) → ACCUMULATING
     - D+entry_days 거래일까지 1차 조건이 없으면 → DONE(기한 만료, 매매 안 함)
   ACCUMULATING (1차만 보유, 2차 대기):
-    - 2차: 1차 매수일 **다음 날부터**, 가격이 매입 구간 안이면서
-           1차 매수가 × (1 − u%) 이하 → 나머지 금액 매수 → HOLDING
+    - 2차: 1차 매수일 **다음 날부터**, 가격이 매입 구간 안이면서 2차 조건가 이하
+           → 나머지 금액 매수 → HOLDING. 조건가(P=1차 매수가, L=구간 하단, add_mode):
+             fixed  P × (1 − u%)
+             gap    P − k% × (P − L)  (하락폭 < 최소 하락률이면 2차 없음 — 1차가 하단에
+                    붙어 체결됐을 때 같은 가격에 금액만 두 배로 사는 것을 막는다)
+             mixed  (P − L)/P > u% 일 때만 min(fixed, P − k% × (P − L)) — 둘 중 더 깊이
+                    내려간 가격 (기본). 아니면 2차 없음. 구간이 넓을 때 −u% 고정은 너무 위에서
+                    사게 되므로 하단 쪽에서 사되, 여유가 빠듯해도 최소 u%는 내려간 곳에서 산다
   ACCUMULATING / HOLDING:
     - 절반 익절: 가격 ≥ 평단 × (1 + p%) → 보유의 절반 매도, 남은 매수 계획 취소 → TRAILING
   TRAILING: 고점 × (1 − t%) 이하 → 나머지 전량 매도 → DONE
@@ -82,6 +88,33 @@ class CzLeg:
     def price(self) -> float:
         """이 차수의 체결가 — 실체결 이벤트가 있으면 그 평균, 없으면 잠정값."""
         return self.fill_avg if self.fill_qty else self.est_price
+
+
+_BASIS = {"fixed": "고정 하락률", "gap": "하단까지 갭 비율", "": ""}
+
+
+def add_trigger_for(config: CandleTradeConfig, first_price: float,
+                    zone: Optional[Tuple[float, float]]) -> Tuple[Optional[float], str]:
+    """2차 매수 조건가 (가격, 근거). 근거 "fixed"=1차가 −u%, "gap"=하단까지 갭의 k%."""
+    p = first_price
+    if p <= 0:
+        return None, ""
+    fixed = p * (1 - config.add_drop_pct / 100)
+    low = zone[0] if zone else None
+    gap = None
+    if low is not None and p > low:
+        g = p - (p - low) * config.add_gap_pct / 100
+        if (p - g) / p * 100 >= config.add_min_drop_pct:
+            gap = g
+    if config.add_mode == "fixed":
+        return fixed, "fixed"
+    if config.add_mode == "gap":
+        return (gap, "gap") if gap is not None else (None, "")
+    # mixed: 1차가에서 하단까지 여유가 u% 를 넘을 때만, 고정·갭 중 더 깊은 가격에서
+    if low is None or p <= low or (p - low) / p * 100 <= config.add_drop_pct:
+        return None, ""
+    deep = p - (p - low) * config.add_gap_pct / 100
+    return (deep, "gap") if deep < fixed else (fixed, "fixed")
 
 
 def build_legs(config: CandleTradeConfig) -> List[CzLeg]:
@@ -153,12 +186,19 @@ class CandleTradeEngine:
         z = self.zone()
         return z is not None and z[0] <= price <= z[1]
 
-    def add_trigger(self) -> Optional[float]:
-        """2차 매수 상한가(1차 매수가 × (1 − u%)). 1차 전이거나 2차가 끝났으면 None."""
+    def add_plan(self) -> Tuple[Optional[float], str]:
+        """2차 매수 조건가와 그 근거("fixed" | "gap" | ""). 1차 전이거나 2차가 끝났으면
+        (None, ""). 조건가가 구간 하단 아래면 2차는 나가지 않는다(구간 안이어야 하므로)."""
         if len(self.legs) < 2 or self.legs[0].status != "filled" or self.legs[1].status != "waiting":
-            return None
-        p = self.legs[0].price
-        return p * (1 - self.config.add_drop_pct / 100) if p > 0 else None
+            return None, ""
+        return add_trigger_for(self.config, self.legs[0].price, self.zone())
+
+    def add_trigger(self) -> Optional[float]:
+        return self.add_plan()[0]
+
+    def add_possible(self) -> bool:
+        trigger, z = self.add_trigger(), self.zone()
+        return trigger is not None and z is not None and trigger >= z[0]
 
     def take_profit_price(self) -> Optional[float]:
         if self.phase not in (CzPhase.ACCUMULATING, CzPhase.HOLDING):
@@ -284,8 +324,10 @@ class CandleTradeEngine:
             if lo <= price <= hi:
                 if await self._buy(0, price, today, buy_fn):
                     self.phase = CzPhase.ACCUMULATING
-                    self.log(f"2차 매수: 다음 거래일부터 구간 안 & ≤ {self.add_trigger() or 0:,.0f}, "
-                             f"절반 익절: 평단 +{c.take_profit_pct:g}%")
+                    trigger, basis = self.add_plan()
+                    add = (f"2차 매수: 다음 거래일부터 구간 안 & ≤ {trigger:,.0f}({_BASIS[basis]})"
+                           if self.add_possible() else "2차 매수 없음(1차가에서 구간 하단까지 여유 부족)")
+                    self.log(f"{add}, 절반 익절: 평단 +{c.take_profit_pct:g}%")
                 else:
                     self.phase = CzPhase.DONE
                     self.exit_reason = "1차 매수 실패"

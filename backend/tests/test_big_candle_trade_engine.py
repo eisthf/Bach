@@ -34,7 +34,9 @@ class Broker:
 
 
 def make(**cfg):
+    """기본 흐름 테스트는 2차 조건가가 단순한 고정 −5%로 쓴다(add_mode 별 동작은 아래 따로)."""
     logs = []
+    cfg.setdefault("add_mode", "fixed")
     eng = CandleTradeEngine("000001", CandleTradeConfig(total_krw=1_000_000, **cfg), log=logs.append)
     eng.set_base(BASE, 10_000, 12_000, confirmed=True)
     eng.start()
@@ -275,3 +277,94 @@ async def test_roundtrip_persistence():
     assert back.phase == CzPhase.TRAILING and back.shares == eng.shares
     assert back.zone() == eng.zone() and back.peak == eng.peak and back.base_confirmed
     assert back.day == ""                         # 하루 맥락은 재시작 후 다시 받는다
+
+
+# ---------------------------------------------------------------------------
+# 2차 조건가 기준: fixed / gap / mixed(기본)
+# ---------------------------------------------------------------------------
+def make_small(**cfg):
+    """몸통 5% 캔들: 시가 10,000 → 종가 10,500, 구간 10,050 ~ 10,450 (고정 −5%는 구간 밖)."""
+    eng, br, logs = make(**cfg)
+    eng.set_base(BASE, 10_000, 10_500, confirmed=True)
+    return eng, br, logs
+
+
+def test_default_add_mode_is_mixed():
+    assert CandleTradeConfig().add_mode == "mixed"
+
+
+async def test_mixed_buys_low_in_wide_zone():
+    eng, br, _ = make(add_mode="mixed")
+    day(eng, D1, 1)
+    await tick(eng, br, 11_000, D1)          # 하단까지 여유 7.3% > 5% → 11,000 − 0.8×800 = 10,360
+    assert eng.add_plan() == (pytest.approx(10_360), "gap") and eng.add_possible()
+    day(eng, D2, 2)
+    await tick(eng, br, 10_450, D2)          # 고정 −5% 가격에서는 사지 않는다
+    assert len(br.buys) == 1
+    await tick(eng, br, 10_360, D2)
+    assert len(br.buys) == 2 and eng.phase == CzPhase.HOLDING
+
+
+async def test_mixed_skips_second_leg_when_room_within_threshold():
+    eng, br, logs = make_small(add_mode="mixed")
+    day(eng, D1, 1)
+    await tick(eng, br, 10_400, D1)          # 하단(10,050)까지 여유 3.4% ≤ 5% → 2차 없음
+    assert eng.add_plan() == (None, "") and not eng.add_possible()
+    assert any("2차 매수 없음" in m for m in logs)
+    day(eng, D2, 2)
+    await tick(eng, br, 10_050, D2)
+    assert len(br.buys) == 1
+
+
+@pytest.mark.parametrize("first, ok", [(10_600, False), (10_700, True)])
+async def test_mixed_threshold_around_five_percent(first, ok):
+    eng, br, _ = make(add_mode="mixed")
+    eng.set_base(BASE, 10_000, 11_000, confirmed=True)   # 구간 10,100 ~ 10,900
+    day(eng, D1, 1)
+    await tick(eng, br, first, D1)           # 여유 4.7% → 2차 없음, 5.6% → 2차 있음
+    assert eng.add_possible() is ok
+
+
+async def test_mixed_uses_fixed_when_gap_price_is_shallower():
+    eng, br, _ = make(add_mode="mixed")
+    eng.set_base(BASE, 10_000, 11_000, confirmed=True)   # 구간 10,100 ~ 10,900
+    day(eng, D1, 1)
+    await tick(eng, br, 10_700, D1)          # 갭 80% = 10,220(−4.5%) vs 고정 10,165(−5%) → 더 깊은 고정
+    assert eng.add_plan() == (pytest.approx(10_165), "fixed")
+    day(eng, D2, 2)
+    await tick(eng, br, 10_200, D2)
+    assert len(br.buys) == 1
+    await tick(eng, br, 10_165, D2)
+    assert len(br.buys) == 2
+
+
+async def test_gap_below_min_drop_means_no_second_leg():
+    eng, br, logs = make_small(add_mode="gap")
+    day(eng, D1, 1)
+    await tick(eng, br, 10_100, D1)          # 하단까지 50원 → 갭 80% = 0.4% 하락 < 최소 2%
+    assert not eng.add_possible()
+    day(eng, D2, 2)
+    await tick(eng, br, 10_050, D2)
+    assert len(br.buys) == 1
+
+
+async def test_fixed_mode_keeps_unreachable_trigger():
+    eng, br, _ = make_small(add_mode="fixed")
+    day(eng, D1, 1)
+    await tick(eng, br, 10_400, D1)
+    assert eng.add_plan() == (pytest.approx(9_880), "fixed") and not eng.add_possible()
+    day(eng, D2, 2)
+    await tick(eng, br, 10_100, D2)
+    assert len(br.buys) == 1
+
+
+async def test_gap_mode_on_big_candle_goes_deeper():
+    eng, br, _ = make(add_mode="gap", add_gap_pct=80)
+    day(eng, D1, 1)
+    await tick(eng, br, 11_000, D1)          # 11,000 − 0.8×800 = 10,360 (고정 −5%면 10,450)
+    assert eng.add_plan() == (pytest.approx(10_360), "gap")
+    day(eng, D2, 2)
+    await tick(eng, br, 10_400, D2)
+    assert len(br.buys) == 1
+    await tick(eng, br, 10_360, D2)
+    assert len(br.buys) == 2

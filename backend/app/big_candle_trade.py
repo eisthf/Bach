@@ -96,6 +96,8 @@ class CandleTradeManager:
                 "no": i + 1, "ratio": leg.ratio, "amount": leg.amount, "status": leg.status,
                 "qty": leg.qty, "price": leg.price, "confirmed": leg.fill_qty > 0,
                 "date": leg.date, "trigger": eng.add_trigger() if i == 1 else None,
+                "trigger_basis": eng.add_plan()[1] if i == 1 else "",
+                "possible": eng.add_possible() if i == 1 else None,
             })
         zone = eng.zone()
         return {

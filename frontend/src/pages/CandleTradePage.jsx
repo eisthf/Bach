@@ -3,7 +3,7 @@
 // 여러 거래일에 걸친 매매라 [매매] 목록(당일 상태머신)과 분리했다.
 //   매입 구간: 기준 캔들 몸통(시가~종가) 양 끝에서 몸통 길이의 x%씩 안쪽
 //   설정 중 ─[감시 시작]→ 기준일 다음 거래일부터 가격이 구간에 들어오면 1차 매수(기한 N거래일)
-//   2차: 1차 다음 날부터, 구간 안이면서 1차 매수가 −u% 이하
+//   2차: 1차 다음 날부터, 구간 안이면서 2차 조건가 이하(혼합: 하단까지 여유 > u%면 −u%·갭의 k% 중 깊은 쪽 / 고정 −u% / 갭의 k%)
 //   평단 +p% → 절반 매도, 남은 매수 계획 취소, 나머지는 고점 −t% 트레일링 스톱
 //   전일 종가 < 구간 하단 → 그날 하단 아래 가격에서 전량 매도
 //   [수동 전환]: 보유 중 언제든 엔진을 멈추고 [매매] 목록(수동매매)으로 옮긴다.
@@ -12,7 +12,7 @@ import { useStore } from '../store'
 import Chart from '../components/Chart'
 import PriceTicker from '../components/PriceTicker'
 import { ROUTES, navigate } from '../router'
-import { secondLegCheck, zoneOf } from '../candleZone'
+import { addRuleText, secondLegCheck, zoneOf } from '../candleZone'
 
 const fmt = (n) => Number(n || 0).toLocaleString('ko-KR')
 const fmtPrice = (n) => (n ? Math.round(n).toLocaleString('ko-KR') : '—')
@@ -73,7 +73,10 @@ function fromForm(f) {
     total_krw: Math.round(Number(f.total_krw) || 0),
     first_ratio_pct: Number(f.first_ratio_pct),
     zone_margin_pct: Number(f.zone_margin_pct),
+    add_mode: f.add_mode,
     add_drop_pct: Number(f.add_drop_pct),
+    add_gap_pct: Number(f.add_gap_pct),
+    add_min_drop_pct: Number(f.add_min_drop_pct),
     take_profit_pct: Number(f.take_profit_pct),
     trailing_pct: Number(f.trailing_pct),
     entry_days: Math.round(Number(f.entry_days) || 0),
@@ -87,6 +90,8 @@ function validate(c) {
   if (!(c.first_ratio_pct >= 10 && c.first_ratio_pct <= 90)) return '1차 매수 비중은 10~90%여야 합니다.'
   if (!(c.zone_margin_pct >= 0 && c.zone_margin_pct < 50)) return '매입 구간 여백은 0 이상 50% 미만이어야 합니다.'
   if (!(c.add_drop_pct > 0 && c.add_drop_pct < 100)) return '2차 매수 하락률은 0~100% 사이여야 합니다.'
+  if (!(c.add_gap_pct > 0 && c.add_gap_pct <= 100)) return '2차 갭 비율은 0 초과 100% 이하여야 합니다.'
+  if (!(c.add_min_drop_pct >= 0 && c.add_min_drop_pct < 100)) return '2차 최소 하락률은 0~100% 사이여야 합니다.'
   if (!(c.take_profit_pct > 0 && c.take_profit_pct <= 500)) return '절반 익절 상승률은 0~500% 사이여야 합니다.'
   if (!(c.trailing_pct > 0 && c.trailing_pct < 100)) return '트레일링 하락률은 0~100% 사이여야 합니다.'
   if (!(c.entry_days >= 1 && c.entry_days <= 60)) return '1차 매수 기한은 1~60거래일이어야 합니다.'
@@ -118,7 +123,7 @@ function CandleTradeCard({ account, item }) {
   const zone = (dirty && !bought ? zoneOf(item.base, cfg.zone_margin_pct) : item.zone) || item.zone
   // 2차 매수 가능성. 2차가 아직 대기 중이고 운용(또는 설정) 중일 때만 경고한다.
   const leg2Waiting = item.legs[1]?.status === 'waiting'
-  const leg2 = secondLegCheck(zone, cfg.add_drop_pct, bought ? item.legs[0].price : 0)
+  const leg2 = secondLegCheck(zone, cfg, bought ? item.legs[0].price : 0)
   const leg2Warn = leg2 && !leg2.possible && leg2Waiting && editable
   const body = item.base.close - item.base.open
 
@@ -164,7 +169,7 @@ function CandleTradeCard({ account, item }) {
       out.push({ price: zone.high, color: '#2e7d32', title: '구간 상단' })
       out.push({ price: zone.low, color: '#2e7d32', title: '구간 하단' })
     }
-    if (item.legs[1]?.trigger) out.push({ price: item.legs[1].trigger, color: '#6a1b9a', title: '2차 ≤', dashed: true })
+    if (item.legs[1]?.trigger && item.legs[1].possible) out.push({ price: item.legs[1].trigger, color: '#6a1b9a', title: '2차 ≤', dashed: true })
     if (item.avg_cost > 0 && holding) out.push({ price: item.avg_cost, color: '#555', title: '평단', dashed: true })
     if (item.take_profit_price) out.push({ price: item.take_profit_price, color: '#d32f2f', title: '절반 익절', dashed: true })
     if (item.trailing_stop) out.push({ price: item.trailing_stop, color: '#e65100', title: '트레일링', dashed: true })
@@ -190,9 +195,9 @@ function CandleTradeCard({ account, item }) {
         <div className="recovery-notice" role="alert">
           {leg2.afterFill
             ? <>⚠️ 2차 매수가 불가능합니다 — 1차 매수가 {fmtPrice(item.legs[0].price)}에서 구간 하단 {fmtPrice(zone.low)}까지
-              {' '}{leg2.maxDropPct.toFixed(1)}%뿐이라 2차 조건(−{cfg.add_drop_pct}%)을 만족하는 가격이 구간 안에 없습니다.</>
-            : <>⚠️ 이 캔들은 2차 매수가 불가능합니다 — 구간 안 최대 하락률 {leg2.maxDropPct.toFixed(1)}% &lt; 2차 조건
-              {' '}{cfg.add_drop_pct}%. 1차만 매수됩니다(매입 구간 여백이나 2차 하락률을 줄이면 가능).</>}
+              {' '}{leg2.maxDropPct.toFixed(1)}%뿐이라 2차 조건({addRuleText(cfg)})을 만족하는 가격이 구간 안에 없습니다.</>
+            : <>⚠️ 이 캔들은 2차 매수가 불가능합니다 — 구간 안 최대 하락률 {leg2.maxDropPct.toFixed(1)}%로는
+              {' '}2차 조건({addRuleText(cfg)})을 만족할 수 없습니다. 1차만 매수됩니다.</>}
         </div>
       )}
       {item.exit_reason && !active && <div className="ct-exit">종료 사유: {item.exit_reason}</div>}
@@ -254,10 +259,42 @@ function CandleTradeCard({ account, item }) {
               <input type="number" min="1" max="60" step="1" value={form.entry_days} disabled={bought}
                 onChange={(e) => set('entry_days', e.target.value)} />거래일
             </label>
-            <label title="1차 매수 다음 날부터, 가격이 매입 구간 안이면서 이 조건을 만족할 때">2차 매수: 1차 매수가 대비
-              <input type="number" min="0.1" max="99" step="any" value={form.add_drop_pct}
-                onChange={(e) => set('add_drop_pct', e.target.value)} />% 이상 하락
+            <label title="1차 매수 다음 날부터, 가격이 매입 구간 안이면서 2차 조건가 이하일 때 2차를 삽니다. 혼합: 1차가에서 구간 하단까지 여유가 문턱을 넘을 때만, 문턱 하락률과 갭 비율 중 더 깊이 내려간 가격에서 삽니다(넓은 구간에서 너무 위쪽 매수를 피하고, 최소 문턱만큼은 내려감).">2차 매수 기준
+              <select value={form.add_mode} onChange={(e) => set('add_mode', e.target.value)}>
+                <option value="mixed">혼합</option>
+                <option value="fixed">고정 하락률</option>
+                <option value="gap">갭 비율</option>
+              </select>
             </label>
+            {form.add_mode === 'fixed' && (
+              <label className="ct-sub" title="2차 조건가 = 1차 매수가 × (1 − 이 비율)">2차: 1차 매수가 대비
+                <input type="number" min="0.1" max="99" step="any" value={form.add_drop_pct}
+                  onChange={(e) => set('add_drop_pct', e.target.value)} />% 하락
+              </label>
+            )}
+            {form.add_mode === 'mixed' && (
+              <label className="ct-sub" title="1차 매수가에서 구간 하단까지 내려갈 여유가 이 비율 이하이면 2차를 하지 않습니다.">
+                1차가~구간 하단 여유가
+                <input type="number" min="0.1" max="99" step="any" value={form.add_drop_pct}
+                  onChange={(e) => set('add_drop_pct', e.target.value)} />% 초과일 때만 2차(최소 이만큼 하락)
+              </label>
+            )}
+            {form.add_mode !== 'fixed' && (
+              <label className="ct-sub" title="2차 조건가 = 1차 매수가 − (1차 매수가 − 구간 하단) × 이 비율">
+                {form.add_mode === 'mixed' ? '또는 ' : '2차: '}1차가~구간 하단 갭의
+                <input type="number" min="1" max="100" step="any" value={form.add_gap_pct}
+                  onChange={(e) => set('add_gap_pct', e.target.value)} />% 하락한 가격{form.add_mode === 'mixed' ? ' 중 더 깊은 곳' : ''}
+              </label>
+            )}
+            {form.add_mode === 'gap' && (
+              <>
+                <label className="ct-sub" title="1차가 하단에 붙어 체결돼 갭이 작으면, 같은 가격에 금액만 두 배로 사지 않도록 2차를 하지 않습니다.">
+                  갭 기준 최소 하락률
+                  <input type="number" min="0" max="99" step="any" value={form.add_min_drop_pct}
+                    onChange={(e) => set('add_min_drop_pct', e.target.value)} />% (이보다 얕으면 2차 없음)
+                </label>
+              </>
+            )}
             <label title="도달하면 보유의 절반을 팔고, 아직 사지 않은 2차 계획은 취소합니다.">절반 익절: 평단 대비
               <input type="number" min="0.1" max="500" step="any" value={form.take_profit_pct}
                 onChange={(e) => set('take_profit_pct', e.target.value)} />% 상승
@@ -298,7 +335,10 @@ function CandleTradeCard({ account, item }) {
                   <td className="col-num">{fmt(leg.amount)}</td>
                   <td>{leg.no === 1
                     ? '구간 안 진입'
-                    : leg.trigger ? `구간 안 & ≤ ${fmtPrice(leg.trigger)}` : '1차 다음 날부터, 1차가 −' + item.config.add_drop_pct + '%'}
+                    : leg.status === 'waiting' && bought && leg2?.trigger
+                      ? <>구간 안 & ≤ {fmtPrice(leg2.trigger.price)}
+                        <span className="muted"> ({leg2.trigger.basis === 'gap' ? `갭 ${cfg.add_gap_pct}%` : `−${cfg.add_drop_pct}%`}, 1차가 −{leg2.dropPct.toFixed(1)}%)</span></>
+                      : `1차 다음 날부터, ${addRuleText(cfg)}`}
                     {leg.no === 2 && leg2 && leg.status === 'waiting' && (
                       <div className={`ct-maxdrop ${leg2.possible ? 'muted' : 'down'}`}
                         title={leg2.afterFill
