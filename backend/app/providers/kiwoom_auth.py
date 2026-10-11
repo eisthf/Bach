@@ -55,8 +55,13 @@ class TokenManager:
             except Exception as exc:
                 self.state = "error"
                 self._retry_at = time.monotonic() + self.RETRY_DELAY
-                record_event("키움 인증 갱신 실패", event="broker_auth", account=self.account,
-                             state=self.state, error_type=type(exc).__name__)
+                return_msg = getattr(exc, "return_msg", "")
+                record_event(f"키움 인증 갱신 실패{': ' + return_msg if return_msg else ''}",
+                             event="broker_auth", account=self.account, state=self.state,
+                             error_type=type(exc).__name__,
+                             return_code=getattr(exc, "return_code", None),
+                             return_msg=return_msg or None,
+                             detail=str(exc)[:300] or None)
                 if valid and time.time() < self._expires_at:
                     self.state = "refreshing"
                     self._refresh_after = min(self._expires_at, time.time() + self.RETRY_DELAY)

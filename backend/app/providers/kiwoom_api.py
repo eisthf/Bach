@@ -217,7 +217,12 @@ def fetch_access_token(appkey: str, secretkey: str, mock: bool = False) -> Acces
     resp.raise_for_status()
     data = resp.json()
     if data.get("return_code") != 0 or not data.get("token"):
-        raise KiwoomAuthError("키움 토큰 발급 실패")
+        # 응답의 코드·메시지는 키·토큰을 담지 않아 로그에 남겨도 안전하다. 원인 구분에
+        # 필요하다(예: 8001 키 검증 실패 / 8050 IP 미등록 / 8030 실전·모의 불일치).
+        code, message = data.get("return_code"), str(data.get("return_msg") or "").strip()
+        exc = KiwoomAuthError(f"키움 토큰 발급 실패 [return_code={code}] {message}".strip())
+        exc.return_code, exc.return_msg = code, message
+        raise exc
     return AccessToken(str(data["token"]), str(data.get("expires_dt") or ""))
 
 

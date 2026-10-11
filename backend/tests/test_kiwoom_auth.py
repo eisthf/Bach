@@ -187,3 +187,21 @@ async def test_renewal_reconnects_existing_socket(monkeypatch):
     with pytest.raises(asyncio.CancelledError):
         await provider._maintain_auth()
     provider._ws.close.assert_awaited_once()
+
+
+def test_token_failure_keeps_kiwoom_code_in_event(monkeypatch):
+    """발급 실패 시 키움 return_code·return_msg를 이벤트 로그에 남긴다(키는 남기지 않음)."""
+    import app.providers.kiwoom_auth as auth
+    body = {"return_code": 3, "return_msg": "인증에 실패했습니다[8001:App Key와 Secret Key 검증에 실패했습니다]"}
+    monkeypatch.setattr(kw.requests, "post", lambda *a, **k: Mock(
+        status_code=200, raise_for_status=lambda: None, json=Mock(return_value=body)))
+    events = []
+    monkeypatch.setattr(auth, "record_event", lambda text, **f: events.append((text, f)))
+    manager = TokenManager("my-app-key", "my-secret", False)
+    with pytest.raises(kw.KiwoomAuthError):
+        manager.get_token()
+    text, fields = events[-1]
+    assert "8001" in text
+    assert fields["return_code"] == 3 and "8001" in fields["return_msg"]
+    assert "my-app-key" not in json.dumps(events, ensure_ascii=False)
+    assert "my-secret" not in json.dumps(events, ensure_ascii=False)
