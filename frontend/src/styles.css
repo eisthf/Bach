@@ -483,7 +483,11 @@ input:focus { outline: none; border-color: var(--accent); }
   /* 브랜드 아래로 페이지 탭을 내려, 헤더 1행 오른쪽의 장 제어 자리를 지킨다. */
   .head-left { flex-direction: column; align-items: flex-start; gap: 8px; }
   .page-nav { width: 100%; }
-  .page-tab { flex: 1; min-height: 38px; padding: 6px 10px; }
+  /* 탭이 5개라 좁은 폭에서 한 줄에 안 들어간다 — 같은 폭으로 줄이고 글자는 단어 단위로 두 줄까지. */
+  .page-tab {
+    flex: 1 1 0; min-width: 0; min-height: 38px; padding: 4px 4px;
+    white-space: normal; word-break: keep-all; line-height: 1.25; font-size: 12.5px;
+  }
   .account-filter {
     grid-column: 1 / -1; grid-row: 2;
     width: 100%; overflow-x: auto;
@@ -568,8 +572,21 @@ input:focus { outline: none; border-color: var(--accent); }
   /* 상한가 종목 페이지 */
   .screener { padding: 10px 8px 28px; }
   .screener-controls { border-radius: 10px; padding: 10px; gap: 8px; }
-  .screener-controls input[type='date'] { flex: 1; min-width: 0; }
+  /* 날짜가 잘리지 않게 최소 폭을 둔다(flex로 0까지 줄면 '202'만 보였다). */
+  .screener-controls input[type='date'] { flex: 1 1 150px; min-width: 150px; }
   .screener-criteria { margin-left: 0; flex-basis: 100%; }
+
+  /* 대금 양봉·구간 매매 카드 */
+  .ct-plan { overflow-x: auto; }
+  .ct-legs th, .ct-legs td { padding: 6px 4px; }
+  .ct-legs td:nth-child(4) { min-width: 110px; }
+  /* 구간 지정: [상단 입력 | 찍기] / [하단 입력 | 찍기] 두 줄로 */
+  /* (.ct-zone 기본 규칙이 파일 뒤쪽에 있어 .candle-card 로 우선순위를 올린다) */
+  .candle-card .ct-zone { display: grid; grid-template-columns: 1fr auto; gap: 6px 8px; }
+  .candle-card .ct-zone > strong, .candle-card .ct-zone .ct-zone-hint,
+  .candle-card .ct-zone button:not([aria-pressed]) { grid-column: 1 / -1; }
+  .candle-card .ct-zone label { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .candle-card .ct-zone input { flex: 1; min-width: 0; width: auto; }
   .sum-count { margin-left: 0; }
   .data-table { font-size: 13px; }
   .data-table th, .data-table td { padding: 8px; }
