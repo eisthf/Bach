@@ -219,6 +219,7 @@ export default function UpperLimitPage() {
         <ScreenerChart
           stock={selectedStock}
           source={data.source}
+          defaultInterval={1440}
           register={{
             label: '매매 등록',
             title: (account) => `${account.label} 계좌의 [매매] 목록에 수동매매로 추가합니다(주문은 나가지 않음)`,
