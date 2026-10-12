@@ -643,6 +643,60 @@ async def screener_big_candle(
         raise HTTPException(502, str(e))
 
 
+# 대금 양봉 '종가 = 고가' 필터의 시간외 위꼬리 확인용 — (조회일, 종목) → 키움 일봉.
+# 지난 거래일 일봉은 바뀌지 않으므로 프로세스 동안 캐시한다.
+_SCREEN_DAY_BARS: dict[tuple[str, str], dict] = {}
+SCREEN_DAY_BARS_MAX_CODES = 80
+
+
+@app.get("/api/screener/big-candle/day-bars")
+async def screener_big_candle_day_bars(
+    date: str = Query(..., description="조회일 (YYYY-MM-DD), 오늘 이전"),
+    codes: str = Query(..., description="쉼표로 구분한 종목코드"),
+):
+    """조회일의 키움 일봉 {code: {open, high, low, close}}.
+
+    KRX 확정 일별 자료(대금 양봉 과거일 목록)의 고가·종가는 정규장만이지만, 키움 일봉은
+    15:30 이후 시간외 체결까지 섞는다(kiwoom_api 함정 8) — 종목 차트가 보여 주는 값이다.
+    '종가 = 고가' 필터가 차트에 보이는 시간외 위꼬리까지 거르도록 프런트가 후보 종목만 묻는다.
+    실전 키움 계좌가 없으면 ``available: false``.
+    """
+    try:
+        day = datetime.strptime(date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(400, "date must be YYYY-MM-DD") from None
+    wanted = list(dict.fromkeys(c.strip() for c in codes.split(",") if c.strip()))
+    if len(wanted) > SCREEN_DAY_BARS_MAX_CODES:
+        raise HTTPException(400, f"종목은 한 번에 {SCREEN_DAY_BARS_MAX_CODES}개까지입니다.")
+    today = now_kst().date()
+    if day >= today:
+        raise HTTPException(400, "오늘 이전 날짜만 조회할 수 있습니다(오늘 목록은 이미 키움 시세 기준).")
+    hub = _live_kiwoom_hub()
+    if hub is None:
+        return {"date": date, "available": False, "bars": {}, "failed": []}
+    # 조회일부터 오늘까지 거래일 ≈ 달력일×5/7, 휴장 여유 포함(차트 anchor 조회와 같은 어림).
+    lookback = min(DAY_ANCHOR_MAX_LOOKBACK, (today - day).days * 5 // 7 + 15)
+    bars: dict[str, dict] = {}
+    failed: list[str] = []
+    for code in wanted:
+        key = (date, code)
+        if key not in _SCREEN_DAY_BARS:
+            try:
+                rows = await asyncio.to_thread(hub.data.get_bars, code, DAY_INTERVAL, lookback)
+            except Exception:  # noqa: BLE001 — 한 종목 실패가 전체를 막지 않게
+                failed.append(code)
+                continue
+            hit = next((b for b in rows
+                        if datetime.fromtimestamp(b.time, timezone.utc).date() == day), None)
+            if hit is None:
+                failed.append(code)
+                continue
+            _SCREEN_DAY_BARS[key] = {"open": hit.open, "high": hit.high, "low": hit.low,
+                                     "close": hit.close}
+        bars[code] = _SCREEN_DAY_BARS[key]
+    return {"date": date, "available": True, "bars": bars, "failed": failed}
+
+
 @app.on_event("startup")
 async def _on_startup():
     await manager.restore()  # 계좌별 저장 종목 복원

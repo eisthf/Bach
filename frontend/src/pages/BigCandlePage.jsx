@@ -63,13 +63,42 @@ export default function BigCandlePage() {
   // 종가(장중이면 현재가)가 그날 고가인 종목만 — 고가에서 마감한 강한 양봉. 화면 필터.
   // 고가를 모르는(0) 종목은 판정할 수 없어 켜면 빠진다.
   const [closeAtHigh, setCloseAtHigh] = useState(false)
+  // 과거일 목록(KRX 확정 자료)의 고가·종가는 정규장만이다. 기본은 키움 일봉(15:30 이후 시간외
+  // 체결 포함 — 종목 차트가 보여 주는 값)으로 한 번 더 확인해 시간외 위꼬리가 있으면 뺀다.
+  // allowAfterWick 를 켜면 정규장 고가 마감이면 통과(시간외 위꼬리 허용).
+  const [allowAfterWick, setAllowAfterWick] = useState(false)
+  const [dayBars, setDayBars] = useState(null)   // {key, available, bars, failed} | {key, loading} | {key, error}
+  const needDayBars = closeAtHigh && !allowAfterWick && data?.source === 'krx'
+  // 정규장 고가 마감 후보만 묻는다. 조건을 바꿔 다시 조회하면 후보가 달라지므로 날짜+후보로 구분.
+  const wickCodes = useMemo(() => (data?.source === 'krx'
+    ? data.stocks.filter((s) => !s.etp && s.high > 0 && s.close >= s.high).map((s) => s.code).slice(0, 80) : []), [data])
+  const wickKey = data ? `${data.date}|${wickCodes.join(',')}` : ''
+  useEffect(() => {
+    if (!needDayBars || dayBars?.key === wickKey) return undefined
+    if (wickCodes.length === 0) { setDayBars({ key: wickKey, available: true, bars: {}, failed: [] }); return undefined }
+    let cancelled = false
+    setDayBars({ key: wickKey, loading: true })
+    api.bigCandleDayBars(data.date, wickCodes)
+      .then((r) => { if (!cancelled) setDayBars({ ...r, key: wickKey }) })
+      .catch((e) => { if (!cancelled) setDayBars({ key: wickKey, error: String(e.message || e) }) })
+    // 응답 전에 끄거나 조건이 바뀌면 '확인 중'에 멈추지 않게 지운다(다시 켜면 새로 묻는다).
+    return () => { cancelled = true; setDayBars((d) => (d?.key === wickKey && d.loading ? null : d)) }
+  }, [needDayBars, wickKey])
+  const wickCheck = needDayBars && dayBars?.key === wickKey ? dayBars : null
   // 저가 ETF·ETN이 거래량 상위를 차지해 개별 종목이 묻힌다. 항상 제외한다(화면 필터).
   const etpCount = useMemo(() => (data ? data.stocks.filter((s) => s.etp).length : 0), [data])
   const stocks = useMemo(() => {
     if (!data) return []
-    const rows = data.stocks.filter((s) => !s.etp && (!closeAtHigh || (s.high > 0 && s.close >= s.high)))
+    const rows = data.stocks.filter((s) => {
+      if (s.etp) return false
+      if (!closeAtHigh) return true
+      if (!(s.high > 0 && s.close >= s.high)) return false
+      // 키움 일봉으로 확인한 종목만 시간외 위꼬리로 거른다(확인 못 한 종목은 정규장 기준으로 남긴다).
+      const b = wickCheck?.bars?.[s.code]
+      return !b || b.close >= b.high
+    })
     return sortRows(rows, SORT_KEYS[sort.key], sort.dir)
-  }, [data, sort, closeAtHigh])
+  }, [data, sort, closeAtHigh, wickCheck])
 
   const load = useCallback(async (d, rise, amount, change) => {
     setLoading(true)
@@ -167,6 +196,13 @@ export default function BigCandlePage() {
           <input type="checkbox" checked={closeAtHigh} onChange={(e) => setCloseAtHigh(e.target.checked)} />
           {live ? '현재가' : '종가'} = 고가
         </label>
+        {closeAtHigh && data?.source === 'krx' && (
+          <label className="check-label"
+            title="끄면(기본) 차트처럼 15:30 이후 시간외 체결까지 포함한 키움 일봉으로 위꼬리가 있는 종목을 뺍니다. 켜면 정규장(09:00~15:30) 고가에서 마감한 종목은 시간외 위꼬리가 있어도 보여 줍니다.">
+            <input type="checkbox" checked={allowAfterWick} onChange={(e) => setAllowAfterWick(e.target.checked)} />
+            시간외 위꼬리 허용
+          </label>
+        )}
       </form>
 
       {data && (
@@ -180,7 +216,8 @@ export default function BigCandlePage() {
             거래대금 <strong>{formatEok(data.min_amount)}</strong> 이상 양봉,
             시가 대비 <strong>+{Number(data.min_rise_pct).toFixed(2)}%</strong> 이상,
             전일 대비 <strong>{signedPct(Number(data.min_change_pct ?? 0))}</strong> 이상
-            {closeAtHigh && <>, <strong>{priceLabel} = 고가</strong></>}
+            {closeAtHigh && <>, <strong>{priceLabel} = 고가</strong>
+              {data.source === 'krx' && (allowAfterWick ? ' (정규장 기준, 시간외 위꼬리 허용)' : ' (시간외 체결 포함)')}</>}
           </span>
           <span className="sum-count">
             {stocks.length}종목
@@ -197,6 +234,14 @@ export default function BigCandlePage() {
       )}
 
       {data?.notice && <div className="screener-notice" role="status">{data.notice}</div>}
+      {wickCheck && (wickCheck.loading || wickCheck.error || wickCheck.available === false || wickCheck.failed?.length > 0) && (
+        <div className="screener-notice" role="status">
+          {wickCheck.loading ? '시간외 위꼬리 확인 중(키움 일봉 조회)… 지금은 정규장 기준으로 걸러 보여 줍니다.'
+            : wickCheck.error ? `시간외 위꼬리 확인 실패(${wickCheck.error}) — 정규장 기준으로만 걸렀습니다.`
+              : wickCheck.available === false ? '실전 키움 계좌가 없어 시간외 위꼬리는 확인하지 못했습니다 — 정규장 기준으로만 걸렀습니다.'
+                : `${wickCheck.failed.length}종목은 키움 일봉을 받지 못해 정규장 기준으로만 걸렀습니다(${wickCheck.failed.join(', ')}).`}
+        </div>
+      )}
       {data && data.etp_known === false && (
         <div className="screener-notice" role="status">
           ETF·ETN 목록을 불러오지 못해 이번 결과에는 ETF·ETN 제외가 적용되지 않았습니다. 잠시 후 다시 조회하세요.

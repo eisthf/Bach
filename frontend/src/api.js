@@ -37,6 +37,9 @@ export const api = {
   upperLimit: (date) =>
     req(`/api/screener/upper-limit${date ? `?date=${enc(date)}` : ''}`),
   // 거래대금 ≥ 기준 양봉. 오늘은 키움 당일 시세(장중 현재가·장후 종가), 과거는 KRX.
+  // 과거일 대금 양봉 후보의 키움 일봉(시간외 체결 포함) — '종가 = 고가'의 시간외 위꼬리 확인용.
+  bigCandleDayBars: (date, codes) =>
+    req(`/api/screener/big-candle/day-bars?date=${enc(date)}&codes=${enc(codes.join(','))}`),
   bigCandle: (date, minRisePct = 0, minAmountEok = 150, minChangePct = 0) =>
     req(`/api/screener/big-candle?min_rise_pct=${enc(minRisePct)}&min_amount_eok=${enc(minAmountEok)}&min_change_pct=${enc(minChangePct)}${date ? `&date=${enc(date)}` : ''}`),
 
