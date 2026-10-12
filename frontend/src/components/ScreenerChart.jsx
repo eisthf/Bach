@@ -8,7 +8,8 @@ import Chart from './Chart'
 // anchorDate: 스크리너 조회일(YYYY-MM-DD). 일봉은 이 날 앞 20거래일부터 60거래일을 보여준다.
 // register: 있으면 헤더에 등록 버튼을 띄운다(차트 조회 계좌로 등록). 하나 또는 배열(첫 버튼이 주 버튼).
 //   { label, title(account) → 툴팁, run(account) → Promise }
-export default function ScreenerChart({ stock, source, includeToday = false, defaultInterval = 3, anchorDate = null, register, onClose }) {
+// dayPriceLines / dayNote: 일봉일 때만 그리는 수평선과 안내 문구(예: 조회일 정규장 고가).
+export default function ScreenerChart({ stock, source, includeToday = false, defaultInterval = 3, anchorDate = null, register, dayPriceLines = null, dayNote = '', onClose }) {
   const dialogRef = useRef(null)
   const [interval, setInterval] = useState(defaultInterval)
   const [account, setAccount] = useState(null)
@@ -66,8 +67,10 @@ export default function ScreenerChart({ stock, source, includeToday = false, def
       <p className="muted">{source === 'mock' ? '합성 데모 차트' : '키움 시세 차트'} · {interval === 3
         ? `${sessionDate || '최근 거래일'} KRX+NXT 통합 · 프리마켓~${includeToday ? '현재' : '마지막 체결'} (정규장 09:00~15:30)`
         : anchorDate ? `조회일 ${anchorDate} 앞 20거래일부터 60거래일 일봉` : '최근 일봉'} 기준입니다.</p>
+      {interval === 1440 && dayNote && <p className="muted screener-day-note">{dayNote}</p>}
       {error ? <p role="alert">{error} <button onClick={() => setRetry((value) => value + 1)}>다시 시도</button></p>
-        : account ? <Chart key={`${stock.code}:${interval}`} account={account.id} code={stock.code} interval={interval} sessionOnly extended includeToday={includeToday} anchorDate={anchorDate} onSessionDate={setSessionDate} height={460} />
+        : account ? <Chart key={`${stock.code}:${interval}`} account={account.id} code={stock.code} interval={interval} sessionOnly extended includeToday={includeToday} anchorDate={anchorDate} onSessionDate={setSessionDate} height={460}
+          priceLines={interval === 1440 ? dayPriceLines : null} />
           : <p role="status">시세 연결 확인 중…</p>}
     </dialog>
   )

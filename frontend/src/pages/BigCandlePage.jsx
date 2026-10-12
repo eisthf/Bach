@@ -11,6 +11,7 @@ import ScreenerChart from '../components/ScreenerChart'
 import SortHeader, { sortRows, useSort } from '../components/SortHeader'
 import { ROUTES, navigate } from '../router'
 import { DEFAULT_CANDLE_CONFIG, addRuleText, secondLegCheck, zoneOf } from '../candleZone'
+import { ANCHOR_COLOR } from '../tradeMarkers'
 
 const RISE_KEY = 'bach.bigCandle.minRise'
 const CHANGE_KEY = 'bach.bigCandle.minChange'
@@ -280,6 +281,14 @@ export default function BigCandlePage() {
         <ScreenerChart
           stock={selectedStock}
           source={data.source === 'mock' ? 'mock' : 'kiwoom'}
+          // 과거일 목록(KRX 확정 자료)의 고가·종가는 정규장만이고, 차트 일봉(키움)은 15:30 이후
+          // 시간외 체결까지 섞는다. '종가 = 고가' 판정 근거를 차트에 정규장 고가 점선으로 보여 준다.
+          dayPriceLines={data.source === 'krx' && selectedStock.high > 0
+            ? [{ price: selectedStock.high, color: ANCHOR_COLOR, title: '정규장 고가', dashed: true }] : null}
+          dayNote={data.source === 'krx' && selectedStock.high > 0
+            ? `점선 = ${data.date} 정규장(09:00~15:30) 고가 ${won(selectedStock.high)}, 종가 ${won(selectedStock.close)} (KRX 확정 자료 — 목록·'종가 = 고가' 판정 기준). `
+              + '차트 일봉은 키움 자료라 15:30 이후 시간외 체결이 고가·저가·종가에 섞입니다. 점선 위 꼬리는 시간외 거래입니다.'
+            : ''}
           includeToday={live}
           defaultInterval={1440}
           anchorDate={data.date}
