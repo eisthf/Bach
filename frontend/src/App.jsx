@@ -27,7 +27,9 @@ function AccountColumn({ account }) {
   const accCompact = compact[acc] || new Set()
 
   const visibleCodes = accOrder.filter((c) => accStocks[c])
-  const list = visibleCodes.filter((c) => (!accHidden.has(c) || accStocks[c].recovery_notice)).map((c) => accStocks[c])
+  // 알림(recovery_notice)이 있어도 숨길 수 있다 — 재시작 때마다 보유 종목에 알림이 붙어 토글이
+  // 막히던 문제. 대신 칩에 ⚠ 를 달아 알림이 있다는 건 숨겨도 보이게 한다.
+  const list = visibleCodes.filter((c) => !accHidden.has(c)).map((c) => accStocks[c])
   const manualCodes = visibleCodes.filter((c) => accStocks[c].state === 'MANUAL_TRADING')
   const allManualCompact =
     manualCodes.length > 0 && manualCodes.every((c) => accCompact.has(c))
@@ -80,20 +82,25 @@ function AccountColumn({ account }) {
         <div className="chip-bar">
           {visibleCodes.map((c) => {
             const s = accStocks[c]
-            const off = accHidden.has(c) && !s.recovery_notice
+            const off = accHidden.has(c)
+            const qty = s.position?.quantity || 0
             return (
               <button
                 key={c}
                 className={`stock-chip ${off ? 'off' : 'on'}`}
                 onClick={() => actions.toggleVisible(acc, c)}
-                title={`${STATE_LABEL[s.state] || ''} · ${off ? '클릭하면 차트 표시' : '클릭하면 차트 숨김'}`}
+                title={`${STATE_LABEL[s.state] || ''} · ${off ? '클릭하면 차트 표시' : '클릭하면 차트 숨김'}`
+                  + (s.recovery_notice ? `
+⚠️ ${s.recovery_notice}` : '')}
               >
+                {s.recovery_notice && <span className="chip-warn" aria-label="알림 있음">⚠</span>}
                 {s.state && (
                   <span className={`chip-state chip-state-${s.state.toLowerCase()}`}>
                     {STATE_SHORT[s.state] || s.state}
                   </span>
                 )}
                 {s.name || c}
+                {qty > 0 && <span className="chip-qty" title="계좌 보유 수량">{qty.toLocaleString('ko-KR')}주</span>}
               </button>
             )
           })}

@@ -156,6 +156,12 @@ input:focus { outline: none; border-color: var(--accent); }
   color: #fff; background: var(--green); border-color: var(--green);
 }
 .chip-acc { font-size: 11px; font-weight: 600; opacity: .8; }
+/* 칩의 알림 표시: 카드를 숨겨도 알림이 있다는 건 보이게 */
+.chip-warn { font-size: 12px; line-height: 1; color: #f9a825; }
+/* 칩의 보유 수량 */
+.chip-qty { font-size: 11px; font-weight: 700; padding: 0 6px; border-radius: 999px; background: rgba(255,255,255,.22); }
+.stock-chip.off .chip-qty { background: #e3e6ec; color: var(--text); }
+.stock-chip.off .chip-warn { color: #e65100; }
 .code-input { width: 200px; }
 .name-input { width: 160px; }
 .add-btn {

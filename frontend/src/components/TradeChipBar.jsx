@@ -9,12 +9,14 @@ const PHASE_SHORT = {
 }
 
 const keyOf = (account, item) => `${account.id}:${item.code}`
+// 엔진이 보유를 관리하는 단계. 종료·수동 전환된 카드의 수량은 지난 기록이라 표시하지 않는다.
+const HOLDING = ['ACCUMULATING', 'HOLDING', 'TRAILING']
 
 function load(storageKey) {
   try { return new Set(JSON.parse(localStorage.getItem(storageKey) || '[]')) } catch { return new Set() }
 }
 
-// 숨김 집합 훅. isHidden(account, item) — 알림(notice)이 있는 카드는 숨기지 않는다.
+// 숨김 집합 훅. 알림(notice)이 있는 카드도 숨길 수 있다 — 대신 칩에 ⚠ 를 단다.
 export function useHiddenCards(storageKey) {
   const [hidden, setHidden] = useState(() => load(storageKey))
   const toggle = useCallback((account, item) => {
@@ -26,8 +28,7 @@ export function useHiddenCards(storageKey) {
       return next
     })
   }, [storageKey])
-  const isHidden = useCallback((account, item) => hidden.has(keyOf(account, item)) && !item.notice,
-    [hidden])
+  const isHidden = useCallback((account, item) => hidden.has(keyOf(account, item)), [hidden])
   return { isHidden, toggle }
 }
 
@@ -44,13 +45,19 @@ export default function TradeChipBar({ rows, isHidden, toggle, showAccount }) {
             className={`stock-chip ${off ? 'off' : 'on'}`}
             onClick={() => toggle(account, item)}
             aria-pressed={!off}
-            title={`${showAccount ? `${account.label} · ` : ''}${off ? '클릭하면 카드 표시' : '클릭하면 카드 숨김'}`}
+            title={`${showAccount ? `${account.label} · ` : ''}${off ? '클릭하면 카드 표시' : '클릭하면 카드 숨김'}`
+              + (item.notice ? `
+⚠️ ${item.notice}` : '')}
           >
+            {item.notice && <span className="chip-warn" aria-label="알림 있음">⚠</span>}
             <span className={`chip-state chip-phase-${item.phase.toLowerCase()}`}>
               {PHASE_SHORT[item.phase] || item.phase}
             </span>
             {showAccount && <span className="chip-acc">{account.label}</span>}
             {item.name || item.code}
+            {HOLDING.includes(item.phase) && item.shares > 0 && (
+              <span className="chip-qty" title="이 매매가 보유 중인 수량">{item.shares.toLocaleString('ko-KR')}주</span>
+            )}
           </button>
         )
       })}
