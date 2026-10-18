@@ -105,6 +105,9 @@ cd backend && uv run python backtest.py 079650:20260903 --state real     --varia
   (`logs/events.log`, 10MB×11개 넘겨쓰기)는 결국 지워지므로 매매 되짚기(차트 스킬)의 근거는 이쪽이다.
   엔진은 주문 직전에 `order_reason`을 적어 두고(콜백 시그니처는 그대로), 체결 통지가 주문 응답보다
   먼저 와도 (거래일, 주문번호)로 소급해 붙는다.
+  서버가 꺼져 있던 동안의 체결(HTS·모바일 주문, 끊김 중 놓친 통지)은 서버 시작·장 마감 때 계좌 주문체결내역
+  (`Broker.order_history`, 키움 kt00007, 마지막 기록일~오늘·최대 5평일 전)으로 (거래일, 주문번호)별 모자란 수량만
+  채운다(`source="account"`, `time_source="order"`, HTS·모바일은 `strategy="manual"`). 보충 뒤 늦게 온 체결 통지는 보충 행을 대신한다.
   체결이 아닌 매매 이벤트는 옆 파일 `state.{계좌}.events.json`(`TradeHistory.record_event`)에 남긴다 —
   지금은 `kind="handoff"`(자동매매 → 사람 인계): ULC는 `_log_transition`의 `AUTO_TRADING → MANUAL_TRADING`
   전부(원인 코드, 보유 여부는 읽는 쪽이 체결로 판단), 대금 양봉·구간은 엔진 `hand_off`(`on_handoff` 콜백,

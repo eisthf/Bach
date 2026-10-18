@@ -715,6 +715,9 @@ class KiwoomBroker(Broker):
             grouped.setdefault(o["code"], []).append(o)
         return grouped
 
+    def order_history(self, day: str) -> list:
+        return self._data._call(kw.fetch_order_history, day, mock=self._mock)
+
     def _positions(self, force: bool = False) -> Dict[str, dict]:
         now = time.time()
         if force or now - self._pos_ts > self._POS_TTL:

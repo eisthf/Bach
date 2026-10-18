@@ -145,3 +145,13 @@ class Broker(ABC):
     def unfilled_orders(self) -> dict:
         """종목코드별 미체결 주문 목록 {code: [order, ...]}. 제공 못 하면 {}."""
         return {}
+
+    def order_history(self, day: str) -> list:
+        """그날(YYYYMMDD) 계좌 주문의 체결 내역. 주문 단위 dict 리스트(주문순).
+
+        dict: code, side("buy"/"sell"), qty(그 주문의 누적 체결 수량), price(체결 단가),
+        order_no, time(주문 시각 "HH:MM:SS"), channel(주문 경로, Bach 주문은 "REST API").
+        서버가 꺼져 있던 동안의 체결로 체결 기록을 채우는 데 쓴다. 제공 못 하면 [] —
+        조회 실패는 예외로 알린다(빈 거래일과 구분).
+        """
+        return []

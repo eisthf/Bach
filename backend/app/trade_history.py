@@ -4,9 +4,13 @@
 이벤트 로그는 넘겨 쓰다 지워지지만 이 기록은 남으므로, 나중에도 어느 전략의 몇 차
 매수·어떤 청산이었는지 알 수 있다.
 
+서버가 꺼져 있던 동안의 체결(HTS·모바일 주문, 재시작 중 놓친 통지)은 계좌 주문체결내역으로
+채운다(``merge_account_orders``) — 그 행은 ``source="account"``, 시각은 주문 시각(``time_source="order"``)이다.
+
 체결이 아닌 매매 이벤트(자동매매 → 사람 인계 등, ``record_event``)는 옆 파일
 ``state.{계좌}.events.json``에 따로 남긴다 — 체결 기록은 프런트 차트가 그대로 읽는 목록이라 섞지 않는다.
 """
+import calendar
 import json
 import logging
 import queue
@@ -24,6 +28,15 @@ TAG_FIELDS = ("strategy", "reason", "ctx")
 def _day(epoch):
     """차트 epoch(KST 벽시계를 UTC로 둔 값) → KST 날짜. 주문번호는 거래일마다 새로 매겨진다."""
     return datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y%m%d")
+
+
+def _order_epoch(day, hhmmss):
+    """YYYYMMDD + 주문 시각 HH:MM:SS → 차트 epoch(KST 벽시계를 UTC로)."""
+    try:
+        h, m, sec = (int(x) for x in (hhmmss or "00:00:00").split(":"))
+    except ValueError:
+        h = m = sec = 0
+    return calendar.timegm((int(day[:4]), int(day[4:6]), int(day[6:]), h, m, sec))
 
 
 def events_path_for(path):
@@ -98,6 +111,103 @@ class TradeHistory:
             return
         self._queue.put_nowait(("event", dict(event, time=event.get("time") or chart_epoch())))
 
+    def merge_account_orders(self, day, orders):
+        """계좌 주문체결내역(``Broker.order_history``, 주문 단위)으로 그날 빠진 체결을 채운다.
+
+        (거래일, 주문번호)마다 기록된 수량이 계좌 체결 수량보다 모자라면 그만큼 한 행으로 보충한다
+        (부분 기록이면 체결 단가에서 기록분을 뺀 평균가). HTS·모바일 주문(channel != "REST API")은
+        strategy="manual", reason="수동(경로)". 비교·저장은 기록 스레드에서 체결과 같은 순서로 처리한다.
+        """
+        if self._stopping.is_set():
+            return
+        self._queue.put_nowait(("account", str(day), [dict(o) for o in orders or []]))
+
+    def last_day(self):
+        """기록된 마지막 체결의 거래일(YYYYMMDD). 기록이 없으면 None."""
+        with self.lock:
+            return max((_day(row["time"]) for row in self.rows), default=None)
+
+    def _merge_account(self, day, orders):
+        mine = [row for row in self.rows
+                if row.get("order_no") and _day(row["time"]) == day]
+        recorded = {}
+        for row in mine:
+            q, a = recorded.get(row["order_no"], (0, 0.0))
+            recorded[row["order_no"]] = (q + row["qty"], a + row["qty"] * row["price"])
+        by_order = {str(o.get("order_no") or "").strip(): o for o in orders}
+        changed = set()
+        with self.lock:
+            # Bach 가 통지는 받았지만 HTS·모바일로 낸 주문(예: 손절 뒤 잔량 수동 매도)도 수동으로 표시한다.
+            for row in mine:
+                o = by_order.get(row["order_no"])
+                channel = (o or {}).get("channel") or ""
+                if o and channel and channel != "REST API" and not row.get("strategy"):
+                    row.update(strategy="manual", reason=f"수동({channel})", channel=channel)
+                    changed.add(row["code"])
+        added = []
+        for order_no, o in by_order.items():
+            code, side = o.get("code"), o.get("side")
+            qty, price = int(o.get("qty") or 0), float(o.get("price") or 0)
+            if not order_no or not code or side not in ("buy", "sell") or qty <= 0 or price <= 0:
+                continue
+            q, a = recorded.get(order_no, (0, 0.0))
+            missing = qty - q
+            if missing <= 0:
+                continue
+            fill_price = (price * qty - a) / missing if q else price
+            if fill_price <= 0:
+                fill_price = price
+            row = {"code": code, "side": side, "qty": missing, "price": fill_price,
+                   "id": f"{day[:4]}-{day[4:6]}-{day[6:]}:{order_no}:account:{q}",
+                   "time": _order_epoch(day, o.get("time")), "time_source": "order",
+                   "order_no": order_no, "source": "account"}
+            channel = o.get("channel") or ""
+            if channel:
+                row["channel"] = channel
+            if channel and channel != "REST API":
+                row.update(strategy="manual", reason=f"수동({channel})")
+            else:
+                row.update(self._tags.get((day, order_no), {}))
+            if row["id"] in self._ids:
+                continue
+            added.append(row)
+        if not added and not changed:
+            return 0
+        for row in added:
+            self.rows.append(row)
+            self._ids.add(row["id"])
+            changed.add(row["code"])
+        self._rebuild(changed)
+        self._save()
+        return len(added)
+
+    def _absorb_account_rows(self, fill_row):
+        """계좌 내역으로 보충해 둔 행을 그 주문의 실제 체결 통지가 대신한다(중복 방지).
+
+        보충 직후에 통지가 늦게 도착하면(체결이 진행 중인 주문) 그 수량만큼 보충 행을 줄이고, 0이면 지운다.
+        """
+        order_no = fill_row["order_no"]
+        day = _day(fill_row["time"])
+        left = fill_row["qty"]
+        supplements = [r for r in self.rows if r.get("source") == "account"
+                       and r.get("order_no") == order_no and _day(r["time"]) == day]
+        for row in supplements:
+            if left <= 0:
+                break
+            take = min(left, row["qty"])
+            left -= take
+            with self.lock:
+                row["qty"] -= take
+            if row["qty"] <= 0:
+                self.rows.remove(row)
+                self._ids.discard(row["id"])
+        return bool(supplements)
+
+    def _rebuild(self, codes):
+        snapshots = {code: tuple(row for row in self.rows if row["code"] == code) for code in codes}
+        with self.lock:
+            self._by_code.update(snapshots)
+
     def events_for(self, code=None):
         with self.lock:
             return [dict(e) for e in self.events if code is None or e["code"] == code]
@@ -120,6 +230,9 @@ class TradeHistory:
             try:
                 if fill is None:
                     return
+                if isinstance(fill, tuple) and fill[0] == "account":
+                    self._merge_account(*fill[1:])
+                    continue
                 if isinstance(fill, tuple) and fill[0] == "event":
                     event = {k: v for k, v in fill[1].items() if v not in (None, "", {})}
                     with self.lock:
@@ -139,12 +252,18 @@ class TradeHistory:
                 if order_no:
                     row["order_no"] = order_no
                     row.update(self._tags.get((_day(row["time"]), order_no), {}))
+                    absorbed = self._absorb_account_rows(row)
+                else:
+                    absorbed = False
                 self.rows.append(row)
                 self._ids.add(row["id"])
-                # 불변 스냅샷을 준비한 뒤 짧게 교체한다. 복사와 I/O는 잠금 밖이다.
-                snapshot = self._by_code.get(row["code"], ()) + (row,)
-                with self.lock:
-                    self._by_code[row["code"]] = snapshot
+                if absorbed:
+                    self._rebuild({row["code"]})
+                else:
+                    # 불변 스냅샷을 준비한 뒤 짧게 교체한다. 복사와 I/O는 잠금 밖이다.
+                    snapshot = self._by_code.get(row["code"], ()) + (row,)
+                    with self.lock:
+                        self._by_code[row["code"]] = snapshot
                 self._save()
             except Exception:
                 logging.getLogger(__name__).exception("차트 체결 기록 저장 실패")

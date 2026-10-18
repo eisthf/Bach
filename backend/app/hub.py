@@ -24,7 +24,7 @@ logger = logging.getLogger("bach.hub")
 
 from .accounts import AccountConfig, load_account_configs
 from .event_log import record_event
-from .market_clock import MarketClock, chart_epoch, session_open_epoch
+from .market_clock import MarketClock, chart_epoch, now_kst, session_open_epoch
 from .models import (
     AutoConfig,
     MarketPhase,
@@ -82,6 +82,7 @@ class Hub:
         self._orders_task: Optional[asyncio.Task] = None
         self._resync_task: Optional[asyncio.Task] = None
         self._connection_task: Optional[asyncio.Task] = None
+        self._account_sync_task: Optional[asyncio.Task] = None
         self._sync_state = "pending"
         # 계좌별 영속화 파일. mock 계좌는 하위호환을 위해 기존 state.json 사용.
         base = Path(__file__).resolve().parent.parent
@@ -858,6 +859,9 @@ class Hub:
                 self._log_transition(stock, previous, "MARKET_CLOSE")
             self.broadcast_status(stock.code)
         self._persist()
+        if self.live:
+            # 장중에 HTS·모바일로 낸 주문, 끊김 중 놓친 체결 통지를 그날 계좌 내역으로 채운다.
+            self._start_account_sync([now_kst().strftime("%Y%m%d")])
 
     def apply_market_reset(self) -> None:
         for stock in self.stocks.values():
@@ -1017,9 +1021,62 @@ class Hub:
             self.data.start()
             self._orders_task = asyncio.create_task(self._orders_loop())
             self._connection_task = asyncio.create_task(self._connection_loop())
+            self._start_account_sync()
+
+    # 서버가 꺼져 있던 동안의 체결(HTS·모바일 주문, 재시작 중 놓친 통지)을 계좌 내역으로 채운다.
+    ACCOUNT_SYNC_LOOKBACK = 5  # 기록이 없거나 오래됐을 때 되짚는 최대 평일 수(오늘 제외)
+
+    def account_sync_days(self, today: Optional[str] = None) -> List[str]:
+        """조회할 거래일(YYYYMMDD, 평일): 마지막 체결 기록일(그날도 일부만 받았을 수 있다) ~ 오늘.
+
+        최대 ``ACCOUNT_SYNC_LOOKBACK`` 평일 전까지만. 휴장일은 빈 내역으로 끝난다.
+        """
+        from datetime import datetime, timedelta
+        end = datetime.strptime(today, "%Y%m%d") if today else now_kst().replace(tzinfo=None)
+        floor, n = end, 0
+        while n < self.ACCOUNT_SYNC_LOOKBACK:
+            floor -= timedelta(days=1)
+            if floor.weekday() < 5:
+                n += 1
+        last = self.trade_history.last_day()
+        start = max(floor.strftime("%Y%m%d"), last or "")
+        days, d = [], end
+        while d.strftime("%Y%m%d") >= start:
+            if d.weekday() < 5:
+                days.append(d.strftime("%Y%m%d"))
+            d -= timedelta(days=1)
+        return days[::-1]
+
+    async def sync_account_orders(self, days: Optional[List[str]] = None) -> None:
+        """계좌 주문체결내역(``Broker.order_history``)에서 체결 기록에 없는 주문을 채운다.
+
+        조회는 스레드에서, 비교·저장은 체결 기록 스레드에서 한다 — 매매 경로·틱 루프를 막지 않는다.
+        한 거래일 조회가 실패하면 그날 기록은 그대로 두고(이벤트 로그에만 남김) 다음 날로 넘어간다.
+        """
+        for day in days if days is not None else self.account_sync_days():
+            try:
+                orders = await asyncio.to_thread(self.broker.order_history, day)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[%s] %s 계좌 주문체결내역 조회 실패: %s", self.account, day, exc)
+                record_event(f"{day} 계좌 주문체결내역 조회 실패 — 체결 기록 보충 건너뜀: {exc}",
+                             account=self.account, event="account_order_sync", day=day, ok=False)
+                continue
+            if orders:
+                self.trade_history.merge_account_orders(day, orders)
+
+    def _start_account_sync(self, days: Optional[List[str]] = None) -> None:
+        if self._account_sync_task is not None and not self._account_sync_task.done():
+            return
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return  # 이벤트 루프 밖(동기 호출)에서는 건너뛴다 — 다음 시작·장 마감에 채운다.
+        self._account_sync_task = asyncio.create_task(self.sync_account_orders(days))
 
     async def close(self) -> None:
-        tasks = [self._orders_task, self._resync_task, self._connection_task]
+        tasks = [self._orders_task, self._resync_task, self._connection_task, self._account_sync_task]
         for stock in self.stocks.values():
             tasks.extend([stock.task, stock.setup_task])
         tasks = [t for t in tasks if t is not None]
