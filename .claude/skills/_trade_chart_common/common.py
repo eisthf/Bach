@@ -11,6 +11,7 @@ SKILL.md 가 없으니 스킬로 잡히지 않는다. 각 스킬 스크립트가
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -35,15 +36,33 @@ def load_fills(account: str) -> tuple[Path, list]:
     return path, json.loads(path.read_text(encoding="utf-8"))
 
 
+def log_files(directory: Path | None = None) -> list[Path]:
+    """이벤트 로그 파일을 오래된 것부터. 서버는 10MB마다 넘겨 쓴다(app/event_log.py RotatingFileHandler):
+    events.log.10(가장 오래됨) … events.log.1, events.log(현재). 로그 위치는 서버와 같이 BACH_LOG_DIR 우선."""
+    directory = directory or Path(os.getenv("BACH_LOG_DIR") or BACKEND / "logs")
+    rotated = []
+    for p in directory.glob("events.log.*"):
+        suffix = p.name.rsplit(".", 1)[1]
+        if suffix.isdigit():
+            rotated.append((int(suffix), p))
+    files = [p for _, p in sorted(rotated, reverse=True)]
+    current = directory / "events.log"
+    return files + [current] if current.exists() else files
+
+
 def iter_events(account: str):
-    """logs/events.log 중 그 계좌 이벤트(dict)를 순서대로."""
-    for line in open(BACKEND / "logs" / "events.log", encoding="utf-8"):
-        try:
-            e = json.loads(line)
-        except ValueError:
-            continue
-        if e.get("account") == account:
-            yield e
+    """이벤트 로그(넘겨 쓴 파일 포함) 중 그 계좌 이벤트(dict)를 시간순으로."""
+    files = log_files()
+    if not files:
+        raise SystemExit("이벤트 로그(events.log)가 없습니다.")
+    for path in files:
+        for line in open(path, encoding="utf-8"):
+            try:
+                e = json.loads(line)
+            except ValueError:
+                continue
+            if e.get("account") == account:
+                yield e
 
 
 def chart_epoch(ts: str) -> int:
