@@ -132,6 +132,16 @@ class Hub:
             event="state_transition", code=stock.code, from_state=before,
             to_state=after, reason=reason, market_phase=self.clock.phase.value, **fields,
         )
+        if before == TradeState.AUTO_TRADING.value and after == TradeState.MANUAL_TRADING.value:
+            # 자동매매가 끝나 사람에게 넘어간 시점. 이벤트 로그는 결국 지워지므로 체결 기록 옆에
+            # 오래 남긴다. 보유 수량이 남았는지는 읽는 쪽이 체결 기록으로 판단한다(엔진 정상 청산 포함).
+            try:
+                self.trade_history.record_event({
+                    "code": stock.code, "kind": "handoff", "strategy": "ulc", "reason": reason,
+                    "qty": fields.get("position_quantity"),
+                })
+            except Exception:  # noqa: BLE001
+                logger.exception("[%s] 인계 기록 실패", stock.code)
 
     # -- 종목 관리 ---------------------------------------------------------
     def add_stock(self, code: str, name: str = "") -> Stock:

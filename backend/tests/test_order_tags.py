@@ -202,3 +202,60 @@ def test_candle_manager_tags_strategy_reason_and_context():
     assert ctx["base_date"] == "2026-09-21" and ctx["base_open"] == 10_000 and ctx["base_close"] == 12_000
     assert ctx["zone"] == [10_200, 11_800] and ctx["take_profit_pct"] == 20 and ctx["entry_days"] == 5
     assert ctx["created"] == "2026-09-21T15:40:00"
+
+
+# -- 매매 이벤트(인계) 기록 ----------------------------------------------------
+
+def test_handoff_events_persist_next_to_trades(tmp_path):
+    from app.trade_history import events_path_for
+
+    path = tmp_path / "state.real.trades.json"
+    assert events_path_for(path).name == "state.real.events.json"
+    assert events_path_for(tmp_path / "t.json").name == "t.events.json"
+    history = TradeHistory(path)
+    history.record_event({"code": "008970", "kind": "handoff", "strategy": "ulc", "reason": "PUSH",
+                          "qty": None, "time": 1790948599})
+    history.record_event({"code": "", "kind": "handoff"})   # 종목 없음 → 무시
+    history.close()
+    assert not (tmp_path / "state.real.trades.json").exists()   # 체결 기록 파일은 건드리지 않는다
+    restored = TradeHistory(path)
+    assert restored.events_for("008970") == [
+        {"code": "008970", "kind": "handoff", "strategy": "ulc", "reason": "PUSH", "time": 1790948599}]
+    assert restored.events_for("000000") == []
+    restored.close()
+
+
+def test_hub_records_handoff_only_for_auto_to_manual():
+    from app.state_machine import TradeState
+
+    events = []
+    hub = SimpleNamespace(_log=lambda *a, **k: None, clock=SimpleNamespace(phase=SimpleNamespace(value="OPEN")),
+                          trade_history=SimpleNamespace(record_event=events.append))
+    manual = SimpleNamespace(code="008970", machine=SimpleNamespace(state=TradeState.MANUAL_TRADING))
+    Hub._log_transition(hub, manual, TradeState.AUTO_TRADING, "PUSH")
+    Hub._log_transition(hub, manual, TradeState.AUTO_TRADING, "ENGINE_DONE", position_quantity=218)
+    Hub._log_transition(hub, manual, TradeState.MONITOR, "PUSH")             # 자동매매 전 → 기록 안 함
+    auto = SimpleNamespace(code="008970", machine=SimpleNamespace(state=TradeState.AUTO_TRADING))
+    Hub._log_transition(hub, auto, TradeState.MONITOR, "MARKET_OPEN")
+    assert [(e["reason"], e["qty"]) for e in events] == [("PUSH", None), ("ENGINE_DONE", 218)]
+    assert all(e["kind"] == "handoff" and e["strategy"] == "ulc" for e in events)
+
+
+def test_candle_handoff_is_recorded_with_campaign():
+    from app.big_candle_trade import CandleItem, CandleTradeManager
+
+    events = []
+    mgr = CandleTradeManager.__new__(CandleTradeManager)
+    mgr.hub = SimpleNamespace(trade_history=SimpleNamespace(record_event=events.append))
+    eng = CandleTradeEngine("000250", CandleTradeConfig(total_krw=1_000_000), kind="zone")
+    it = CandleItem(code="000250", name="테스트", engine=eng, created_at="2026-10-12T08:55:32")
+    eng.on_handoff = mgr._handoff_recorder(it)
+    eng.hand_off("사용자 수동 전환")
+    assert events == [{"code": "000250", "kind": "handoff", "strategy": "zone", "reason": "사용자 수동 전환",
+                       "qty": 0, "ctx": {"created": "2026-10-12T08:55:32"}}]
+
+    def broken(reason):
+        raise RuntimeError("storage")
+    eng.on_handoff = broken
+    eng.hand_off("다시")          # 기록 실패가 인계를 막지 않는다
+    assert eng.exit_reason == "다시"

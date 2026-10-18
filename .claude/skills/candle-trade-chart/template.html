@@ -26,6 +26,7 @@
     <span><i style="border-color:#7b1fa2;border-top-style:dashed"></i>매입 구간 상단·하단</span>
     <span><i style="border-color:#f59e0b"></i>평단</span>
     <span><i style="border-color:#e5383b;border-top-style:dotted"></i>익절선</span>
+    <span><b style="color:#b45309">■</b> <span class="handoff-legend"></span>수동 전환 이후</span>
     <span><i style="border-color:#2962FF"></i>MA5</span><span><i style="border-color:#FF4FA3"></i>MA10</span>
     <span><i style="border-color:#FF9800"></i>MA20</span><span><i style="border-color:#26A65B"></i>MA60</span>
   </div>
@@ -100,7 +101,7 @@ T.forEach((t, i) => {
   const dmk = orderMarkers(rows, t.orders, g => `${g.side === "buy" ? "B" : "S"} ${g.qty}주 · ${fmt(g.amt / g.qty)}`);
   const baseIdx = t.base ? rows.findIndex(b => ymdOf(b.time) === t.base.date) : -1;
   if (baseIdx >= 0) dmk.push({ time: rows[baseIdx].time, position: "aboveBar", shape: "arrowDown", color: ANCHOR_COLOR, size: 2, text: "기준봉" });
-  D.series.setMarkers(dmk.sort((a, b) => a.time - b.time));
+  D.series.setMarkers([...dmk, ...handoffMarkers(D.series, rows, t.handoffs)].sort((a, b) => a.time - b.time));
   addFillCrosses(D.series, rows, t.fills);
   const startIdx = baseIdx >= 0 ? baseIdx : rows.findIndex(b => b.time >= barAt(rows, t.fills[0].time));
   D.fit = () => D.chart.timeScale().setVisibleLogicalRange({ from: Math.max(-1, startIdx - 30), to: rows.length + 4 });
@@ -109,7 +110,8 @@ T.forEach((t, i) => {
   const m3 = t.min3;
   const M = makeChart(document.getElementById("m" + i), m3, true);
   addPriceLines(M.series, tradeLines(t));
-  M.series.setMarkers(orderMarkers(m3, t.orders, g => `${g.side === "buy" ? "B" : "S"} ${g.labels.join("·")}`).sort((a, b) => a.time - b.time));
+  M.series.setMarkers([...orderMarkers(m3, t.orders, g => `${g.side === "buy" ? "B" : "S"} ${g.labels.join("·")}`),
+    ...handoffMarkers(M.series, m3, t.handoffs)].sort((a, b) => a.time - b.time));
   addFillCrosses(M.series, m3, t.fills);
   let sel = 0;
   M.fit = () => {

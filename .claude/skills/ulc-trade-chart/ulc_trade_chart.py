@@ -28,7 +28,7 @@ from pathlib import Path
 SKILL = Path(__file__).resolve().parent
 sys.path.insert(0, str(SKILL.parent / "_trade_chart_common"))
 from common import (ROOT, Bars, chart_epoch, fill_points, group_orders, iter_events, load_fills,  # noqa: E402
-                    ohlcv, regular, trim_daily, write_html, ymd)
+                    load_trade_events, ohlcv, regular, trim_daily, write_html, ymd)
 
 WARMUP = 60  # 3분봉 MA60 예열
 
@@ -46,8 +46,13 @@ def parse_args():
 
 def scan_log(account: str) -> dict:
     """(code, YYYYMMDD) → 엔진 메시지 요약."""
-    msgs = defaultdict(lambda: {"buy": [], "sell": [], "sc": None, "x": None, "z": None, "notes": []})
+    msgs = defaultdict(lambda: {"buy": [], "sell": [], "sc": None, "x": None, "z": None, "handoffs": []})
     for e in iter_events(account):
+        if (e.get("event") == "state_transition" and e.get("from_state") == "AUTO_TRADING"
+                and e.get("to_state") == "MANUAL_TRADING" and e.get("code")):
+            t = chart_epoch(e["timestamp"])
+            msgs[(e["code"], ymd(t))]["handoffs"].append({"time": t, "reason": e.get("reason", "")})
+            continue
         if e.get("event") != "message":
             continue
         m = re.match(r"\[(\w+)\] (.*)", e.get("text", ""), re.S)
@@ -68,9 +73,29 @@ def scan_log(account: str) -> dict:
             d["sell"].append("트레일링")
         elif body.startswith("손절:"):
             d["sell"].append("손절")
-        elif "PUSH → MANUAL_TRADING" in body and d["buy"]:
-            d["notes"].append(f"{datetime.fromtimestamp(t, timezone.utc):%H:%M} 사람이 PUSH로 자동매매 중단(수동 전환)")
     return msgs
+
+
+# AUTO_TRADING → MANUAL_TRADING 전환 원인(hub.py) → 차트 라벨
+HANDOFF_LABELS = {
+    "PUSH": "PUSH로 중단", "STOP_MANUAL_HANDOFF": "손절 기준 도달 인계", "ENGINE_DONE": "엔진 종료 뒤 잔량",
+    "SERVER_RESTORE": "재시작 인계", "AUTO_SETUP_TIMEOUT": "준비 시간 초과", "MARKET_CLOSE": "장 마감",
+    "MARKET_RESET": "장 초기화",
+}
+
+
+def handoffs_with_position(transitions: list, fills: list) -> list:
+    """보유 수량이 남은 채 자동매매가 끝난 전환만(= 사람이 넘겨받은 시점).
+
+    ENGINE_DONE 은 보통 전량 청산 뒤라 수량이 0이다. 마지막 매도 체결 시각이 전환 로그보다 조금
+    늦게 찍힐 수 있어 ENGINE_DONE 만 60초 뒤 체결까지 보고 판단한다."""
+    out = []
+    for h in transitions:
+        until = h["time"] + (60 if h["reason"] == "ENGINE_DONE" else 0)
+        net = sum(f["qty"] if f["side"] == "buy" else -f["qty"] for f in fills if f["time"] <= until)
+        if net > 0:
+            out.append({"time": h["time"], "label": HANDOFF_LABELS.get(h["reason"], h["reason"]), "qty": net})
+    return out
 
 
 def ulc_label(reason: str) -> str:
@@ -88,6 +113,14 @@ def main():
     args = parse_args()
     tpath, fills = load_fills(args.account)
     msgs = scan_log(args.account)
+    # 서버가 남긴 인계 기록(지워지지 않음)을 로그의 상태 전환과 합친다. 같은 인계면(±5초·같은 원인) 하나로.
+    for e in load_trade_events(args.account):
+        if e.get("kind") != "handoff" or e.get("strategy") != "ulc":
+            continue
+        hs = msgs[(e["code"], ymd(e["time"]))]["handoffs"]
+        if not any(abs(h["time"] - e["time"]) <= 5 and h["reason"] == e.get("reason") for h in hs):
+            hs.append({"time": e["time"], "reason": e.get("reason", "")})
+            hs.sort(key=lambda h: h["time"])
     since = (args.since or "0000-00-00").replace("-", "")
     until = (args.until or "9999-99-99").replace("-", "")
 
@@ -130,7 +163,9 @@ def main():
         closed = buy_q == sell_q and buy_q > 0
         labels = [o["label"] for o in orders if o["side"] == "sell"]
         result = ("손절" if "손절" in labels else "익절+트레일링" if "트레일링" in labels else "청산") if closed else "미청산"
-        notes = list(info["notes"])
+        handoffs = handoffs_with_position(info["handoffs"], day_fills)
+        notes = [f"{datetime.fromtimestamp(h['time'], timezone.utc):%H:%M} 수동 전환({h['label']}) — "
+                 f"그때 보유 {h['qty']}주, 이후는 사람 관리(차트의 옅은 배경)" for h in handoffs]
         if "수동" in labels:
             notes.append("엔진 매도 외에 계좌 잔량을 수동 매도")
         if not closed:
@@ -144,6 +179,7 @@ def main():
             "orders": orders, "buy_q": buy_q, "sell_q": sell_q, "buy_a": buy_a, "sell_a": sell_a,
             "pnl": (sell_a - buy_a) if closed else None, "result": result, "notes": notes,
             "min3": ohlcv(p3 + m3), "prev_n": len(p3), "fills": fill_points(day_fills),
+            "handoffs": [{"time": h["time"], "label": h["label"]} for h in handoffs],
         })
         pnl = trades[-1]["pnl"]
         print(f"{day} {code} {trades[-1]['name']} SC{info['sc']} {result} {'' if pnl is None else f'{pnl:+,.0f}원'}")

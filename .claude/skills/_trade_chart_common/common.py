@@ -50,6 +50,16 @@ def log_files(directory: Path | None = None) -> list[Path]:
     return files + [current] if current.exists() else files
 
 
+def load_trade_events(account: str) -> list:
+    """서버가 체결 기록 옆에 남긴 매매 이벤트(state.{계좌}.events.json, 예: kind="handoff" 인계).
+    이벤트 로그와 달리 지워지지 않는다. 2026-10-18 서버 변경 전 이벤트는 없다."""
+    name = "state.events.json" if account == "mock" else f"state.{account}.events.json"
+    path = BACKEND / name
+    if not path.exists():
+        return []
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def iter_events(account: str):
     """이벤트 로그(넘겨 쓴 파일 포함) 중 그 계좌 이벤트(dict)를 시간순으로."""
     files = log_files()

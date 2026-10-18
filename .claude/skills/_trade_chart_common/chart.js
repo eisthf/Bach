@@ -151,3 +151,47 @@ function addBackButton(card, i) {
   back.className = "back"; back.textContent = "↑ 목록"; back.onclick = () => backToList(i);
   card.querySelector(".head").appendChild(back);
 }
+
+// -- 수동 전환(인계) 표시 -----------------------------------------------------
+// 자동매매가 사람에게 넘어간 시점: 봉 위 ▼ "수동 전환" 마커 + 그 뒤 구간을 옅게 칠한다.
+const HANDOFF_COLOR = "#b45309";
+class ShadeFrom {
+  // time 이후(그 봉 포함) 오른쪽 끝까지 반투명 배경
+  constructor(time, color = "rgba(245, 158, 11, 0.08)") {
+    this.time = time; this.color = color;
+    const src = this;
+    this._views = [{ zOrder: () => "bottom", renderer: () => ({ draw(target) {
+      const { chart } = src;
+      if (!chart) return;
+      const ts = chart.timeScale();
+      const range = ts.getVisibleRange();
+      if (!range || src.time > range.to) return;
+      let x = src.time < range.from ? 0 : ts.timeToCoordinate(src.time);
+      if (x === null) return;
+      x = Math.max(0, x - ts.options().barSpacing / 2);
+      target.useBitmapCoordinateSpace(({ context: ctx, bitmapSize, horizontalPixelRatio: hr }) => {
+        ctx.fillStyle = src.color;
+        ctx.fillRect(x * hr, 0, bitmapSize.width - x * hr, bitmapSize.height);
+      });
+    } }) }];
+  }
+  attached({ chart, requestUpdate }) { this.chart = chart; requestUpdate(); }
+  detached() { this.chart = null; }
+  paneViews() { return this._views; }
+}
+// 시각 t 가 든 봉. 장 마감 뒤·장 전처럼 봉 사이 빈 시간이면 t 다음 첫 봉(일봉은 그날 봉).
+function barContaining(rows, t) {
+  const i = rows.findIndex(b => b.time > t);
+  if (i === 0) return rows[0].time;
+  const prev = i < 0 ? rows.length - 1 : i - 1;
+  const gaps = rows.slice(1).map((b, k) => b.time - rows[k].time).sort((a, b) => a - b);
+  const spacing = gaps.length ? gaps[gaps.length >> 1] : 0;
+  return i > 0 && t - rows[prev].time >= 2 * spacing ? rows[i].time : rows[prev].time;
+}
+// handoffs = [{time, label}] (time: 차트 epoch). 반환한 마커를 setMarkers 목록에 합친다.
+function handoffMarkers(series, rows, handoffs) {
+  if (!handoffs || !handoffs.length || !rows.length) return [];
+  series.attachPrimitive(new ShadeFrom(barContaining(rows, handoffs[0].time)));
+  return handoffs.map(h => ({ time: barContaining(rows, h.time), position: "aboveBar", shape: "square",
+    color: HANDOFF_COLOR, text: `수동 전환 · ${h.label}` }));
+}

@@ -26,7 +26,7 @@ from pathlib import Path
 SKILL = Path(__file__).resolve().parent
 sys.path.insert(0, str(SKILL.parent / "_trade_chart_common"))
 from common import (ROOT, Bars, chart_epoch, fill_points, group_orders, iter_events, load_fills,  # noqa: E402
-                    ohlcv, regular, trim_daily, write_html, ymd)
+                    load_trade_events, ohlcv, regular, trim_daily, write_html, ymd)
 
 WARMUP = 60  # 3분봉 MA60 예열
 
@@ -93,7 +93,8 @@ def scan_log(account: str):
             c["sells"].append(mm.group(1).split(" (")[0])
             c["end_reason"] = mm.group(1)
         elif body.startswith("수동매매 인계"):
-            c["handoff"] = c["handoff"] or t
+            if not c["handoff"]:
+                c["handoff"], c["handoff_reason"] = t, body.split(":", 1)[-1].strip()
             c["end_reason"] = c["end_reason"] or body
         elif body.startswith("기한 만료") or body.startswith("1차 매수 실패"):
             c["end_reason"] = body
@@ -175,6 +176,20 @@ def main():
     if not picked:
         raise SystemExit("조건에 맞는 대금 양봉·구간 매매(체결 있는 건)가 없습니다.")
 
+    # 로그에 인계 기록이 없으면(넘겨쓰기로 지워짐) 서버가 남긴 인계 기록(events.json)으로 채운다.
+    # 같은 매매 건: 같은 종목 + 등록 시각(ctx.created) ≈ 건의 등록 시각, 없으면 건의 체결 기간 안.
+    handoff_events = [e for e in load_trade_events(args.account)
+                      if e.get("kind") == "handoff" and e.get("strategy") in ("candle", "zone")]
+    for c, cf in picked:
+        if c["handoff"]:
+            continue
+        for e in handoff_events:
+            created = created_epoch((e.get("ctx") or {}).get("created", ""))
+            same = (abs(created - c["reg"]) <= 60) if created else (cf[0]["time"] <= e["time"] <= cf[-1]["time"] + 86400 * 30)
+            if e["code"] == c["code"] and same:
+                c["handoff"], c["handoff_reason"] = e["time"], e.get("reason", "")
+                break
+
     bars = Bars(args.account, args.refresh)
     trades, daily_out = [], {}
     for c, cf in picked:
@@ -216,8 +231,13 @@ def main():
             pnl = sell_a - sell_q * avg
             unreal = (last["close"] - avg) * hold if last else None
         notes = []
+        handoffs = []
         if c["handoff"]:
-            notes.append(f"{datetime.fromtimestamp(c['handoff'], timezone.utc):%m-%d %H:%M} 수동매매 인계 — 이후 체결은 '수동'")
+            # "사용자 수동 전환" → "사용자", "절반 익절 매도 실패 — 계좌에서 확인 필요" → 앞부분만
+            label = (c.get("handoff_reason") or "수동 인계").replace(" 수동 전환", "").split(" — ")[0]
+            handoffs.append({"time": c["handoff"], "label": label})
+            notes.append(f"{datetime.fromtimestamp(c['handoff'], timezone.utc):%m-%d %H:%M} 수동 전환({label}) — "
+                         f"이후 체결은 '수동', 차트의 옅은 배경")
         if hold > 0 and last:
             notes.append(f"{hold}주 보유 중 · 평가는 최근 일봉 종가 {last['close']:,.0f}({last['_date'][4:6]}/{last['_date'][6:]}) 기준")
 
@@ -238,7 +258,7 @@ def main():
             "end_reason": c["end_reason"], "orders": orders, "status": status,
             "buy_q": buy_q, "sell_q": sell_q, "buy_a": buy_a, "sell_a": sell_a, "hold": hold,
             "avg": avg, "pnl": pnl, "unreal": unreal, "notes": notes, "daily_key": key,
-            "min3": ohlcv(m3), "day_starts": day_starts, "fills": fill_points(cf),
+            "min3": ohlcv(m3), "day_starts": day_starts, "fills": fill_points(cf), "handoffs": handoffs,
             "log": [x for x in c["log"] if not x["text"].startswith("체결:")],
         })
         tag = "대금양봉" if c["kind"] == "candle" else "구간매매"

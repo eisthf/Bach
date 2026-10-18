@@ -181,6 +181,7 @@ class CandleTradeManager:
                 it = CandleItem(code=code, name=entry.get("name") or code, engine=eng,
                                notice=entry.get("notice", ""),
                                created_at=entry.get("created_at", ""))
+                eng.on_handoff = self._handoff_recorder(it)
                 self.items[code] = it
                 if eng.phase.active and eng.shares > 0:
                     if positions is None:
@@ -346,8 +347,10 @@ class CandleTradeManager:
 
     def _insert(self, code: str, name: str, eng: CandleTradeEngine) -> None:
         # 끝난 기록(DONE/MANUAL)은 새 등록으로 대체한다.
-        self.items[code] = CandleItem(code=code, name=name or code, engine=eng,
-                                      created_at=now_kst().isoformat(timespec="seconds"))
+        it = CandleItem(code=code, name=name or code, engine=eng,
+                        created_at=now_kst().isoformat(timespec="seconds"))
+        eng.on_handoff = self._handoff_recorder(it)
+        self.items[code] = it
         self.persist()
 
     def set_config(self, code: str, config: CandleTradeConfig) -> dict:
@@ -621,6 +624,15 @@ class CandleTradeManager:
             return
         self.hub.broadcast({"type": "candle_trade_position", "code": code,
                             "position": pos.model_dump()})
+
+    def _handoff_recorder(self, it: CandleItem):
+        """엔진의 수동매매 인계를 체결 기록 옆 매매 이벤트(state.{계좌}.events.json)에 남긴다."""
+        def record(reason: str) -> None:
+            self.hub.trade_history.record_event({
+                "code": it.code, "kind": "handoff", "strategy": it.engine.kind, "reason": reason,
+                "qty": it.engine.shares, "ctx": {"created": it.created_at},
+            })
+        return record
 
     def _engine_log(self, code: str):
         return lambda text: self._log(code, text)

@@ -144,6 +144,8 @@ class CandleTradeEngine:
     # 구간 매매의 경과 거래일 기준(감시를 시작한 첫 세션 날짜). 감시 중지 시 비운다.
     watch_from: str = ""
     log: Callable[[str], None] = field(default=lambda _: None, repr=False)
+    # 수동매매 인계 알림(사유). 호출측이 인계 시점을 오래 남는 기록에 적는다.
+    on_handoff: Callable[[str], None] = field(default=lambda _: None, repr=False)
 
     phase: CzPhase = CzPhase.DRAFT
     legs: List[CzLeg] = field(default_factory=list)
@@ -298,6 +300,10 @@ class CandleTradeEngine:
         self.phase = CzPhase.MANUAL
         self.exit_reason = reason
         self.log(f"수동매매 인계: {reason}")
+        try:
+            self.on_handoff(reason)
+        except Exception:  # noqa: BLE001 — 기록 실패가 인계를 막지 않게
+            pass
 
     # -- 하루 맥락 -----------------------------------------------------------
     def needs_day(self, today: str) -> bool:

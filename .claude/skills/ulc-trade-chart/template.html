@@ -23,6 +23,7 @@
     <span><i style="border-color:#6b7280;border-top-style:dashed"></i>X 전일 종가</span>
     <span><i style="border-color:#10b981;border-top-style:dotted"></i>Z 당일 시가</span>
     <span><i style="border-color:var(--avg)"></i>최종 평단</span>
+    <span><b style="color:#b45309">■</b> <span class="handoff-legend"></span>수동 전환 이후</span>
   </div>
   <div id="cards"></div>
 </main>
@@ -84,9 +85,10 @@ T.forEach((t, i) => {
   const m3 = t.min3;
   const M = makeChart(document.getElementById("m" + i), m3, true);
   addPriceLines(M.series, [[t.x, "#6b7280", 2, "X"], [t.z, "#10b981", 1, "Z"], [avg, "#f59e0b", 0, "평단"]]);
-  M.series.setMarkers(orderMarkers(m3, t.orders, g => `${g.side === "buy" ? "B" : "S"} ${g.labels.join("·")}`).sort((a, b) => a.time - b.time));
+  M.series.setMarkers([...orderMarkers(m3, t.orders, g => `${g.side === "buy" ? "B" : "S"} ${g.labels.join("·")}`),
+    ...handoffMarkers(M.series, m3, t.handoffs)].sort((a, b) => a.time - b.time));
   addFillCrosses(M.series, m3, t.fills);
-  const lastIdx = Math.max(...t.orders.map(o => m3.findIndex(b => b.time === barAt(m3, o.time))));
+  const lastIdx = Math.max(...[...t.orders, ...t.handoffs].map(o => m3.findIndex(b => b.time === barAt(m3, o.time))));
   let full = false;
   M.fit = () => M.chart.timeScale().setVisibleLogicalRange(full
     ? { from: t.prev_n - 2, to: m3.length + 1 }
@@ -103,7 +105,7 @@ T.forEach((t, i) => {
     const mk = [{ time: tm, position: "belowBar", shape: "arrowUp", color: TRADE_COLORS.buy, text: `B ${t.buy_q}주 · ${fmt(avg)}` }];
     if (t.sell_q) mk.push({ time: tm, position: "aboveBar", shape: "arrowDown", color: TRADE_COLORS.sell,
       text: `S ${t.sell_q}주 · ${fmt(t.sell_a / t.sell_q)}` });
-    D.series.setMarkers(mk);
+    D.series.setMarkers([...mk, ...handoffMarkers(D.series, rows, t.handoffs)].sort((a, b) => a.time - b.time));
     addFillCrosses(D.series, rows, t.fills, () => tm);
     D.fit = () => D.chart.timeScale().setVisibleLogicalRange({ from: Math.max(-1, idx - 35), to: Math.max(rows.length + 6, idx + 15) });
   }

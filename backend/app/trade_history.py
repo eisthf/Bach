@@ -3,6 +3,9 @@
 체결 행에는 주문을 낸 쪽이 붙인 전략·사유 태그(``tag_order``)가 함께 남는다 —
 이벤트 로그는 넘겨 쓰다 지워지지만 이 기록은 남으므로, 나중에도 어느 전략의 몇 차
 매수·어떤 청산이었는지 알 수 있다.
+
+체결이 아닌 매매 이벤트(자동매매 → 사람 인계 등, ``record_event``)는 옆 파일
+``state.{계좌}.events.json``에 따로 남긴다 — 체결 기록은 프런트 차트가 그대로 읽는 목록이라 섞지 않는다.
 """
 import json
 import logging
@@ -23,20 +26,34 @@ def _day(epoch):
     return datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y%m%d")
 
 
+def events_path_for(path):
+    """state.real.trades.json → state.real.events.json (그 밖의 이름은 확장자만 바꿈)."""
+    if path.name.endswith(".trades.json"):
+        return path.with_name(path.name[: -len(".trades.json")] + ".events.json")
+    return path.with_suffix(".events.json")
+
+
+def _load_list(path, what):
+    try:
+        rows = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(rows, list):
+            raise ValueError(f"{what}은 배열이어야 합니다")
+        return rows
+    except FileNotFoundError:
+        return []
+    except (ValueError, OSError):
+        logging.getLogger(__name__).exception("%s 읽기 실패", what)
+        return []
+
+
 class TradeHistory:
-    def __init__(self, path):
+    def __init__(self, path, events_path=None):
         self.path = path
+        self.events_path = events_path or events_path_for(path)
         self.lock = threading.Lock()
-        self.rows = []
-        try:
-            self.rows = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(self.rows, list):
-                self.rows = []
-                raise ValueError("체결 기록은 배열이어야 합니다")
-        except FileNotFoundError:
-            pass
-        except (ValueError, OSError):
-            logging.getLogger(__name__).exception("차트 체결 기록 읽기 실패")
+        self.rows = _load_list(path, "차트 체결 기록")
+        # 매매 이벤트(인계 등). {code, time, kind, strategy, reason, ...}
+        self.events = _load_list(self.events_path, "매매 이벤트 기록")
         self._ids = {row["id"] for row in self.rows}
         self._by_code = {}
         for row in self.rows:
@@ -71,6 +88,20 @@ class TradeHistory:
         if tag:
             self._queue.put_nowait(("tag", str(order_no), tag, time or chart_epoch()))
 
+    def record_event(self, event):
+        """체결이 아닌 매매 이벤트를 남긴다. kind="handoff": 자동매매가 보유 중에 사람에게 넘어감.
+
+        필드: code, kind, strategy(ulc/candle/zone), reason, 그 밖에 qty·ctx 등. time 이 없으면 지금.
+        매매 경로에서는 큐 삽입만 한다.
+        """
+        if not event.get("code") or not event.get("kind") or self._stopping.is_set():
+            return
+        self._queue.put_nowait(("event", dict(event, time=event.get("time") or chart_epoch())))
+
+    def events_for(self, code=None):
+        with self.lock:
+            return [dict(e) for e in self.events if code is None or e["code"] == code]
+
     def _apply_tag(self, order_no, tag, time):
         key = (_day(time), order_no)
         self._tags[key] = tag
@@ -89,6 +120,12 @@ class TradeHistory:
             try:
                 if fill is None:
                     return
+                if isinstance(fill, tuple) and fill[0] == "event":
+                    event = {k: v for k, v in fill[1].items() if v not in (None, "", {})}
+                    with self.lock:
+                        self.events.append(event)
+                    self._save_events()
+                    continue
                 if isinstance(fill, tuple):
                     self._apply_tag(*fill[1:])
                     continue
@@ -119,6 +156,12 @@ class TradeHistory:
         temporary = self.path.with_suffix(".tmp")
         temporary.write_text(json.dumps(self.rows, ensure_ascii=False), encoding="utf-8")
         temporary.replace(self.path)
+
+    def _save_events(self):
+        self.events_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.events_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(self.events, ensure_ascii=False), encoding="utf-8")
+        temporary.replace(self.events_path)
 
     def flush(self):
         """테스트용 대기. 매매/조회 경로에서는 호출하지 않는다."""
