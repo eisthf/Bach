@@ -28,4 +28,4 @@ def test_manual_cannot_enter_monitor_while_market_is_open():
     machine = StateMachine(clock)
 
     assert not machine.can_push()
-    assert machine.push() == TradeState.MANUAL_TRADING
+    assert machine.push() == TradeState.IDLE

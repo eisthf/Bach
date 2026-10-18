@@ -7,8 +7,9 @@ import StateButton from './StateButton'
 import ManualTradePanel from './ManualTradePanel'
 import AutoConfigForm from './AutoConfigForm'
 
-// 종목 1개 카드: 차트 + 시세 + 상태버튼 + 수동/자동 패널.
-// 컴팩트 모드: 자동매매설정을 숨기고 차트(좌)+매매(우)를 나란히 → 카드 높이 절약.
+// [매매](상한가 자동매매) 종목 1개 카드: 차트 + 시세 + 상태버튼·수동 전환 + 계좌 보유(읽기 전용) + 자동매매 설정.
+// 수동 매수·매도는 없다 — [수동 전환]하면 종목이 수동 매매 화면으로 옮겨간다.
+// 컴팩트 모드: 자동매매설정을 숨기고 차트(좌)+보유(우)를 나란히 → 카드 높이 절약.
 export default function StockPanel({ account, stock }) {
   const { ticks, compact, actions } = useStore()
   const [interval, setInterval] = useState(3) // 기본 3분봉
@@ -34,7 +35,7 @@ export default function StockPanel({ account, stock }) {
           <button
             className="layout-btn"
             onClick={() => actions.toggleCompact(account, stock.code)}
-            title={isCompact ? '펼치기 (자동매매 설정 표시)' : '컴팩트 (차트+매매만)'}
+            title={isCompact ? '펼치기 (자동매매 설정 표시)' : '컴팩트 (차트+보유만)'}
           >
             {isCompact ? '펼치기' : '컴팩트'}
           </button>
@@ -57,14 +58,16 @@ export default function StockPanel({ account, stock }) {
             {toolbar}
             <Chart account={account} code={stock.code} interval={interval} tick={tick} height={260} />
           </div>
-          <ManualTradePanel account={account} stock={stock} tick={tick} />
+          <ManualTradePanel account={account} code={stock.code} position={stock.position}
+            verified={stock.position_verified !== false} tick={tick} readOnly />
         </div>
       ) : (
         <>
           {toolbar}
           <Chart account={account} code={stock.code} interval={interval} tick={tick} />
           <div className="panels">
-            <ManualTradePanel account={account} stock={stock} tick={tick} />
+            <ManualTradePanel account={account} code={stock.code} position={stock.position}
+              verified={stock.position_verified !== false} tick={tick} readOnly />
             <AutoConfigForm account={account} stock={stock} />
           </div>
         </>

@@ -398,9 +398,10 @@ export default function CandleTradeCard({ account, item }) {
             {item.phase === 'WATCHING' && (
               <button disabled={busy} onClick={() => run(() => actions.stopCandle(account.id, item.code), '감시 중지됨')}>감시 중지</button>
             )}
-            {holding && (
-              <button className="warn" disabled={busy}
-                onClick={() => run(() => actions.handoffCandle(account.id, item.code), '[매매] 목록으로 옮겼습니다')}>
+            {editable && (
+              <button className={holding ? 'warn' : ''} disabled={busy}
+                title="자동 매매를 멈추고 이 종목을 수동 매매 화면으로 옮깁니다(되돌릴 수 없음)"
+                onClick={() => run(() => actions.handoffCandle(account.id, item.code), '수동 매매로 옮겼습니다')}>
                 수동 전환
               </button>
             )}
@@ -411,7 +412,7 @@ export default function CandleTradeCard({ account, item }) {
               </button>
             )}
             {item.phase === 'MANUAL' && (
-              <button className="ghost" onClick={() => navigate(ROUTES.TRADING)}>[매매]로 이동</button>
+              <button className="ghost" onClick={() => navigate(ROUTES.MANUAL_TRADE)}>수동 매매로 이동</button>
             )}
           </div>
           {msg && <div className="ct-msg" role="status">{msg}</div>}

@@ -145,7 +145,7 @@ input:focus { outline: none; border-color: var(--accent); }
   border-radius: 999px; padding: 1px 7px; font-size: 11px; font-weight: 700;
   background: #fff; border: 1px solid currentColor;
 }
-.chip-state-manual_trading { color: var(--accent); }
+.chip-state-idle, .chip-state-manual { color: var(--accent); }
 .chip-state-monitor { color: var(--amber); }
 .chip-state-auto_trading { color: #fff; background: var(--green); border-color: var(--green); }
 /* 대금 양봉·구간 매매 칩: 단계별 꼬리표 색 */
@@ -244,7 +244,14 @@ input:focus { outline: none; border-color: var(--accent); }
 }
 .state-name { font-weight: 700; font-size: 14px; }
 .state-sub { font-size: 10px; color: var(--muted); }
-.state-manual_trading { border-color: var(--accent); color: var(--accent); }
+.state-idle { border-color: var(--accent); color: var(--accent); }
+/* [수동 전환]: 어느 상태에서든 수동 매매 화면으로 옮긴다. 자동매매 중이면 경고 톤. */
+.transfer-btn {
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; background: var(--card);
+  color: var(--muted); font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.transfer-btn:hover { color: var(--text); border-color: var(--text); }
+.transfer-btn.warn { color: #c62828; border-color: #e57373; }
 .state-monitor { border-color: var(--amber); color: var(--amber); }
 .state-auto_trading { border-color: var(--green); color: var(--green); }
 
@@ -255,6 +262,14 @@ input:focus { outline: none; border-color: var(--accent); }
   border: 1px solid var(--border); border-radius: 8px; padding: 12px; background: #fcfcfd;
 }
 .manual-panel.disabled, .auto-form.locked { opacity: 0.65; }
+/* 수동 매매 카드: 주문 패널 한 칸 */
+.panels.manual-panels { grid-template-columns: 1fr; max-width: 640px; }
+.origin-badge {
+  font-size: 11px; font-weight: 600; color: var(--muted); border: 1px solid var(--border);
+  border-radius: 999px; padding: 1px 8px;
+}
+.recovery-notice .notice-ok { margin-left: 10px; border: none; background: none; color: inherit; text-decoration: underline; cursor: pointer; font-size: 12px; }
+.stock-panel.manual-card.danger .manual-panel { background: #fff1f0; border-color: #f3b6b2; }
 
 /* 미체결 주문 */
 .pending-orders { margin-top: 10px; border-top: 1px dashed var(--border); padding-top: 8px; }

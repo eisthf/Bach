@@ -1,4 +1,6 @@
 """분할 완료 후 손절선 도달 시 자동매도/수동 인계 선택 검증."""
+import asyncio
+
 from app.models import Position, Tick, TradeState
 from app.strategy.ulc import Phase
 
@@ -59,9 +61,12 @@ async def test_hub_hands_position_to_manual_without_sell(mock_hub):
         code=code, quantity=10, avg_price=10_000.0, current_price=9_400.0)
 
     await hub._run_engine_tick(stock, tick(9_400.0))
+    await asyncio.sleep(0.05)  # 수동 매매로 옮기기는 틱 평가 밖에서 돈다
 
-    assert stock.machine.state == TradeState.MANUAL_TRADING
     assert stock.engine is None
-    assert "자동 매도하지 않음" in stock.recovery_notice
-    assert "계좌 잔량 10주" in stock.recovery_notice
-    assert any("STOP_MANUAL_HANDOFF" in text for text in manager.logs())
+    assert stock.code not in hub.stocks
+    notice = hub.manual_trades.items[stock.code].notice
+    assert "자동 매도하지 않음" in notice
+    assert "계좌 잔량 10주" in notice
+    assert any("STOP_MANUAL_HANDOFF" in text and "→ MANUAL" in text for text in manager.logs())
+    await hub.manual_trades.close()

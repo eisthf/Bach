@@ -75,7 +75,7 @@ async def test_bars_cannot_bypass_missing_verified_open(mock_hub):
     await hub.apply_market_open()
     await stock.setup_task
     assert stock.engine is None
-    assert stock.machine.state == TradeState.MANUAL_TRADING
+    assert stock.machine.state == TradeState.IDLE
     assert hub.data.bars_calls == 0
 
 
@@ -87,7 +87,7 @@ async def test_unresolvable_gives_up_to_manual(mock_hub):
     await hub.apply_market_open()
     await asyncio.gather(*(s.setup_task for s in hub.stocks.values() if s.setup_task))
     assert stock.engine is None
-    assert stock.machine.state == TradeState.MANUAL_TRADING
+    assert stock.machine.state == TradeState.IDLE
     assert any("⚠️" in m and "셋업 실패" in m for m in mgr.logs())
 
 
@@ -98,7 +98,7 @@ async def test_midday_bar_is_not_accepted_as_session_open(mock_hub):
     await hub.apply_market_open()
     await asyncio.gather(*(s.setup_task for s in hub.stocks.values() if s.setup_task))
     assert stock.engine is None
-    assert stock.machine.state == TradeState.MANUAL_TRADING
+    assert stock.machine.state == TradeState.IDLE
 
 
 async def test_one_failure_does_not_block_others(mock_hub):
@@ -121,7 +121,7 @@ async def test_one_failure_does_not_block_others(mock_hub):
     await asyncio.gather(*(s.setup_task for s in hub.stocks.values() if s.setup_task))
 
     assert stock_bad.engine is None
-    assert stock_bad.machine.state == TradeState.MANUAL_TRADING
+    assert stock_bad.machine.state == TradeState.IDLE
     assert stock_ok.engine is not None, "실패가 격리되지 않아 다음 종목까지 삼킴"
     assert stock_ok.machine.state == TradeState.AUTO_TRADING
 
@@ -181,7 +181,7 @@ async def test_pending_setup_is_cancelled_by_user_or_market(mock_hub, action):
     pending = stock.setup_task
     await entered.wait()
     if action == "push":
-        hub.push(stock.code)
+        await hub.push(stock.code)
     elif action == "remove":
         hub.remove_stock(stock.code)
     elif action == "close":
@@ -205,6 +205,6 @@ async def test_slow_query_counts_toward_deadline(mock_hub):
     hub._start_auto = stalled
     await hub.apply_market_open()
     await asyncio.wait_for(stock.setup_task, 1)
-    assert stock.machine.state == TradeState.MANUAL_TRADING
+    assert stock.machine.state == TradeState.IDLE
     assert "시간 초과" in stock.recovery_notice
     assert stock.engine is None

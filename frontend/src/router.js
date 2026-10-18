@@ -11,6 +11,7 @@ export const ROUTES = {
   BIG_CANDLE: '/big-candle',
   CANDLE_TRADE: '/candle-trade',
   ZONE_TRADE: '/zone-trade',
+  MANUAL_TRADE: '/manual-trade',
 }
 
 function currentPath() {

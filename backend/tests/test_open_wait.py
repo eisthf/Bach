@@ -138,7 +138,7 @@ async def test_setup_timeout_logs_open_diagnostics(provider, events, monkeypatch
     emit(provider, **{"290": "1"})  # 걸러진 틱만 들어온 경우
     await hub._prepare_auto(stock)
 
-    assert stock.machine.state == TradeState.MANUAL_TRADING
+    assert stock.machine.state == TradeState.IDLE
     timeout = next(f for f in logged if f.get("event") == "auto_setup_timeout")
     assert timeout["missing"] == ["Z"]
     assert timeout["open_diag"]["rejected"] == {"session_1": 1}

@@ -106,7 +106,7 @@ async def test_close_without_holding_ends_as_before(mock_hub, tmp_path):
     hub, mgr, clock, stock = setup(mock_hub, tmp_path)
     stock.engine.shares = 0
     close(hub)
-    assert stock.machine.state == TradeState.MANUAL_TRADING
+    assert stock.machine.state == TradeState.IDLE
     assert stock.engine is None
     assert "engine" not in saved_entry(hub)
 
@@ -170,7 +170,7 @@ async def test_flat_account_ends_carry(mock_hub, tmp_path):
     close(hub)
     hub.broker.qty = 0
     await resume(hub)
-    assert stock.machine.state == TradeState.MANUAL_TRADING
+    assert stock.machine.state == TradeState.IDLE
     assert stock.engine is None
 
 
@@ -184,18 +184,22 @@ async def test_balance_failure_holds_orders_then_hands_off(mock_hub, tmp_path):
     await hub._run_engine_tick(stock, tick(1_000.0))
     assert hub.broker.sells == []            # 대조 전에는 주문 보류
     await asyncio.gather(*(s.setup_task for s in hub.stocks.values() if s.setup_task))
-    assert stock.machine.state == TradeState.MANUAL_TRADING
-    assert "재개 실패" in stock.recovery_notice
+    # 보유를 확인하지 못한 이월 종목은 수동 매매로 넘긴다.
+    assert stock.code not in hub.stocks and stock.engine is None
+    assert "재개 실패" in hub.manual_trades.items[stock.code].notice
+    await hub.manual_trades.close()
 
 
 async def test_push_stops_carry(mock_hub, tmp_path):
     hub, mgr, clock, stock = setup(mock_hub, tmp_path)
     close(hub)
-    assert hub.push(stock.code) == TradeState.MANUAL_TRADING
+    assert await hub.push(stock.code) == "MANUAL"
     assert stock.engine is None
-    assert "engine" not in saved_entry(hub)
+    assert stock.code not in hub.stocks and stock.code in hub.manual_trades.items
+    assert json.loads(hub._state_path.read_text(encoding="utf-8"))["stocks"] == []
     await resume(hub)
-    assert stock.engine is None and stock.machine.state == TradeState.MANUAL_TRADING
+    assert stock.engine is None
+    await hub.manual_trades.close()
 
 
 async def test_restart_before_open_restores_carry(mock_hub, tmp_path):
@@ -224,7 +228,7 @@ async def test_restart_before_open_restores_carry(mock_hub, tmp_path):
 
 
 async def test_restart_during_session_hands_off(mock_hub, tmp_path):
-    """장중 재시작은 저장 이후 체결을 알 수 없어 종전대로 수동 인계한다."""
+    """장중 재시작은 저장 이후 체결을 알 수 없어 수동 매매로 넘긴다."""
     hub, mgr, clock, stock = setup(mock_hub, tmp_path)
     close(hub)
     clock.open()
@@ -233,11 +237,11 @@ async def test_restart_during_session_hands_off(mock_hub, tmp_path):
     hub2.broker = Broker()
     try:
         await hub2.restore()
-        s2 = hub2.get("008970")
-        assert s2.machine.state == TradeState.MANUAL_TRADING and s2.engine is None
-        assert "장중 재시작" in s2.recovery_notice
+        assert hub2.get("008970") is None
+        assert "장중 재시작" in hub2.manual_trades.items["008970"].notice
     finally:
         hub2.trade_history.close()
+        await hub2.manual_trades.close()
         for s in hub2.stocks.values():
             s.task.cancel()
 

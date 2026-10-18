@@ -50,7 +50,7 @@ def scan_log(account: str) -> dict:
     msgs = defaultdict(lambda: {"buy": [], "sell": [], "sc": None, "x": None, "z": None, "handoffs": [], "exit": None})
     for e in iter_events(account):
         if (e.get("event") == "state_transition" and e.get("from_state") == "AUTO_TRADING"
-                and e.get("to_state") == "MANUAL_TRADING" and e.get("code")):
+                and e.get("to_state") in HANDOFF_STATES and e.get("code")):
             t = chart_epoch(e["timestamp"])
             msgs[(e["code"], ymd(t))]["handoffs"].append({"time": t, "reason": e.get("reason", "")})
             continue
@@ -79,11 +79,15 @@ def scan_log(account: str) -> dict:
     return msgs
 
 
-# AUTO_TRADING → MANUAL_TRADING 전환 원인(hub.py) → 차트 라벨
+# AUTO_TRADING에서 나간 전환의 도착 상태. MANUAL_TRADING은 2026-10-18 이전 로그, 이후엔
+# IDLE(그날 자동매매 종료) / MANUAL(수동 매매 목록으로 옮김).
+HANDOFF_STATES = ("MANUAL_TRADING", "IDLE", "MANUAL")
+
+# AUTO_TRADING → 수동 전환 원인(hub.py) → 차트 라벨
 HANDOFF_LABELS = {
     "PUSH": "PUSH로 중단", "STOP_MANUAL_HANDOFF": "손절 기준 도달 인계", "ENGINE_DONE": "엔진 종료 뒤 잔량",
     "SERVER_RESTORE": "재시작 인계", "AUTO_SETUP_TIMEOUT": "준비 시간 초과", "MARKET_CLOSE": "장 마감",
-    "MARKET_RESET": "장 초기화",
+    "MARKET_RESET": "장 초기화", "USER_MANUAL": "수동 전환", "AUTO_CARRY_TIMEOUT": "이월 재개 실패",
 }
 
 

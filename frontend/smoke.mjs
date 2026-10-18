@@ -28,7 +28,7 @@ const price = await page.locator('.ticker-price').first().innerText()
 // state button shows current state
 const stateName = await page.locator('.state-name').first().innerText()
 
-// PUSH (pre-open): MANUAL -> MONITOR
+// PUSH (pre-open): IDLE(대기) -> MONITOR
 await page.click('.state-btn')
 await page.waitForTimeout(400)
 const stateAfterPush = await page.locator('.state-name').first().innerText()

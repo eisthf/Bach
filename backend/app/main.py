@@ -153,16 +153,93 @@ async def add_stock(account: str, payload: dict):
     return hub.status_of(stock.code).model_dump()
 
 
-@app.post("/api/{account}/stocks/import-held")
-async def import_held(account: str):
-    """계좌 보유 종목 중 화면에 없는 것을 가져와 추가."""
-    added = await _hub(account).import_held()
-    return {"added": added}
-
-
 @app.delete("/api/{account}/stocks/{code}")
 def remove_stock(account: str, code: str):
     _hub(account).remove_stock(code)
+    return {"ok": True}
+
+
+@app.post("/api/{account}/stocks/{code}/manual")
+async def transfer_stock_to_manual(account: str, code: str):
+    """[수동 전환]: [매매] 종목을 어느 상태에서든 수동 매매 목록으로 옮긴다(되돌리기 없음)."""
+    try:
+        return await _hub(account).transfer_to_manual(code, "USER_MANUAL")
+    except KeyError:
+        raise HTTPException(404, "[매매] 목록에 없는 종목입니다.")
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
+# ---------------------------------------------------------------------------
+# 수동 매매 (계좌 스코프) — 어느 자동매매에서든 넘겨받은 종목 + 직접 사고파는 종목.
+# 주문은 아래 /orders/buy·sell 을 그대로 쓴다.
+# ---------------------------------------------------------------------------
+def _manual(account: str):
+    return _hub(account).manual_trades
+
+
+def _manual_call(fn, *args):
+    try:
+        return fn(*args)
+    except KeyError:
+        raise HTTPException(404, "수동 매매 목록에 없는 종목입니다.")
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
+@app.get("/api/{account}/manual-trades")
+async def list_manual_trades(account: str):
+    return await asyncio.to_thread(_manual(account).list_payload)
+
+
+@app.post("/api/{account}/manual-trades")
+async def add_manual_trade(account: str, payload: dict):
+    hub = _hub(account)
+    code = (payload.get("code") or "").strip()
+    name = (payload.get("name") or "").strip()
+    if not code:
+        raise HTTPException(400, "code 필요")
+    if not name:
+        try:
+            name = await asyncio.to_thread(hub.data.stock_name, code) or ""
+        except Exception:
+            name = ""
+    return _manual_call(hub.manual_trades.add, code, name)
+
+
+@app.post("/api/{account}/manual-trades/import-held")
+async def import_held(account: str):
+    """계좌 보유 종목 중 어느 목록에도 없는 것을 수동 매매로 가져온다."""
+    try:
+        added = await _hub(account).import_held()
+    except ValueError as e:
+        raise HTTPException(502, str(e))
+    return {"added": added}
+
+
+@app.put("/api/{account}/manual-trades/{code}/stop")
+def set_manual_stop(account: str, code: str, payload: dict):
+    """평단 대비 자동 손절 {enabled, pct}."""
+    try:
+        pct = float(payload.get("pct", 5.0))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "pct 숫자 필요")
+    return _manual_call(_manual(account).set_stop, code, bool(payload.get("enabled")), pct)
+
+
+@app.delete("/api/{account}/manual-trades/{code}/notice")
+def clear_manual_notice(account: str, code: str):
+    return _manual_call(_manual(account).clear_notice, code)
+
+
+@app.delete("/api/{account}/manual-trades/{code}")
+async def remove_manual_trade(account: str, code: str):
+    try:
+        await _manual(account).remove(code)
+    except KeyError:
+        raise HTTPException(404, "수동 매매 목록에 없는 종목입니다.")
+    except ValueError as e:
+        raise HTTPException(409, str(e))
     return {"ok": True}
 
 
@@ -247,7 +324,7 @@ async def stop_candle_trade(account: str, code: str):
 
 @app.post("/api/{account}/candle-trades/{code}/handoff")
 async def hand_off_candle_trade(account: str, code: str):
-    """수동 전환: 엔진을 멈추고 [매매] 목록(수동매매)으로 옮긴다."""
+    """수동 전환: 엔진을 멈추고 수동 매매 목록으로 옮긴다(설정 중·감시 중에도)."""
     return await _candle_acall(_candle(account).hand_off, code)
 
 
@@ -379,6 +456,8 @@ async def buy(account: str, req: BuyOrderReq):
     hub.tag_order(res, "manual", "수동 매수")
     if res.ok:
         hub._log(f"[{req.code}] 수동 매수: {res.message}")
+        if req.code in hub.manual_trades.items:
+            await hub.manual_trades.broadcast_async(req.code)
         hub.broadcast_status(req.code)
         await hub.refresh_orders()
     return res
@@ -391,6 +470,8 @@ async def sell(account: str, req: SellOrderReq):
     hub.tag_order(res, "manual", "수동 매도")
     if res.ok:
         hub._log(f"[{req.code}] 수동 매도: {res.message}")
+        if req.code in hub.manual_trades.items:
+            await hub.manual_trades.broadcast_async(req.code)
         hub.broadcast_status(req.code)
         await hub.refresh_orders()
     return res
@@ -432,11 +513,12 @@ def put_config(account: str, code: str, config: AutoConfig):
 # 상태 전이
 # ---------------------------------------------------------------------------
 @app.post("/api/{account}/state/{code}/push")
-def push(account: str, code: str):
-    state = _hub(account).push(code)
+async def push(account: str, code: str):
+    """대기 ↔ 감시. 자동매매 중이면 수동 매매로 옮긴다(state="MANUAL")."""
+    state = await _hub(account).push(code)
     if state is None:
         raise HTTPException(404, "종목 없음")
-    return {"code": code, "state": state.value}
+    return {"code": code, "state": state}
 
 
 # ---------------------------------------------------------------------------

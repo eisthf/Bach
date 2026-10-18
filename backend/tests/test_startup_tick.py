@@ -108,7 +108,7 @@ async def test_real_tick_winning_race_prevents_startup_repeat(mock_hub, monkeypa
 async def test_handoff_before_startup_evaluation_blocks_buy(mock_hub, monkeypatch):
     hub, stock, _ = prepare(mock_hub, monkeypatch)
     assert await hub._start_auto(stock)
-    hub.push(stock.code)
+    await hub.push(stock.code)
     await hub._evaluate_startup_tick(stock)
     hub.broker.buy_ask3.assert_not_called()
 

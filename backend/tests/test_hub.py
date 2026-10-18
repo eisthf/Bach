@@ -80,7 +80,7 @@ async def test_tick_path_nonblocking_and_transitions(mock_hub):
     t.cancel()
 
     assert eng.phase == Phase.DONE and eng.shares == 0
-    assert stock.machine.state == TradeState.MANUAL_TRADING
+    assert stock.machine.state == TradeState.IDLE
     assert stock.engine is None, "엔진이 정리되지 않음"
     assert during >= 20, f"루프가 막혔다 (heartbeat {during}회, 기대 ~60)"
     assert all(m.get("account") == "mock" for m in mgr.msgs), "계좌 태그 누락"
@@ -171,7 +171,7 @@ async def test_clean_liquidation_logged(mock_hub):
     stock, logs = await _run_residual_scenario(mock_hub, 0)
     assert any("청산 완료" in m for m in logs)
     assert not any("⚠️" in m for m in logs)
-    assert stock.machine.state == TradeState.MANUAL_TRADING
+    assert stock.machine.state == TradeState.IDLE
     assert stock.engine is None
 
 
@@ -184,5 +184,9 @@ async def test_residual_position_warned_not_falsely_done(mock_hub):
     stock, logs = await _run_residual_scenario(mock_hub, 7)
     assert any("⚠️" in m and "7주" in m for m in logs)
     assert not any("청산 완료" in m for m in logs)
-    assert stock.machine.state == TradeState.MANUAL_TRADING
     assert stock.engine is None, "중복매도 방지 위해 엔진은 정리돼야 함"
+    hub = mock_hub[0]
+    await asyncio.sleep(0.05)
+    assert stock.code not in hub.stocks, "잔량은 수동 매매로 넘긴다"
+    assert "7주" in hub.manual_trades.items[stock.code].notice
+    await hub.manual_trades.close()

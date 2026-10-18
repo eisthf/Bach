@@ -14,8 +14,9 @@
 
 같은 계좌에서 같은 종목을 두 방식이 동시에 다루지 않는다(``occupied``).
 포지션 진실원이 계좌 잔고 하나라, 두 엔진이 같은 수량을 서로 제 것으로
-판단하면 이중 매도·과다 매도가 날 수 있기 때문이다. 수동 인계 시 종목은
-기존 [매매] 목록으로 옮겨져(MANUAL_TRADING) 수동 매도·자동손절을 그대로 쓴다.
+판단하면 이중 매도·과다 매도가 날 수 있기 때문이다. 수동 전환(사용자 요청은 어느 단계에서든,
+자동 인계는 보유가 맞지 않을 때)하면 종목은 수동 매매 목록(``manual_trade.py``)으로 옮겨지고,
+이 목록의 항목은 '수동 전환됨' 기록으로 남는다.
 
 주문·체결·시세는 Hub의 provider/broker를 그대로 쓴다.
 """
@@ -156,9 +157,9 @@ class CandleTradeManager:
             legacy = self.hub._state_path.with_suffix(".close.json")
             if legacy.exists():
                 # 이전 '종가 매매'(다른 전략) 기록은 옮기지 않는다. 그 종목의 계좌 잔고는
-                # 점유되지 않았으므로 재시작 잔고 가져오기로 [매매] 목록에 수동매매로 올라온다.
+                # 점유되지 않았으므로 재시작 잔고 가져오기로 수동 매매 목록에 올라온다.
                 self.hub._log(f"⚠️ 이전 종가 매매 기록({legacy.name})은 대금 양봉 매매로 옮기지 않았습니다 — "
-                              "보유 종목은 [매매] 목록에서 확인하세요.")
+                              "보유 종목은 수동 매매 목록에서 확인하세요.")
             return
         except Exception as e:  # noqa: BLE001
             logger.warning("대금 양봉 매매 상태 로드 실패(%s): %s", self._path, e)
@@ -344,6 +345,9 @@ class CandleTradeManager:
     def _check_free(self, code: str) -> None:
         if code in self.hub.stocks:
             raise ValueError("이미 [매매] 목록에 있는 종목입니다. 한 종목은 한 방식으로만 운용합니다.")
+        if code in self.hub.manual_trades.occupied():
+            raise ValueError("수동 매매 목록에 있는 종목입니다. 한 종목은 한 방식으로만 운용합니다"
+                             "(보유 0이 되면 수동 매매에서 지운 뒤 등록하세요).")
 
     def _insert(self, code: str, name: str, eng: CandleTradeEngine) -> None:
         # 끝난 기록(DONE/MANUAL)은 새 등록으로 대체한다.
@@ -399,23 +403,33 @@ class CandleTradeManager:
         return self.payload(code)
 
     async def hand_off(self, code: str) -> dict:
-        """수동 전환: 엔진을 멈추고 종목을 [매매] 목록(MANUAL_TRADING)으로 옮긴다."""
+        """수동 전환: 엔진을 멈추고 종목을 수동 매매 목록으로 옮긴다. 설정 중·감시 중(보유 없음)에도 된다."""
         it = self._get(code)
         async with it.lock:
-            if not it.engine.phase.holding:
-                raise ValueError("보유 중인 종목만 수동 전환할 수 있습니다.")
+            if not (it.engine.phase == CzPhase.DRAFT or it.engine.phase.active):
+                raise ValueError("이미 끝난 매매입니다.")
             it.engine.hand_off("사용자 수동 전환")
         await self._move_to_manual(it)
         return self.payload(code)
 
     async def _move_to_manual(self, it: CandleItem) -> None:
         # 시세 구독은 종목당 하나다. 대금 양봉 매매 루프를 완전히 끝낸 뒤(구독 해제 포함)
-        # 기존 매매 목록에 올려야 새 구독이 덮이거나 지워지지 않는다.
+        # 수동 매매 목록에 올려야 새 구독이 덮이거나 지워지지 않는다.
         await self._stop_loop(it)
         self.persist()
-        if it.engine.shares > 0 and it.code not in self.hub.stocks:
-            self.hub.add_stock(it.code, it.name)
-            self._log(it.code, "[매매] 목록으로 이동(수동매매)")
+        manual = self.hub.manual_trades
+        if it.code not in manual.items and it.code not in self.hub.stocks:
+            parts = [f"{'구간' if it.engine.kind == 'zone' else '대금 양봉'} 매매에서 수동 전환"]
+            if it.engine.exit_reason and it.engine.exit_reason != "사용자 수동 전환":
+                parts.append(it.engine.exit_reason)
+            try:
+                pending = len((await asyncio.to_thread(self.hub.broker.unfilled_orders)).get(it.code) or [])
+            except Exception:  # noqa: BLE001
+                pending = 0
+            if pending:
+                parts.append(f"미체결 주문 {pending}건이 남아 있습니다 — 체결·취소를 계좌에서 확인하세요")
+            manual.add(it.code, it.name, it.engine.kind, ". ".join(parts))
+            self._log(it.code, "수동 매매 목록으로 이동")
         self.broadcast(it.code)
 
     # -- 틱·체결 -------------------------------------------------------------
@@ -552,7 +566,7 @@ class CandleTradeManager:
             it.notice = "청산 후 계좌 잔고 확인 실패 — 계좌에서 직접 확인하세요."
             self._log(it.code, f"⚠️ {it.notice}")
         elif pos.quantity > 0:
-            it.notice = f"청산 후 계좌 잔량 {pos.quantity}주(부분체결/미체결 가능) — [매매]에서 확인"
+            it.notice = f"청산 후 계좌 잔량 {pos.quantity}주(부분체결/미체결 가능) — 수동 매매에서 확인"
             self._log(it.code, f"⚠️ {it.notice}")
             it.engine.phase = CzPhase.MANUAL
             asyncio.get_running_loop().create_task(self._move_to_manual(it))

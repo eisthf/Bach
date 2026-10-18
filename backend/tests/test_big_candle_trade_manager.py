@@ -206,19 +206,35 @@ async def test_stop_returns_to_draft(hub):
     assert hub.candle_trades.items[CODE].task is None
 
 
-async def test_hand_off_moves_to_trading_list(hub):
+async def test_hand_off_moves_to_manual_list(hub):
     add(hub)
     await hub.candle_trades.start(CODE)
-    with pytest.raises(ValueError):               # 보유 전엔 수동 전환이 아니라 중지
-        await hub.candle_trades.hand_off(CODE)
     hub.clock.open()
     await push_tick(hub, 11_000)
     item = await hub.candle_trades.hand_off(CODE)
     assert item["phase"] == "MANUAL"
-    stock = hub.get(CODE)
-    assert stock is not None and stock.machine.state == TradeState.MANUAL_TRADING
+    assert hub.get(CODE) is None
+    it = hub.manual_trades.items[CODE]
+    assert it.origin == "candle" and "대금 양봉 매매에서 수동 전환" in it.notice
     assert CODE not in hub.candle_trades.occupied()
-    stock.task.cancel()
+    with pytest.raises(ValueError):               # 끝난 매매는 다시 전환할 수 없다
+        await hub.candle_trades.hand_off(CODE)
+    with pytest.raises(ValueError):               # 수동 매매 중엔 다른 방식으로 등록 불가
+        add(hub)
+    await hub.manual_trades.close()
+
+
+@pytest.mark.parametrize("started", [False, True])
+async def test_hand_off_without_holding(hub, started):
+    """설정 중·감시 중(보유 없음)에도 언제든 수동 매매로 넘길 수 있다."""
+    add(hub)
+    if started:
+        await hub.candle_trades.start(CODE)
+    item = await hub.candle_trades.hand_off(CODE)
+    assert item["phase"] == "MANUAL"
+    assert hub.candle_trades.items[CODE].task is None
+    assert CODE in hub.manual_trades.items
+    await hub.manual_trades.close()
 
 
 async def test_remove_only_when_not_active(hub):
@@ -277,8 +293,8 @@ async def test_restore_account_short_hands_off(hub):
     await asyncio.sleep(0.05)
     it = hub.candle_trades.items[CODE]
     assert it.engine.phase == CzPhase.MANUAL
-    assert hub.get(CODE) is not None
-    hub.get(CODE).task.cancel()
+    assert hub.get(CODE) is None and CODE in hub.manual_trades.items
+    await hub.manual_trades.close()
 
 
 async def test_restore_without_balance_holds_orders(hub, monkeypatch):

@@ -14,7 +14,10 @@ from pydantic import BaseModel, Field, model_validator
 # 상태머신
 # ---------------------------------------------------------------------------
 class TradeState(str, Enum):
-    MANUAL_TRADING = "MANUAL_TRADING"
+    # 대기: 장전 설정·PUSH 대기, 또는 그날 자동매매를 마친 종목(장중엔 다시 감시 불가).
+    # 사람이 보유를 관리하는 수동 매매는 별도 목록(manual_trade.py)이다. 예전 저장값
+    # "MANUAL_TRADING"은 복원 때 IDLE로 읽는다.
+    IDLE = "IDLE"
     MONITOR = "MONITOR"
     AUTO_TRADING = "AUTO_TRADING"
 
@@ -91,11 +94,6 @@ class AutoConfig(BaseModel):
     ulc_first_buy_ask3: bool = Field(True, description="1차 매수를 매도 3호가 지정가로 주문")
     use_3min_bar_timing: bool = Field(
         False, description="완성된 3분봉 종가가 확정될 때만 매매 조건 평가")
-
-    # 수동매매 보호 주문
-    manual_stop_enabled: bool = Field(False, description="수동매매 평단 기준 자동 전량 손절")
-    manual_stop_pct: float = Field(
-        5.0, gt=0, le=100, description="수동매매 자동 손절률(퍼센트, 5=5%)")
 
 
 # ---------------------------------------------------------------------------

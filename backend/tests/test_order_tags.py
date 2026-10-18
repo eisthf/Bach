@@ -231,7 +231,7 @@ def test_hub_records_handoff_only_for_auto_to_manual():
     events = []
     hub = SimpleNamespace(_log=lambda *a, **k: None, clock=SimpleNamespace(phase=SimpleNamespace(value="OPEN")),
                           trade_history=SimpleNamespace(record_event=events.append))
-    manual = SimpleNamespace(code="008970", machine=SimpleNamespace(state=TradeState.MANUAL_TRADING))
+    manual = SimpleNamespace(code="008970", machine=SimpleNamespace(state=TradeState.IDLE))
     Hub._log_transition(hub, manual, TradeState.AUTO_TRADING, "PUSH")
     Hub._log_transition(hub, manual, TradeState.AUTO_TRADING, "ENGINE_DONE", position_quantity=218)
     Hub._log_transition(hub, manual, TradeState.MONITOR, "PUSH")             # 자동매매 전 → 기록 안 함

@@ -11,43 +11,26 @@ import UpperLimitPage from './pages/UpperLimitPage'
 import BigCandlePage from './pages/BigCandlePage'
 import CandleTradePage from './pages/CandleTradePage'
 import ZoneTradePage from './pages/ZoneTradePage'
+import ManualTradePage from './pages/ManualTradePage'
 import BrokerConnection from './components/BrokerConnection'
 
-// 종목 칩의 매매 상태 표시(색은 StateButton과 같은 체계: 수동=파랑, 모니터=주황, 자동=초록).
-const STATE_SHORT = { MANUAL_TRADING: '수동', MONITOR: '감시', AUTO_TRADING: '자동' }
-const STATE_LABEL = { MANUAL_TRADING: '수동매매', MONITOR: '모니터', AUTO_TRADING: '자동매매' }
+// 종목 칩의 매매 상태 표시(색은 StateButton과 같은 체계: 대기=파랑, 모니터=주황, 자동=초록).
+const STATE_SHORT = { IDLE: '대기', MONITOR: '감시', AUTO_TRADING: '자동' }
+const STATE_LABEL = { IDLE: '대기', MONITOR: '모니터', AUTO_TRADING: '자동매매' }
 
 // 한 계좌(모의/실전)의 종목 입력 + 칩바 + 패널 목록. 실전(danger)은 위험 톤.
+// [매매]는 상한가 자동매매 전용이다 — 계좌 보유 가져오기·수동 매수·매도는 수동 매매 화면에 있다.
 function AccountColumn({ account }) {
-  const { stocks, order, hidden, compact, actions } = useStore()
+  const { stocks, order, hidden, actions } = useStore()
   const acc = account.id
   const accStocks = stocks[acc] || {}
   const accOrder = order[acc] || []
   const accHidden = hidden[acc] || new Set()
-  const accCompact = compact[acc] || new Set()
 
   const visibleCodes = accOrder.filter((c) => accStocks[c])
   // 알림(recovery_notice)이 있어도 숨길 수 있다 — 재시작 때마다 보유 종목에 알림이 붙어 토글이
   // 막히던 문제. 대신 칩에 ⚠ 를 달아 알림이 있다는 건 숨겨도 보이게 한다.
   const list = visibleCodes.filter((c) => !accHidden.has(c)).map((c) => accStocks[c])
-  const manualCodes = visibleCodes.filter((c) => accStocks[c].state === 'MANUAL_TRADING')
-  const allManualCompact =
-    manualCodes.length > 0 && manualCodes.every((c) => accCompact.has(c))
-
-  const [importing, setImporting] = React.useState(false)
-  const [importMsg, setImportMsg] = React.useState('')
-  const doImportHeld = async () => {
-    setImporting(true)
-    setImportMsg('')
-    try {
-      const added = await actions.importHeld(acc)
-      setImportMsg(added.length ? `${added.length}개 추가됨` : '추가할 보유 종목 없음')
-    } catch (e) {
-      setImportMsg(String(e.message || e))
-    } finally {
-      setImporting(false)
-    }
-  }
 
   return (
     <section className={`account-col ${account.danger ? 'danger' : 'safe'}`}>
@@ -64,18 +47,6 @@ function AccountColumn({ account }) {
 
       <div className="toolbar-row">
         <StockInput account={acc} />
-        <button className="import-held-btn" onClick={doImportHeld} disabled={importing}>
-          {importing ? '가져오는 중…' : '보유 종목 가져오기'}
-        </button>
-        {importMsg && <span className="import-msg">{importMsg}</span>}
-        {manualCodes.length > 0 && (
-          <button
-            className="import-held-btn"
-            onClick={() => actions.setCompactFor(acc, manualCodes, !allManualCompact)}
-          >
-            {allManualCompact ? '수동매매 펼치기' : '수동매매 컴팩트'}
-          </button>
-        )}
       </div>
 
       {visibleCodes.length > 0 && (
@@ -111,7 +82,7 @@ function AccountColumn({ account }) {
         {list.length === 0 && (
           <div className="empty-state">
             {visibleCodes.length === 0
-              ? '종목코드를 추가하면 차트와 매매 패널이 나타납니다.'
+              ? '종목코드를 추가하면 차트와 상한가 자동매매 설정이 나타납니다. 수동 매매는 [수동 매매] 화면에서 합니다.'
               : '모든 종목이 숨김 상태입니다.'}
           </div>
         )}
@@ -198,6 +169,7 @@ function Router() {
     [ROUTES.BIG_CANDLE]: BigCandlePage,
     [ROUTES.CANDLE_TRADE]: CandleTradePage,
     [ROUTES.ZONE_TRADE]: ZoneTradePage,
+    [ROUTES.MANUAL_TRADE]: ManualTradePage,
   }
   const Page = pages[route]
   if (Page) {

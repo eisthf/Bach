@@ -28,26 +28,26 @@ def events(path):
 async def test_push_and_market_open_are_distinguishable(mock_hub, event_file):
     hub, _, clock = mock_hub
     stock = hub.add_stock("048770")
-    hub.push(stock.code)
-    hub.push(stock.code)
+    await hub.push(stock.code)
+    await hub.push(stock.code)
     clock.open()
     await hub.apply_market_open()
     records = events(event_file)
     pushed = [r for r in records if r.get("reason") == "PUSH"][-1]
     assert pushed["from_state"] == "MONITOR"
-    assert pushed["to_state"] == "MANUAL_TRADING"
+    assert pushed["to_state"] == "IDLE"
     assert pushed["account"] == "mock"
     assert pushed["code"] == "048770"
     assert pushed["timestamp"].endswith("+00:00")
     opened = [r for r in records if r.get("reason") == "MARKET_OPEN"][-1]
-    assert opened["from_state"] == opened["to_state"] == "MANUAL_TRADING"
+    assert opened["from_state"] == opened["to_state"] == "IDLE"
     assert not any(r.get("reason") == "AUTO_SETUP_FAILED" for r in records)
 
 
 async def test_missing_open_price_is_recorded(mock_hub, event_file, monkeypatch):
     hub, _, clock = mock_hub
     stock = hub.add_stock("048770")
-    hub.push(stock.code)
+    await hub.push(stock.code)
     monkeypatch.setattr(hub.data, "prev_close", lambda code: 10000)
     monkeypatch.setattr(hub.data, "day_open", lambda code: None)
     monkeypatch.setattr(hub.data, "get_bars", lambda *args: [])
@@ -60,15 +60,15 @@ async def test_missing_open_price_is_recorded(mock_hub, event_file, monkeypatch)
     assert missing["x"] == 10000
     failure = next(r for r in records if r.get("reason") == "AUTO_SETUP_TIMEOUT")
     assert failure["from_state"] == "AUTO_TRADING"
-    assert failure["to_state"] == "MANUAL_TRADING"
-    assert stock.machine.state == TradeState.MANUAL_TRADING
+    assert failure["to_state"] == "IDLE"
+    assert stock.machine.state == TradeState.IDLE
 
 
 async def test_setup_exception_records_stage_without_response_body(mock_hub, event_file,
                                                                   monkeypatch):
     hub, _, clock = mock_hub
     stock = hub.add_stock("048770")
-    hub.push(stock.code)
+    await hub.push(stock.code)
 
     def fail(code):
         raise RuntimeError("sensitive-response-body")
@@ -171,7 +171,7 @@ async def test_auto_start_records_exit_settings(mock_hub, event_file, monkeypatc
     """종목별 청산 설정은 종목을 지우면 저장 파일에서도 사라진다 — 시작 로그에 남겨 나중에 되짚는다."""
     hub, _, clock = mock_hub
     stock = hub.add_stock("048770")
-    hub.push(stock.code)
+    await hub.push(stock.code)
     stock.config = stock.config.model_copy(update={"ulc_sl": 0.03, "ulc_stop_requires_below_prev_close": True})
     monkeypatch.setattr(hub.data, "prev_close", lambda code: 10000)
     monkeypatch.setattr(hub.data, "day_open", lambda code: 10200)

@@ -23,6 +23,7 @@ export function StoreProvider({ children }) {
   const [orders, setOrders] = useState({})         // acc -> {code: [orders]}
   const [candleTrades, setCandleTrades] = useState({}) // acc -> {code: 대금 양봉 매매 항목}
   const [candlePositions, setCandlePositions] = useState({}) // acc -> {code: 계좌 포지션}
+  const [manualTrades, setManualTrades] = useState({}) // acc -> {code: 수동 매매 항목(포지션 포함)}
   const [hidden, setHidden] = useState({})         // acc -> Set(codes)
   const [compact, setCompact] = useState({})       // acc -> Set(codes)
   const [phase, setPhase] = useState('PRE_OPEN')
@@ -57,6 +58,11 @@ export function StoreProvider({ children }) {
       setHidden(h)
       setCompact(c)
       list.forEach((a) => {
+        api.manualTrades(a.id).then((rows) => {
+          const map = {}
+          rows.forEach((it) => (map[it.code] = it))
+          setIn(setManualTrades, a.id, () => map)
+        }).catch(() => {})
         api.candleTrades(a.id).then((rows) => {
           const map = {}
           rows.forEach((it) => (map[it.code] = it))
@@ -105,6 +111,23 @@ export function StoreProvider({ children }) {
           setIn(setStocks, acc, (m) => ({ ...(m || {}), [s.code]: s }))
           setIn(setOrder, acc, (arr) =>
             (arr || []).includes(s.code) ? arr : [...(arr || []), s.code])
+        } else if (msg.type === 'stock_removed') {
+          // [수동 전환]으로 [매매] 목록에서 빠졌다(수동 매매로 옮겨감).
+          setIn(setStocks, acc, (m) => {
+            const n = { ...(m || {}) }
+            delete n[msg.code]
+            return n
+          })
+          setIn(setOrder, acc, (arr) => (arr || []).filter((c) => c !== msg.code))
+        } else if (msg.type === 'manual_trade') {
+          const it = msg.item
+          setIn(setManualTrades, acc, (m) => ({ ...(m || {}), [it.code]: it }))
+        } else if (msg.type === 'manual_trade_removed') {
+          setIn(setManualTrades, acc, (m) => {
+            const n = { ...(m || {}) }
+            delete n[msg.code]
+            return n
+          })
         } else if (msg.type === 'candle_trade') {
           const it = msg.item
           setIn(setCandleTrades, acc, (m) => ({ ...(m || {}), [it.code]: it }))
@@ -178,6 +201,18 @@ export function StoreProvider({ children }) {
       setAccountViewRaw(v)
     },
     push: (acc, code) => api.push(acc, code),
+    // 수동 전환은 되돌릴 수 없다(다시 자동매매하려면 보유 0에서 수동 매매에서 지우고 새로 추가).
+    transferToManual: (acc, code, what = '상한가 자동매매') => {
+      if (!window.confirm(`${code} ${what}를 멈추고 수동 매매로 옮길까요?
+이후 자동 주문은 나가지 않으며, 되돌릴 수 없습니다.`)) {
+        return Promise.resolve(null)
+      }
+      return api.transferToManual(acc, code)
+    },
+    addManual: (acc, code, name) => api.addManualTrade(acc, code, name),
+    removeManual: (acc, code) => api.removeManualTrade(acc, code),
+    setManualStop: (acc, code, enabled, pct) => api.setManualStop(acc, code, enabled, pct),
+    clearManualNotice: (acc, code) => api.clearManualNotice(acc, code),
     buy: (acc, code, amount) => {
       if (dangerRef.current[acc] &&
           !window.confirm(`⚠️ 실전 계좌 매수\n${code} ${Number(amount).toLocaleString()}원\n실제 주문이 나갑니다. 진행할까요?`)) {
@@ -205,8 +240,8 @@ export function StoreProvider({ children }) {
     },
     stopCandle: (acc, code) => api.stopCandle(acc, code),
     handoffCandle: (acc, code) => {
-      if (!window.confirm(`${code} 자동 매매를 멈추고 [매매] 목록의 수동매매로 넘길까요?
-이후 자동 추가매수·익절·트레일링·손절은 하지 않습니다.`)) {
+      if (!window.confirm(`${code} 자동 매매를 멈추고 수동 매매로 옮길까요?
+이후 자동 매수·추가매수·익절·트레일링·손절은 하지 않으며, 되돌릴 수 없습니다.`)) {
         return Promise.resolve(null)
       }
       return api.handoffCandle(acc, code)
@@ -222,7 +257,7 @@ export function StoreProvider({ children }) {
     accounts.length > 1 && accounts.some((a) => a.id === accountView) ? accountView : 'ALL'
 
   const value = {
-    accounts, stocks, order, ticks, orders, hidden, compact, candleTrades, candlePositions,
+    accounts, stocks, order, ticks, orders, hidden, compact, candleTrades, candlePositions, manualTrades,
     phase, marketAuto, logs, connected, accountView: viewAcc, actions,
   }
   return <StoreCtx.Provider value={value}>{children}</StoreCtx.Provider>

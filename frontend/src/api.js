@@ -48,7 +48,19 @@ export const api = {
   addStock: (a, code, name) =>
     req(`/api/${enc(a)}/stocks`, { method: 'POST', body: JSON.stringify({ code, name }) }),
   removeStock: (a, code) => req(`/api/${enc(a)}/stocks/${code}`, { method: 'DELETE' }),
-  importHeld: (a) => req(`/api/${enc(a)}/stocks/import-held`, { method: 'POST' }),
+  // [수동 전환]: [매매] 종목을 어느 상태에서든 수동 매매 목록으로 옮긴다(되돌리기 없음).
+  transferToManual: (a, code) => req(`/api/${enc(a)}/stocks/${enc(code)}/manual`, { method: 'POST' }),
+
+  // 수동 매매 (계좌 스코프) — 어느 자동매매에서든 넘겨받은 종목 + 직접 사고파는 종목.
+  // 주문은 아래 buy/sell 을 그대로 쓴다.
+  manualTrades: (a) => req(`/api/${enc(a)}/manual-trades`),
+  addManualTrade: (a, code, name) =>
+    req(`/api/${enc(a)}/manual-trades`, { method: 'POST', body: JSON.stringify({ code, name }) }),
+  removeManualTrade: (a, code) => req(`/api/${enc(a)}/manual-trades/${enc(code)}`, { method: 'DELETE' }),
+  setManualStop: (a, code, enabled, pct) =>
+    req(`/api/${enc(a)}/manual-trades/${enc(code)}/stop`, { method: 'PUT', body: JSON.stringify({ enabled, pct }) }),
+  clearManualNotice: (a, code) => req(`/api/${enc(a)}/manual-trades/${enc(code)}/notice`, { method: 'DELETE' }),
+  importHeld: (a) => req(`/api/${enc(a)}/manual-trades/import-held`, { method: 'POST' }),
 
   // 일봉은 최근 60일 전체에 MA60을 그릴 수 있도록 59일의 계산 여유분을 더 받는다.
   // anchor: 일봉에서 이 날짜(YYYY-MM-DD) 앞 20거래일부터 60거래일(스크리너 조회일).

@@ -50,6 +50,9 @@ def mock_hub(tmp_path, monkeypatch):
     hub.AUTO_SETUP_INTERVAL = 0.01
     yield hub, mgr, clock
     hub.trade_history.close()
+    for it in hub.manual_trades.items.values():  # 수동 매매 틱 태스크 정리
+        if it.task:
+            it.task.cancel()
     for stock in hub.stocks.values():  # 틱 태스크 정리
         if stock.setup_task:
             stock.setup_task.cancel()
