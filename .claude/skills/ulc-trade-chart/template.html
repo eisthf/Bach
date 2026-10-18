@@ -45,6 +45,14 @@ tbody tr { cursor: pointer; } tbody tr:hover { background: #f3f6ff; }
 .tog:hover { background: #f3f6ff; }
 .orders { margin-top: 12px; }
 .orders td:nth-child(-n+3) { text-align: left; }
+.totop { position: fixed; right: 16px; bottom: 16px; z-index: 10; font: inherit; font-size: 13px; padding: 8px 14px;
+  border: 1px solid var(--line); border-radius: 99px; background: #fff; color: var(--ink); cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0,0,0,.12); display: none; }
+.totop.show { display: block; }
+.totop:hover, .back:hover { background: #f3f6ff; }
+.back { margin-left: auto; font: inherit; font-size: 12px; border: 1px solid var(--line); background: #fff; border-radius: 6px;
+  padding: 1px 8px; cursor: pointer; color: var(--ink); }
+#summary tr.seen td { background: #fff4e0; transition: background .2s; }
 .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--muted); margin: 0 0 14px; }
 .legend i { display: inline-block; width: 14px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 4px; }
 @media (max-width: 860px) { .charts { grid-template-columns: 1fr; } .chart { height: 300px; } }
@@ -103,6 +111,28 @@ document.getElementById("summary").innerHTML =
   }).join("") + `</tbody>`;
 document.querySelectorAll("#summary tbody tr").forEach(tr =>
   tr.addEventListener("click", () => document.getElementById("c" + tr.dataset.i).scrollIntoView({ behavior: "smooth" })));
+
+// 목록으로 돌아가기: 카드 머리 [↑ 목록] + 목록이 안 보이면 떠 있는 버튼. 돌아오면 방금 본 종목 행을 강조.
+const summaryEl = document.getElementById("summary");
+function backToList(i) {
+  const row = i == null ? null : summaryEl.querySelector(`tr[data-i="${i}"]`);
+  if (!row) return summaryEl.scrollIntoView({ behavior: "smooth", block: "start" });
+  row.scrollIntoView({ behavior: "smooth", block: "center" });  // 목록이 길어도 방금 본 행이 보이게
+  summaryEl.querySelectorAll("tr.seen").forEach(r => r.classList.remove("seen"));
+  row.classList.add("seen");
+  setTimeout(() => row.classList.remove("seen"), 2500);
+}
+const totop = document.createElement("button");
+totop.className = "totop"; totop.textContent = "↑ 목록";
+document.body.appendChild(totop);
+let currentCard = null;  // 화면 가운데에 걸친 카드
+totop.onclick = () => backToList(currentCard);
+new IntersectionObserver(([e]) => totop.classList.toggle("show", !e.isIntersecting)).observe(summaryEl);
+addEventListener("scroll", () => {
+  const mid = innerHeight / 2;
+  const hit = [...document.querySelectorAll(".card")].find(c => { const r = c.getBoundingClientRect(); return r.top <= mid && r.bottom >= mid; });
+  currentCard = hit ? hit.id.slice(1) : null;
+}, { passive: true });
 
 const cards = document.getElementById("cards");
 const baseOpts = (el, timeVisible) => ({
@@ -191,6 +221,9 @@ T.forEach((t, i) => {
       ${t.orders.map(o => `<tr><td>${hhmm(o.time)}</td><td class="${o.side === "buy" ? "pos" : "neg"}">${o.side === "buy" ? "매수" : "매도"}</td>
         <td>${o.label}</td><td>${o.qty.toLocaleString()}</td><td>${o.price.toLocaleString("ko-KR", { maximumFractionDigits: 1 })}</td><td>${fmt(o.amt)}</td></tr>`).join("")}
     </tbody></table></div>`;
+  const back = document.createElement("button");
+  back.className = "back"; back.textContent = "↑ 목록"; back.onclick = () => backToList(i);
+  card.querySelector(".head").appendChild(back);
   cards.appendChild(card);
 
   // 3분봉
