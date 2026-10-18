@@ -19,7 +19,7 @@ cd backend && uv run python ../.claude/skills/ulc-trade-chart/ulc_trade_chart.py
 - `--code 001520`: 종목만(여러 번 가능)
 - `--account real`: 계좌 id(기본 `real`). 체결 파일은 `state.{계좌}.trades.json`
 - `--out <path>`: 출력(기본 `research/ulc_trades/index.html`, git 미추적)
-- `--refresh`: 봉 캐시(`backend/backtest_data/ulc_chart/`) 무시
+- `--refresh`: 봉 캐시(`backend/backtest_data/trade_chart/`, candle-trade-chart와 공유) 무시
 
 Windows 콘솔에서 한글 출력이 깨지면 `PYTHONIOENCODING=utf-8`을 앞에 붙인다.
 
@@ -46,9 +46,11 @@ Windows 콘솔에서 한글 출력이 깨지면 `PYTHONIOENCODING=utf-8`을 앞�
 - 체결 건마다 캔들 안 체결가 위치에 ✕ (`frontend/src/tradeCrossPrimitive.js` 이식, 매수 `#d32f2f`/매도 `#1565c0`)
 - 봉 위/아래 화살표 마커 `B 1차`, `S 익절` (일봉은 `B 수량 · 평단`)
 - MA5 `#2962FF` / MA10 `#FF4FA3` / MA20 `#FF9800` / MA60 `#26A65B` (`frontend/src/indicators.js` `MA_LINES`)
-- Bach 쪽 색·마커 규칙이 바뀌면 `template.html`도 맞춘다.
+- 이 규칙은 공통 `../_trade_chart_common/chart.js`에 있다. Bach 쪽 색·마커 규칙이 바뀌면 거기만 고친다.
 
 ## 파일
 
-- `ulc_trade_chart.py`: 판정·조회·HTML 생성
-- `template.html`: lightweight-charts 4.2.0 페이지, `__DATA__` 자리에 JSON 주입
+- `ulc_trade_chart.py`: ULC 매매 판정·손익·카드 데이터
+- `template.html`: 목록·카드·차트 구성. `/*__CHART_CSS__*/`·`/*__CHART_JS__*/`·`__DATA__` 자리를 채운다
+- 공통(`../_trade_chart_common/`, candle-trade-chart와 공유): `common.py`(키움 봉 조회·캐시, 체결 묶기,
+  HTML 조립), `chart.css`, `chart.js`(✕·이평선·차트 생성·목록 이동). 두 스킬에 함께 쓰이니 바꾸면 둘 다 다시 만들어 확인한다.

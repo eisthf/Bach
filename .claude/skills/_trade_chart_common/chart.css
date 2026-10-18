@@ -1,0 +1,51 @@
+/* 매매 차트 공통 스타일 — ulc-trade-chart·candle-trade-chart 가 write_html 로 주입한다. */
+:root {
+  --bg: #f6f7f9; --card: #fff; --ink: #1d2330; --muted: #6b7280; --line: #e5e7eb;
+  --up: #e5383b; --down: #2563eb; --buy: #d62828; --sell: #1d4ed8; --avg: #f59e0b;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 14px/1.5 -apple-system, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; }
+main { max-width: 1280px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin: 0 0 20px; }
+.kpis { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+.kpi { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; min-width: 140px; }
+.kpi b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
+.kpi span { color: var(--muted); font-size: 12px; }
+.tablewrap { overflow-x: auto; background: var(--card); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 28px; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+th, td { padding: 7px 10px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+th { background: #fafbfc; font-weight: 600; color: var(--muted); font-size: 12px; }
+th:nth-child(-n+3), td:nth-child(-n+3) { text-align: left; }
+tr:last-child td { border-bottom: 0; }
+tbody tr { cursor: pointer; } tbody tr:hover { background: #f3f6ff; }
+.pos { color: var(--up); } .neg { color: var(--down); } .na { color: var(--muted); }
+.tag { display: inline-block; padding: 1px 7px; border-radius: 99px; font-size: 12px; background: #eef1f5; }
+.tag.loss { background: #e8efff; color: var(--down); } .tag.win { background: #fdecec; color: var(--up); }
+.tag.open { background: #fff4e0; color: #b45309; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 20px; scroll-margin-top: 12px; }
+.card h2 { font-size: 17px; margin: 0; }
+.head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; margin-bottom: 4px; }
+.meta { color: var(--muted); font-size: 13px; }
+.notes { margin: 6px 0 0; padding: 0; list-style: none; color: #b45309; font-size: 13px; }
+.charts { display: grid; grid-template-columns: 1.55fr 1fr; gap: 12px; margin-top: 12px; }
+.chartbox { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.chartbox .cap { font-size: 12px; color: var(--muted); padding: 5px 10px; border-bottom: 1px solid var(--line); background: #fafbfc; }
+.chart { height: 340px; }
+.cap { display: flex; justify-content: space-between; align-items: center; }
+.tog { font: inherit; font-size: 12px; border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 1px 8px; cursor: pointer; color: var(--ink); }
+.tog:hover { background: #f3f6ff; }
+.orders { margin-top: 12px; }
+.orders td:nth-child(-n+3) { text-align: left; }
+.totop { position: fixed; right: 16px; bottom: 16px; z-index: 10; font: inherit; font-size: 13px; padding: 8px 14px;
+  border: 1px solid var(--line); border-radius: 99px; background: #fff; color: var(--ink); cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0,0,0,.12); display: none; }
+.totop.show { display: block; }
+.totop:hover, .back:hover { background: #f3f6ff; }
+.back { margin-left: auto; font: inherit; font-size: 12px; border: 1px solid var(--line); background: #fff; border-radius: 6px;
+  padding: 1px 8px; cursor: pointer; color: var(--ink); }
+#summary tr.seen td { background: #fff4e0; transition: background .2s; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--muted); margin: 0 0 14px; }
+.legend i { display: inline-block; width: 14px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 4px; }
+@media (max-width: 860px) { .charts { grid-template-columns: 1fr; } .chart { height: 300px; } }

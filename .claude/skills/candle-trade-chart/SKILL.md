@@ -21,7 +21,7 @@ cd backend && uv run python ../.claude/skills/candle-trade-chart/candle_trade_ch
 - `--kind candle|zone`: 대금 양봉만 / 구간 매매만
 - `--account real`: 계좌 id(기본 `real`). 체결 파일은 `state.{계좌}.trades.json`
 - `--out <path>`: 출력(기본 `research/candle_trades/index.html`, git 미추적)
-- `--refresh`: 봉 캐시(`backend/backtest_data/candle_chart/`) 무시
+- `--refresh`: 봉 캐시(`backend/backtest_data/trade_chart/`, ulc-trade-chart와 공유) 무시
 
 Windows 콘솔에서 한글 출력이 깨지면 `PYTHONIOENCODING=utf-8`을 앞에 붙인다.
 
@@ -47,11 +47,12 @@ Windows 콘솔에서 한글 출력이 깨지면 `PYTHONIOENCODING=utf-8`을 앞�
 
 ## 차트 표현 (Bach 프런트와 동일)
 
-- 체결가 ✕(매수 `#d32f2f`/매도 `#1565c0`), B/S 화살표 마커, MA5/10/20/60 — ulc-trade-chart 와 같은 코드
+- 체결가 ✕(매수 `#d32f2f`/매도 `#1565c0`), B/S 화살표 마커, MA5/10/20/60 — 공통 `../_trade_chart_common/chart.js`
 - 기준봉 ▼ `#7b1fa2`(Bach `ANCHOR_COLOR`), 매입 구간 상단·하단 보라 점선, 평단 주황, 익절선(평단 × (1+p%)) 빨강 점선
 
 ## 파일
 
-- `candle_trade_chart.py`: 매매 건 판정·조회·HTML 생성
-- `template.html`: lightweight-charts 4.2.0 페이지, `__DATA__` 자리에 JSON 주입.
-  ✕·이평선 코드(`TRADE_COLORS`~`TradeCross`)는 ulc-trade-chart/template.html 과 같으니 바꾸면 둘 다 맞춘다.
+- `candle_trade_chart.py`: 매매 건 판정·손익·카드 데이터
+- `template.html`: 목록·카드·차트 구성. `/*__CHART_CSS__*/`·`/*__CHART_JS__*/`·`__DATA__` 자리를 채운다
+- 공통(`../_trade_chart_common/`, ulc-trade-chart와 공유): `common.py`(키움 봉 조회·캐시, 체결 묶기,
+  HTML 조립), `chart.css`, `chart.js`(✕·이평선·차트 생성·목록 이동). 두 스킬에 함께 쓰이니 바꾸면 둘 다 다시 만들어 확인한다.

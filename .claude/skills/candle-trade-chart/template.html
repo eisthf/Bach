@@ -6,56 +6,7 @@
 <title>대금 양봉 매매 기록</title>
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <style>
-:root {
-  --bg: #f6f7f9; --card: #fff; --ink: #1d2330; --muted: #6b7280; --line: #e5e7eb;
-  --up: #e5383b; --down: #2563eb; --buy: #d62828; --sell: #1d4ed8; --avg: #f59e0b;
-}
-* { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--ink);
-  font: 14px/1.5 -apple-system, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; }
-main { max-width: 1280px; margin: 0 auto; padding: 24px 16px 64px; }
-h1 { font-size: 22px; margin: 0 0 4px; }
-.sub { color: var(--muted); margin: 0 0 20px; }
-.kpis { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
-.kpi { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; min-width: 140px; }
-.kpi b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
-.kpi span { color: var(--muted); font-size: 12px; }
-.tablewrap { overflow-x: auto; background: var(--card); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 28px; }
-table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
-th, td { padding: 7px 10px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
-th { background: #fafbfc; font-weight: 600; color: var(--muted); font-size: 12px; }
-th:nth-child(-n+3), td:nth-child(-n+3) { text-align: left; }
-tr:last-child td { border-bottom: 0; }
-tbody tr { cursor: pointer; } tbody tr:hover { background: #f3f6ff; }
-.pos { color: var(--up); } .neg { color: var(--down); } .na { color: var(--muted); }
-.tag { display: inline-block; padding: 1px 7px; border-radius: 99px; font-size: 12px; background: #eef1f5; }
-.tag.loss { background: #e8efff; color: var(--down); } .tag.win { background: #fdecec; color: var(--up); }
-.tag.open { background: #fff4e0; color: #b45309; }
-.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 20px; scroll-margin-top: 12px; }
-.card h2 { font-size: 17px; margin: 0; }
-.head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; margin-bottom: 4px; }
-.meta { color: var(--muted); font-size: 13px; }
-.notes { margin: 6px 0 0; padding: 0; list-style: none; color: #b45309; font-size: 13px; }
-.charts { display: grid; grid-template-columns: 1.55fr 1fr; gap: 12px; margin-top: 12px; }
-.chartbox { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-.chartbox .cap { font-size: 12px; color: var(--muted); padding: 5px 10px; border-bottom: 1px solid var(--line); background: #fafbfc; }
-.chart { height: 340px; }
-.cap { display: flex; justify-content: space-between; align-items: center; }
-.tog { font: inherit; font-size: 12px; border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 1px 8px; cursor: pointer; color: var(--ink); }
-.tog:hover { background: #f3f6ff; }
-.orders { margin-top: 12px; }
-.orders td:nth-child(-n+3) { text-align: left; }
-.totop { position: fixed; right: 16px; bottom: 16px; z-index: 10; font: inherit; font-size: 13px; padding: 8px 14px;
-  border: 1px solid var(--line); border-radius: 99px; background: #fff; color: var(--ink); cursor: pointer;
-  box-shadow: 0 2px 8px rgba(0,0,0,.12); display: none; }
-.totop.show { display: block; }
-.totop:hover, .back:hover { background: #f3f6ff; }
-.back { margin-left: auto; font: inherit; font-size: 12px; border: 1px solid var(--line); background: #fff; border-radius: 6px;
-  padding: 1px 8px; cursor: pointer; color: var(--ink); }
-#summary tr.seen td { background: #fff4e0; transition: background .2s; }
-.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--muted); margin: 0 0 14px; }
-.legend i { display: inline-block; width: 14px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 4px; }
-@media (max-width: 860px) { .charts { grid-template-columns: 1fr; } .chart { height: 300px; } }
+/*__CHART_CSS__*/
 .days { display: inline-flex; gap: 4px; flex-wrap: wrap; }
 .log { margin-top: 10px; font-size: 12px; color: var(--muted); }
 .log summary { cursor: pointer; }
@@ -81,18 +32,21 @@ tbody tr { cursor: pointer; } tbody tr:hover { background: #f3f6ff; }
   <div id="cards"></div>
 </main>
 <script>
+/*__CHART_JS__*/
+
 const DATA = __DATA__;
-const fmt = n => n == null ? "—" : Math.round(n).toLocaleString("ko-KR");
-const signed = n => n == null ? "—" : (n >= 0 ? "+" : "") + fmt(n);
-const pct = n => (n > 0 ? "+" : "") + n.toFixed(2) + "%";
-const dayStr = d => `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6)}`;
 const md = d => `${d.slice(4,6)}/${d.slice(6)}`;
-const iso = t => new Date(t * 1000).toISOString();
 const when = t => `${iso(t).slice(5, 10).replace("-", "/")} ${iso(t).slice(11, 19)}`;
-const cls = n => n == null ? "na" : n >= 0 ? "pos" : "neg";
 const KIND = { candle: "대금 양봉", zone: "구간 매매" };
 const total = t => t.pnl + (t.unreal || 0);
 const statusTag = t => `<span class="tag ${t.status === "보유 중" ? "open" : t.pnl > 0 ? "win" : "loss"}">${t.status}</span>`;
+const zoneStr = t => t.zone ? fmt(t.zone[0]) + " ~ " + fmt(t.zone[1]) : "—";
+// 매입 구간 상단·하단, 평단, 익절선(평단 × (1+p%))
+const tradeLines = t => [
+  ...(t.zone ? [[t.zone[1], ANCHOR_COLOR, 2, "구간 상단"], [t.zone[0], ANCHOR_COLOR, 2, "구간 하단"]] : []),
+  [t.avg, "#f59e0b", 0, "평단"],
+  [t.avg && t.tp ? t.avg * (1 + t.tp / 100) : null, "#e5383b", 1, `익절 +${t.tp}%`],
+];
 
 const T = DATA.trades;
 const sumR = T.reduce((s, t) => s + t.pnl, 0), sumU = T.reduce((s, t) => s + (t.unreal || 0), 0);
@@ -108,124 +62,10 @@ document.getElementById("kpis").innerHTML = [
 document.getElementById("summary").innerHTML =
   `<thead><tr><th>등록일</th><th>종목</th><th>상태</th><th>방식</th><th>매입 구간</th><th>매수금액</th><th>평단</th><th>보유</th><th>실현</th><th>평가</th><th>합계 수익률</th></tr></thead><tbody>` +
   T.map((t, i) => `<tr data-i="${i}"><td>${dayStr(t.reg)}</td><td>${t.name} <span class="meta">${t.code}</span></td><td>${statusTag(t)}</td>
-    <td>${KIND[t.kind]}</td><td>${t.zone ? fmt(t.zone[0]) + " ~ " + fmt(t.zone[1]) : "—"}</td><td>${fmt(t.buy_a)}</td><td>${fmt(t.avg)}</td>
+    <td>${KIND[t.kind]}</td><td>${zoneStr(t)}</td><td>${fmt(t.buy_a)}</td><td>${fmt(t.avg)}</td>
     <td>${t.hold ? t.hold.toLocaleString() + "주" : "—"}</td><td class="${cls(t.pnl)}">${signed(t.pnl)}</td>
     <td class="${cls(t.unreal)}">${signed(t.unreal)}</td><td class="${cls(total(t))}">${pct(total(t) / t.buy_a * 100)}</td></tr>`).join("") + `</tbody>`;
-document.querySelectorAll("#summary tbody tr").forEach(tr =>
-  tr.addEventListener("click", () => document.getElementById("c" + tr.dataset.i).scrollIntoView({ behavior: "smooth" })));
-
-// 목록으로 돌아가기: 카드 머리 [↑ 목록] + 목록이 안 보이면 떠 있는 버튼. 돌아오면 방금 본 종목 행을 강조.
-const summaryEl = document.getElementById("summary");
-function backToList(i) {
-  const row = i == null ? null : summaryEl.querySelector(`tr[data-i="${i}"]`);
-  if (!row) return summaryEl.scrollIntoView({ behavior: "smooth", block: "start" });
-  row.scrollIntoView({ behavior: "smooth", block: "center" });  // 목록이 길어도 방금 본 행이 보이게
-  summaryEl.querySelectorAll("tr.seen").forEach(r => r.classList.remove("seen"));
-  row.classList.add("seen");
-  setTimeout(() => row.classList.remove("seen"), 2500);
-}
-const totop = document.createElement("button");
-totop.className = "totop"; totop.textContent = "↑ 목록";
-document.body.appendChild(totop);
-let currentCard = null;  // 화면 가운데에 걸친 카드
-totop.onclick = () => backToList(currentCard);
-new IntersectionObserver(([e]) => totop.classList.toggle("show", !e.isIntersecting)).observe(summaryEl);
-addEventListener("scroll", () => {
-  const mid = innerHeight / 2;
-  const hit = [...document.querySelectorAll(".card")].find(c => { const r = c.getBoundingClientRect(); return r.top <= mid && r.bottom >= mid; });
-  currentCard = hit ? hit.id.slice(1) : null;
-}, { passive: true });
-
-const baseOpts = (el, timeVisible) => ({
-  width: el.clientWidth, height: el.clientHeight,
-  layout: { background: { color: "#ffffff" }, textColor: "#374151", fontSize: 11 },
-  grid: { vertLines: { color: "#f1f3f5" }, horzLines: { color: "#f1f3f5" } },
-  rightPriceScale: { borderColor: "#e5e7eb", scaleMargins: { top: 0.08, bottom: 0.22 } },
-  timeScale: { borderColor: "#e5e7eb", timeVisible, secondsVisible: false, rightOffset: 2 },
-  crosshair: { mode: 0 },
-  localization: { priceFormatter: p => Math.round(p).toLocaleString("ko-KR") },
-});
-const candleOpts = { upColor: "#d32f2f", downColor: "#1565c0", borderUpColor: "#d32f2f", borderDownColor: "#1565c0",
-  wickUpColor: "#d32f2f", wickDownColor: "#1565c0", priceLineVisible: false, lastValueVisible: false };
-function addVolume(chart, rows) {
-  const v = chart.addHistogramSeries({ priceScaleId: "vol", priceFormat: { type: "volume" }, lastValueVisible: false, priceLineVisible: false });
-  chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
-  v.setData(rows.map(b => ({ time: b.time, value: b.volume, color: b.close >= b.open ? "rgba(211,47,47,.35)" : "rgba(21,101,192,.35)" })));
-}
-const TRADE_COLORS = { buy: "#d32f2f", sell: "#1565c0" };
-// Bach frontend/src/indicators.js MA_LINES 와 같은 기간·색
-const MA_LINES = [
-  { period: 5, color: "#2962FF", title: "MA5" }, { period: 10, color: "#FF4FA3", title: "MA10" },
-  { period: 20, color: "#FF9800", title: "MA20" }, { period: 60, color: "#26A65B", title: "MA60" },
-];
-function sma(bars, period) {
-  const out = []; let sum = 0;
-  for (let i = 0; i < bars.length; i++) {
-    sum += bars[i].close;
-    if (i >= period) sum -= bars[i - period].close;
-    if (i >= period - 1) out.push({ time: bars[i].time, value: sum / period });
-  }
-  return out;
-}
-function addMA(chart, rows) {
-  MA_LINES.forEach(m => chart.addLineSeries({ color: m.color, lineWidth: 1, priceLineVisible: false,
-    lastValueVisible: false, crosshairMarkerVisible: false }).setData(sma(rows, m.period)));
-}
-// Bach frontend/src/tradeCrossPrimitive.js 이식: 체결 건마다 실제 체결가 위치에 ✕
-class TradeCross {
-  constructor(points) {
-    this.points = points;
-    const src = this;
-    this._views = [{ zOrder: () => "top", renderer: () => ({ draw(target) {
-      const { chart, series, points } = src;
-      if (!chart || !series) return;
-      const ts = chart.timeScale();
-      const half = Math.max(3, Math.min(6, ts.options().barSpacing * 0.3));
-      target.useBitmapCoordinateSpace(({ context: ctx, horizontalPixelRatio: hr, verticalPixelRatio: vr }) => {
-        ctx.save(); ctx.lineCap = "round";
-        for (const p of points) {
-          const x = ts.timeToCoordinate(p.time), y = series.priceToCoordinate(p.price);
-          if (x === null || y === null) continue;
-          const cx = x * hr, cy = y * vr, dx = half * hr, dy = half * vr;
-          ctx.beginPath();
-          ctx.moveTo(cx - dx, cy - dy); ctx.lineTo(cx + dx, cy + dy);
-          ctx.moveTo(cx + dx, cy - dy); ctx.lineTo(cx - dx, cy + dy);
-          ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 4 * hr; ctx.stroke();
-          ctx.strokeStyle = TRADE_COLORS[p.side]; ctx.lineWidth = 2 * hr; ctx.stroke();
-        }
-        ctx.restore();
-      });
-    } }) }];
-  }
-  attached({ chart, series, requestUpdate }) { this.chart = chart; this.series = series; requestUpdate(); }
-  detached() { this.chart = this.series = null; }
-  paneViews() { return this._views; }
-}
-const charts = [];
-
-const ANCHOR_COLOR = "#7b1fa2";  // Bach frontend/src/tradeMarkers.js 기준봉 색
-// 봉 시각 = ts 이하 마지막 봉(봉 시작 기준)
-const barAt = (rows, ts) => { let best = rows[0].time; for (const b of rows) { if (b.time <= ts) best = b.time; else break; } return best; };
-function priceLines(series, t) {
-  const L = [];
-  if (t.zone) L.push([t.zone[1], ANCHOR_COLOR, 2, "구간 상단"], [t.zone[0], ANCHOR_COLOR, 2, "구간 하단"]);
-  if (t.avg) L.push([t.avg, "#f59e0b", 0, "평단"]);
-  if (t.avg && t.tp) L.push([t.avg * (1 + t.tp / 100), "#e5383b", 1, `익절 +${t.tp}%`]);
-  L.forEach(([p, c, style, title]) => series.createPriceLine({ price: p, color: c, lineWidth: 1, lineStyle: style, axisLabelVisible: true, title }));
-}
-// 같은 봉·같은 방향 주문은 마커 하나로
-function markers(rows, orders, label) {
-  const m = new Map();
-  for (const o of orders) {
-    const time = barAt(rows, o.time), key = time + o.side;
-    const g = m.get(key) || { time, side: o.side, qty: 0, amt: 0, labels: [] };
-    g.qty += o.qty; g.amt += o.amt; g.labels.push(o.label); m.set(key, g);
-  }
-  return [...m.values()].map(g => ({
-    time: g.time, position: g.side === "buy" ? "belowBar" : "aboveBar", shape: g.side === "buy" ? "arrowUp" : "arrowDown",
-    color: TRADE_COLORS[g.side], text: label(g),
-  }));
-}
+wireSummary();
 
 const cards = document.getElementById("cards");
 T.forEach((t, i) => {
@@ -234,7 +74,7 @@ T.forEach((t, i) => {
   const base = t.base ? ` · 기준 캔들 ${dayStr(t.base.date)} 시가 ${fmt(t.base.open)} 종가 ${fmt(t.base.close)}` : "";
   card.innerHTML = `
     <div class="head"><h2>${t.name} <span class="meta">${t.code}</span></h2>
-      <span class="meta">${KIND[t.kind]} · 등록 ${dayStr(t.reg)}${base} · 구간 ${t.zone ? fmt(t.zone[0]) + " ~ " + fmt(t.zone[1]) : "—"}${t.entry_days ? " · 진입 기한 " + t.entry_days + "거래일" : ""}</span>
+      <span class="meta">${KIND[t.kind]} · 등록 ${dayStr(t.reg)}${base} · 구간 ${zoneStr(t)}${t.entry_days ? " · 진입 기한 " + t.entry_days + "거래일" : ""}</span>
       ${statusTag(t)}
       <span class="${cls(total(t))}"><b>${signed(total(t))}원 (${pct(total(t) / t.buy_a * 100)})</b></span>
       <span class="meta">실현 ${signed(t.pnl)} · 평가 ${signed(t.unreal)}</span>
@@ -250,58 +90,42 @@ T.forEach((t, i) => {
     </tbody></table></div>
     <details class="log"><summary>엔진 로그 ${t.log.length}줄${t.end_reason ? " · 종료: " + t.end_reason : ""}</summary>
       <ol>${t.log.map(x => `<li>${when(x.time)} ${x.text}</li>`).join("")}</ol></details>`;
-  const back = document.createElement("button");
-  back.className = "back"; back.textContent = "↑ 목록"; back.onclick = () => backToList(i);
-  card.querySelector(".head").appendChild(back);
+  addBackButton(card, i);
   cards.appendChild(card);
 
-  // 일봉
-  const dEl = document.getElementById("d" + i);
+  // 일봉: 기준봉 ▼ + 날짜별 B/S(수량·평균가) + 체결 ✕ + 구간·평단·익절선
   const rows = DATA.daily[t.daily_key];
-  const dc = LightweightCharts.createChart(dEl, baseOpts(dEl, false));
-  const ds = dc.addCandlestickSeries(candleOpts);
-  ds.setData(rows); addVolume(dc, rows); addMA(dc, rows); priceLines(ds, t);
-  const dmk = markers(rows, t.orders, g => `${g.side === "buy" ? "B" : "S"} ${g.qty}주 · ${fmt(g.amt / g.qty)}`);
-  const baseIdx = t.base ? rows.findIndex(b => iso(b.time).slice(0, 10).replace(/-/g, "") === t.base.date) : -1;
+  const D = makeChart(document.getElementById("d" + i), rows, false);
+  addPriceLines(D.series, tradeLines(t));
+  const dmk = orderMarkers(rows, t.orders, g => `${g.side === "buy" ? "B" : "S"} ${g.qty}주 · ${fmt(g.amt / g.qty)}`);
+  const baseIdx = t.base ? rows.findIndex(b => ymdOf(b.time) === t.base.date) : -1;
   if (baseIdx >= 0) dmk.push({ time: rows[baseIdx].time, position: "aboveBar", shape: "arrowDown", color: ANCHOR_COLOR, size: 2, text: "기준봉" });
-  ds.setMarkers(dmk.sort((a, b) => a.time - b.time));
-  ds.attachPrimitive(new TradeCross(t.fills.map(f => ({ time: barAt(rows, f.time), side: f.side, price: f.price }))));
+  D.series.setMarkers(dmk.sort((a, b) => a.time - b.time));
+  addFillCrosses(D.series, rows, t.fills);
   const startIdx = baseIdx >= 0 ? baseIdx : rows.findIndex(b => b.time >= barAt(rows, t.fills[0].time));
-  const fitD = () => dc.timeScale().setVisibleLogicalRange({ from: Math.max(-1, startIdx - 30), to: rows.length + 4 });
+  D.fit = () => D.chart.timeScale().setVisibleLogicalRange({ from: Math.max(-1, startIdx - 30), to: rows.length + 4 });
 
-  // 3분봉 (체결일들, 버튼으로 날짜 이동)
-  const mEl = document.getElementById("m" + i);
+  // 3분봉: 체결일들을 이어 붙이고 날짜 버튼으로 이동
   const m3 = t.min3;
-  const mc = LightweightCharts.createChart(mEl, baseOpts(mEl, true));
-  const ms = mc.addCandlestickSeries(candleOpts);
-  ms.setData(m3); addVolume(mc, m3); addMA(mc, m3); priceLines(ms, t);
-  ms.setMarkers(markers(m3, t.orders, g => `${g.side === "buy" ? "B" : "S"} ${g.labels.join("·")}`).sort((a, b) => a.time - b.time));
-  ms.attachPrimitive(new TradeCross(t.fills.map(f => ({ time: barAt(m3, f.time), side: f.side, price: f.price }))));
+  const M = makeChart(document.getElementById("m" + i), m3, true);
+  addPriceLines(M.series, tradeLines(t));
+  M.series.setMarkers(orderMarkers(m3, t.orders, g => `${g.side === "buy" ? "B" : "S"} ${g.labels.join("·")}`).sort((a, b) => a.time - b.time));
+  addFillCrosses(M.series, m3, t.fills);
   let sel = 0;
-  const fitM = () => {
+  M.fit = () => {
     const s = t.day_starts[sel], end = sel + 1 < t.day_starts.length ? t.day_starts[sel + 1].idx : m3.length;
-    mc.timeScale().setVisibleLogicalRange({ from: s.idx - 2, to: end + 1 });
+    M.chart.timeScale().setVisibleLogicalRange({ from: s.idx - 2, to: end + 1 });
   };
   const days = document.getElementById("days" + i);
   t.day_starts.forEach((s, k) => {
     const b = document.createElement("button");
     b.className = "tog"; b.textContent = md(s.day);
-    b.onclick = () => { sel = k; days.querySelectorAll("button").forEach((x, j) => x.style.fontWeight = j === k ? 700 : 400); fitM(); };
-    if (k === 0) b.style.fontWeight = 700;
+    b.style.fontWeight = k === 0 ? 700 : 400;
+    b.onclick = () => { sel = k; days.querySelectorAll("button").forEach((x, j) => x.style.fontWeight = j === k ? 700 : 400); M.fit(); };
     days.appendChild(b);
   });
-  charts.push([dc, dEl, fitD], [mc, mEl, fitM]);
-  fitD(); fitM();
+  D.fit(); M.fit();
 });
-
-// 패널이 처음에 폭 0으로 그려지는 환경이 있어, 크기가 바뀌면 폭과 표시 범위를 다시 맞춘다.
-const ro = new ResizeObserver(entries => entries.forEach(e => {
-  const hit = charts.find(([, el]) => el === e.target);
-  if (!hit || !e.target.clientWidth) return;
-  hit[0].applyOptions({ width: e.target.clientWidth, height: e.target.clientHeight });
-  hit[2]();
-}));
-charts.forEach(([, el]) => ro.observe(el));
 </script>
 </body>
 </html>

@@ -6,56 +6,7 @@
 <title>상한가 매매 기록</title>
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <style>
-:root {
-  --bg: #f6f7f9; --card: #fff; --ink: #1d2330; --muted: #6b7280; --line: #e5e7eb;
-  --up: #e5383b; --down: #2563eb; --buy: #d62828; --sell: #1d4ed8; --avg: #f59e0b;
-}
-* { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--ink);
-  font: 14px/1.5 -apple-system, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; }
-main { max-width: 1280px; margin: 0 auto; padding: 24px 16px 64px; }
-h1 { font-size: 22px; margin: 0 0 4px; }
-.sub { color: var(--muted); margin: 0 0 20px; }
-.kpis { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
-.kpi { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; min-width: 140px; }
-.kpi b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
-.kpi span { color: var(--muted); font-size: 12px; }
-.tablewrap { overflow-x: auto; background: var(--card); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 28px; }
-table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
-th, td { padding: 7px 10px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
-th { background: #fafbfc; font-weight: 600; color: var(--muted); font-size: 12px; }
-th:nth-child(-n+3), td:nth-child(-n+3) { text-align: left; }
-tr:last-child td { border-bottom: 0; }
-tbody tr { cursor: pointer; } tbody tr:hover { background: #f3f6ff; }
-.pos { color: var(--up); } .neg { color: var(--down); } .na { color: var(--muted); }
-.tag { display: inline-block; padding: 1px 7px; border-radius: 99px; font-size: 12px; background: #eef1f5; }
-.tag.loss { background: #e8efff; color: var(--down); } .tag.win { background: #fdecec; color: var(--up); }
-.tag.open { background: #fff4e0; color: #b45309; }
-.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 20px; scroll-margin-top: 12px; }
-.card h2 { font-size: 17px; margin: 0; }
-.head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; margin-bottom: 4px; }
-.meta { color: var(--muted); font-size: 13px; }
-.notes { margin: 6px 0 0; padding: 0; list-style: none; color: #b45309; font-size: 13px; }
-.charts { display: grid; grid-template-columns: 1.55fr 1fr; gap: 12px; margin-top: 12px; }
-.chartbox { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-.chartbox .cap { font-size: 12px; color: var(--muted); padding: 5px 10px; border-bottom: 1px solid var(--line); background: #fafbfc; }
-.chart { height: 340px; }
-.cap { display: flex; justify-content: space-between; align-items: center; }
-.tog { font: inherit; font-size: 12px; border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 1px 8px; cursor: pointer; color: var(--ink); }
-.tog:hover { background: #f3f6ff; }
-.orders { margin-top: 12px; }
-.orders td:nth-child(-n+3) { text-align: left; }
-.totop { position: fixed; right: 16px; bottom: 16px; z-index: 10; font: inherit; font-size: 13px; padding: 8px 14px;
-  border: 1px solid var(--line); border-radius: 99px; background: #fff; color: var(--ink); cursor: pointer;
-  box-shadow: 0 2px 8px rgba(0,0,0,.12); display: none; }
-.totop.show { display: block; }
-.totop:hover, .back:hover { background: #f3f6ff; }
-.back { margin-left: auto; font: inherit; font-size: 12px; border: 1px solid var(--line); background: #fff; border-radius: 6px;
-  padding: 1px 8px; cursor: pointer; color: var(--ink); }
-#summary tr.seen td { background: #fff4e0; transition: background .2s; }
-.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--muted); margin: 0 0 14px; }
-.legend i { display: inline-block; width: 14px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 4px; }
-@media (max-width: 860px) { .charts { grid-template-columns: 1fr; } .chart { height: 300px; } }
+/*__CHART_CSS__*/
 </style>
 </head>
 <body>
@@ -76,15 +27,11 @@ tbody tr { cursor: pointer; } tbody tr:hover { background: #f3f6ff; }
   <div id="cards"></div>
 </main>
 <script>
+/*__CHART_JS__*/
+
 const DATA = __DATA__;
-const fmt = n => n == null ? "—" : Math.round(n).toLocaleString("ko-KR");
-const pct = n => (n > 0 ? "+" : "") + n.toFixed(2) + "%";
-const dayStr = d => `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6)}`;
-const hhmm = t => new Date(t * 1000).toISOString().slice(11, 19);
-const resultTag = t => {
-  const cls = t.result === "미청산" ? "open" : t.pnl > 0 ? "win" : "loss";
-  return `<span class="tag ${cls}">${t.result}</span>`;
-};
+const hhmm = t => iso(t).slice(11, 19);
+const resultTag = t => `<span class="tag ${t.result === "미청산" ? "open" : t.pnl > 0 ? "win" : "loss"}">${t.result}</span>`;
 
 const T = DATA.trades;
 const closed = T.filter(t => t.pnl != null);
@@ -95,8 +42,8 @@ document.getElementById("sub").textContent =
   `${DATA.account} 계좌 체결 기록(${DATA.trades_file}) + 엔진 로그 기준 · ${dayStr(T[0].day)} ~ ${dayStr(T[T.length-1].day)} · 생성 ${DATA.generated} · 손익은 수수료·세금 제외`;
 document.getElementById("kpis").innerHTML = [
   ["매매", `${T.length}건`], ["청산 완료", `${closed.length}건 (승 ${wins} / 패 ${closed.length - wins})`],
-  ["실현 손익 합계", `<span class="${totPnl >= 0 ? "pos" : "neg"}">${totPnl >= 0 ? "+" : ""}${fmt(totPnl)}원</span>`],
-  ["매수금액 대비", `<span class="${totPnl >= 0 ? "pos" : "neg"}">${pct(totPnl / totBuy * 100)}</span>`],
+  ["실현 손익 합계", `<span class="${cls(totPnl)}">${signed(totPnl)}원</span>`],
+  ["매수금액 대비", `<span class="${cls(totPnl)}">${pct(totPnl / totBuy * 100)}</span>`],
 ].map(([k, v]) => `<div class="kpi"><span>${k}</span><b>${v}</b></div>`).join("");
 
 document.getElementById("summary").innerHTML =
@@ -104,104 +51,13 @@ document.getElementById("summary").innerHTML =
   T.map((t, i) => {
     const nb = t.orders.filter(o => o.side === "buy").length;
     const r = t.pnl == null ? null : t.pnl / t.buy_a * 100;
-    const cls = r == null ? "na" : r >= 0 ? "pos" : "neg";
     return `<tr data-i="${i}"><td>${dayStr(t.day)}</td><td>${t.name} <span class="meta">${t.code}</span></td><td>${resultTag(t)}</td>
       <td>SC${t.sc ?? "?"}</td><td>${nb}</td><td>${fmt(t.buy_a)}</td><td>${fmt(t.buy_a / t.buy_q)}</td>
-      <td class="${cls}">${t.pnl == null ? "—" : (t.pnl >= 0 ? "+" : "") + fmt(t.pnl)}</td><td class="${cls}">${r == null ? "—" : pct(r)}</td></tr>`;
+      <td class="${cls(r)}">${signed(t.pnl)}</td><td class="${cls(r)}">${r == null ? "—" : pct(r)}</td></tr>`;
   }).join("") + `</tbody>`;
-document.querySelectorAll("#summary tbody tr").forEach(tr =>
-  tr.addEventListener("click", () => document.getElementById("c" + tr.dataset.i).scrollIntoView({ behavior: "smooth" })));
-
-// 목록으로 돌아가기: 카드 머리 [↑ 목록] + 목록이 안 보이면 떠 있는 버튼. 돌아오면 방금 본 종목 행을 강조.
-const summaryEl = document.getElementById("summary");
-function backToList(i) {
-  const row = i == null ? null : summaryEl.querySelector(`tr[data-i="${i}"]`);
-  if (!row) return summaryEl.scrollIntoView({ behavior: "smooth", block: "start" });
-  row.scrollIntoView({ behavior: "smooth", block: "center" });  // 목록이 길어도 방금 본 행이 보이게
-  summaryEl.querySelectorAll("tr.seen").forEach(r => r.classList.remove("seen"));
-  row.classList.add("seen");
-  setTimeout(() => row.classList.remove("seen"), 2500);
-}
-const totop = document.createElement("button");
-totop.className = "totop"; totop.textContent = "↑ 목록";
-document.body.appendChild(totop);
-let currentCard = null;  // 화면 가운데에 걸친 카드
-totop.onclick = () => backToList(currentCard);
-new IntersectionObserver(([e]) => totop.classList.toggle("show", !e.isIntersecting)).observe(summaryEl);
-addEventListener("scroll", () => {
-  const mid = innerHeight / 2;
-  const hit = [...document.querySelectorAll(".card")].find(c => { const r = c.getBoundingClientRect(); return r.top <= mid && r.bottom >= mid; });
-  currentCard = hit ? hit.id.slice(1) : null;
-}, { passive: true });
+wireSummary();
 
 const cards = document.getElementById("cards");
-const baseOpts = (el, timeVisible) => ({
-  width: el.clientWidth, height: el.clientHeight,
-  layout: { background: { color: "#ffffff" }, textColor: "#374151", fontSize: 11 },
-  grid: { vertLines: { color: "#f1f3f5" }, horzLines: { color: "#f1f3f5" } },
-  rightPriceScale: { borderColor: "#e5e7eb", scaleMargins: { top: 0.08, bottom: 0.22 } },
-  timeScale: { borderColor: "#e5e7eb", timeVisible, secondsVisible: false, rightOffset: 2 },
-  crosshair: { mode: 0 },
-  localization: { priceFormatter: p => Math.round(p).toLocaleString("ko-KR") },
-});
-const candleOpts = { upColor: "#d32f2f", downColor: "#1565c0", borderUpColor: "#d32f2f", borderDownColor: "#1565c0",
-  wickUpColor: "#d32f2f", wickDownColor: "#1565c0", priceLineVisible: false, lastValueVisible: false };
-function addVolume(chart, rows) {
-  const v = chart.addHistogramSeries({ priceScaleId: "vol", priceFormat: { type: "volume" }, lastValueVisible: false, priceLineVisible: false });
-  chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
-  v.setData(rows.map(b => ({ time: b.time, value: b.volume, color: b.close >= b.open ? "rgba(211,47,47,.35)" : "rgba(21,101,192,.35)" })));
-}
-const TRADE_COLORS = { buy: "#d32f2f", sell: "#1565c0" };
-// Bach frontend/src/indicators.js MA_LINES 와 같은 기간·색
-const MA_LINES = [
-  { period: 5, color: "#2962FF", title: "MA5" }, { period: 10, color: "#FF4FA3", title: "MA10" },
-  { period: 20, color: "#FF9800", title: "MA20" }, { period: 60, color: "#26A65B", title: "MA60" },
-];
-function sma(bars, period) {
-  const out = []; let sum = 0;
-  for (let i = 0; i < bars.length; i++) {
-    sum += bars[i].close;
-    if (i >= period) sum -= bars[i - period].close;
-    if (i >= period - 1) out.push({ time: bars[i].time, value: sum / period });
-  }
-  return out;
-}
-function addMA(chart, rows) {
-  MA_LINES.forEach(m => chart.addLineSeries({ color: m.color, lineWidth: 1, priceLineVisible: false,
-    lastValueVisible: false, crosshairMarkerVisible: false }).setData(sma(rows, m.period)));
-}
-// Bach frontend/src/tradeCrossPrimitive.js 이식: 체결 건마다 실제 체결가 위치에 ✕
-class TradeCross {
-  constructor(points) {
-    this.points = points;
-    const src = this;
-    this._views = [{ zOrder: () => "top", renderer: () => ({ draw(target) {
-      const { chart, series, points } = src;
-      if (!chart || !series) return;
-      const ts = chart.timeScale();
-      const half = Math.max(3, Math.min(6, ts.options().barSpacing * 0.3));
-      target.useBitmapCoordinateSpace(({ context: ctx, horizontalPixelRatio: hr, verticalPixelRatio: vr }) => {
-        ctx.save(); ctx.lineCap = "round";
-        for (const p of points) {
-          const x = ts.timeToCoordinate(p.time), y = series.priceToCoordinate(p.price);
-          if (x === null || y === null) continue;
-          const cx = x * hr, cy = y * vr, dx = half * hr, dy = half * vr;
-          ctx.beginPath();
-          ctx.moveTo(cx - dx, cy - dy); ctx.lineTo(cx + dx, cy + dy);
-          ctx.moveTo(cx + dx, cy - dy); ctx.lineTo(cx - dx, cy + dy);
-          ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 4 * hr; ctx.stroke();
-          ctx.strokeStyle = TRADE_COLORS[p.side]; ctx.lineWidth = 2 * hr; ctx.stroke();
-        }
-        ctx.restore();
-      });
-    } }) }];
-  }
-  attached({ chart, series, requestUpdate }) { this.chart = chart; this.series = series; requestUpdate(); }
-  detached() { this.chart = this.series = null; }
-  paneViews() { return this._views; }
-}
-const charts = [];
-
 T.forEach((t, i) => {
   const card = document.createElement("section");
   card.className = "card"; card.id = "c" + i;
@@ -210,7 +66,7 @@ T.forEach((t, i) => {
     <div class="head"><h2>${t.name} <span class="meta">${t.code}</span></h2>
       <span class="meta">${dayStr(t.day)} · SC${t.sc ?? "?"} · X(전일 종가) ${fmt(t.x)} · Z(시가) ${fmt(t.z)} · 평단 ${fmt(avg)}</span>
       ${resultTag(t)}
-      <span class="${t.pnl == null ? "na" : t.pnl >= 0 ? "pos" : "neg"}"><b>${t.pnl == null ? "손익 미산정" : (t.pnl >= 0 ? "+" : "") + fmt(t.pnl) + "원 (" + pct(t.pnl / t.buy_a * 100) + ")"}</b></span>
+      <span class="${cls(t.pnl)}"><b>${t.pnl == null ? "손익 미산정" : signed(t.pnl) + "원 (" + pct(t.pnl / t.buy_a * 100) + ")"}</b></span>
     </div>
     ${t.notes.length ? `<ul class="notes">${t.notes.map(n => `<li>⚠ ${n}</li>`).join("")}</ul>` : ""}
     <div class="charts">
@@ -221,71 +77,38 @@ T.forEach((t, i) => {
       ${t.orders.map(o => `<tr><td>${hhmm(o.time)}</td><td class="${o.side === "buy" ? "pos" : "neg"}">${o.side === "buy" ? "매수" : "매도"}</td>
         <td>${o.label}</td><td>${o.qty.toLocaleString()}</td><td>${o.price.toLocaleString("ko-KR", { maximumFractionDigits: 1 })}</td><td>${fmt(o.amt)}</td></tr>`).join("")}
     </tbody></table></div>`;
-  const back = document.createElement("button");
-  back.className = "back"; back.textContent = "↑ 목록"; back.onclick = () => backToList(i);
-  card.querySelector(".head").appendChild(back);
+  addBackButton(card, i);
   cards.appendChild(card);
 
-  // 3분봉
-  const mEl = document.getElementById("m" + i);
-  const mc = LightweightCharts.createChart(mEl, baseOpts(mEl, true));
-  const ms = mc.addCandlestickSeries(candleOpts);
-  ms.setData(t.min3);
-  addVolume(mc, t.min3);
-  addMA(mc, t.min3);
-  const lines = [[t.x, "#6b7280", 2, "X"], [t.z, "#10b981", 1, "Z"], [avg, "#f59e0b", 0, "평단"]];
-  lines.forEach(([p, c, style, title]) => p && ms.createPriceLine({ price: p, color: c, lineWidth: 1, lineStyle: style, axisLabelVisible: true, title }));
-  const barTime = ts => { let best = t.min3[0].time; for (const b of t.min3) { if (b.time <= ts) best = b.time; else break; } return best; };
-  ms.setMarkers(t.orders.map(o => ({
-    time: barTime(o.time),
-    position: o.side === "buy" ? "belowBar" : "aboveBar",
-    shape: o.side === "buy" ? "arrowUp" : "arrowDown",
-    color: TRADE_COLORS[o.side],
-    text: `${o.side === "buy" ? "B" : "S"} ${o.label}`,
-  })).sort((a, b) => a.time - b.time));
-  ms.attachPrimitive(new TradeCross(t.fills.map(f => ({ time: barTime(f.time), side: f.side, price: f.price }))));
-  const idxOf = ts => t.min3.findIndex(b => b.time === barTime(ts));
-  const lastIdx = Math.max(...t.orders.map(o => idxOf(o.time)));
+  // 3분봉: 체결 ✕ + 주문별 B/S(사유) + X·Z·평단선. 처음엔 매매 구간 확대, [전체 보기]로 하루 전체.
+  const m3 = t.min3;
+  const M = makeChart(document.getElementById("m" + i), m3, true);
+  addPriceLines(M.series, [[t.x, "#6b7280", 2, "X"], [t.z, "#10b981", 1, "Z"], [avg, "#f59e0b", 0, "평단"]]);
+  M.series.setMarkers(orderMarkers(m3, t.orders, g => `${g.side === "buy" ? "B" : "S"} ${g.labels.join("·")}`).sort((a, b) => a.time - b.time));
+  addFillCrosses(M.series, m3, t.fills);
+  const lastIdx = Math.max(...t.orders.map(o => m3.findIndex(b => b.time === barAt(m3, o.time))));
   let full = false;
-  const fitM = () => mc.timeScale().setVisibleLogicalRange(full
-    ? { from: t.prev_n - 2, to: t.min3.length + 1 }
-    : { from: t.prev_n - 2, to: Math.min(t.min3.length + 1, Math.max(lastIdx + 20, t.prev_n + 40)) });
+  M.fit = () => M.chart.timeScale().setVisibleLogicalRange(full
+    ? { from: t.prev_n - 2, to: m3.length + 1 }
+    : { from: t.prev_n - 2, to: Math.min(m3.length + 1, Math.max(lastIdx + 20, t.prev_n + 40)) });
   const btn = document.getElementById("b" + i);
-  btn.onclick = () => { full = !full; btn.textContent = full ? "매매 구간 확대" : "전체 보기"; fitM(); };
+  btn.onclick = () => { full = !full; btn.textContent = full ? "매매 구간 확대" : "전체 보기"; M.fit(); };
 
-  // 일봉
-  const dEl = document.getElementById("d" + i);
-  const rows = DATA.daily[t.code].filter(b => b.volume > 0);
-  const dc = LightweightCharts.createChart(dEl, baseOpts(dEl, false));
-  const ds = dc.addCandlestickSeries(candleOpts);
-  ds.setData(rows);
-  addVolume(dc, rows);
-  addMA(dc, rows);
-  const idx = rows.findIndex(b => new Date(b.time * 1000).toISOString().slice(0, 10).replace(/-/g, "") === t.day);
+  // 일봉: 매매일 봉에 매수 평단·매도 평균 마커 + 체결 ✕
+  const rows = DATA.daily[t.code];
+  const D = makeChart(document.getElementById("d" + i), rows, false);
+  const idx = rows.findIndex(b => ymdOf(b.time) === t.day);
   if (idx >= 0) {
-    const tm = rows[idx].time, mk = [];
-    const buys = t.orders.filter(o => o.side === "buy"), sells = t.orders.filter(o => o.side === "sell");
-    mk.push({ time: tm, position: "belowBar", shape: "arrowUp", color: TRADE_COLORS.buy, text: `B ${t.buy_q}주 · ${fmt(avg)}` });
-    if (sells.length) mk.push({ time: tm, position: "aboveBar", shape: "arrowDown", color: TRADE_COLORS.sell,
+    const tm = rows[idx].time;
+    const mk = [{ time: tm, position: "belowBar", shape: "arrowUp", color: TRADE_COLORS.buy, text: `B ${t.buy_q}주 · ${fmt(avg)}` }];
+    if (t.sell_q) mk.push({ time: tm, position: "aboveBar", shape: "arrowDown", color: TRADE_COLORS.sell,
       text: `S ${t.sell_q}주 · ${fmt(t.sell_a / t.sell_q)}` });
-    ds.setMarkers(mk);
-    ds.attachPrimitive(new TradeCross(t.fills.map(f => ({ time: tm, side: f.side, price: f.price }))));
+    D.series.setMarkers(mk);
+    addFillCrosses(D.series, rows, t.fills, () => tm);
+    D.fit = () => D.chart.timeScale().setVisibleLogicalRange({ from: Math.max(-1, idx - 35), to: Math.max(rows.length + 6, idx + 15) });
   }
-  const fitD = () => idx >= 0
-    ? dc.timeScale().setVisibleLogicalRange({ from: Math.max(-1, idx - 35), to: Math.max(rows.length + 6, idx + 15) })
-    : dc.timeScale().fitContent();
-  charts.push([mc, mEl, fitM], [dc, dEl, fitD]);
-  fitM(); fitD();
+  M.fit(); D.fit();
 });
-
-// 패널이 처음에 폭 0으로 그려지는 환경이 있어, 크기가 바뀌면 폭과 표시 범위를 다시 맞춘다.
-const ro = new ResizeObserver(entries => entries.forEach(e => {
-  const hit = charts.find(([, el]) => el === e.target);
-  if (!hit || !e.target.clientWidth) return;
-  hit[0].applyOptions({ width: e.target.clientWidth, height: e.target.clientHeight });
-  hit[2]();
-}));
-charts.forEach(([, el]) => ro.observe(el));
 </script>
 </body>
 </html>
