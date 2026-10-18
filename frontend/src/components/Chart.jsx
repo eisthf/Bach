@@ -156,24 +156,54 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
     }
   }, [])
 
-  // 두 점 측정. 점은 (봉 시각, 가격). 선은 필요할 때 만든 라인 시리즈 하나로 그린다.
+  // 두 점 측정. 점은 (봉 시각, 가격). 첫 점을 찍으면 포인터까지 점선으로 이어 실시간 변화율을
+  // 보여 주고(미리보기), 두 번째 점을 찍으면 실선으로 확정한다. 선은 라인 시리즈 하나로 그린다.
   const [measureOn, setMeasureOn] = useState(false)
   const measureOnRef = useRef(false)
   measureOnRef.current = measureOn
-  const [measurePts, setMeasurePts] = useState([])
+  const [measurePts, setMeasurePts] = useState([])   // 찍은 점(최대 2)
+  const measurePtsRef = useRef([])
+  measurePtsRef.current = measurePts
+  const [hoverPt, setHoverPt] = useState(null)       // 첫 점 뒤 포인터 위치 {time, price, x, y}
   const measureSeriesRef = useRef(null)
   const clearMeasure = () => {
     setMeasurePts([])
+    setHoverPt(null)
     if (measureSeriesRef.current) {
       chartRef.current?.removeSeries(measureSeriesRef.current)
       measureSeriesRef.current = null
     }
   }
   useEffect(() => { clearMeasure() }, [interval, code]) // eslint-disable-line react-hooks/exhaustive-deps
+  // 포인터 위치의 (봉 시각, 가격). 마지막 봉 오른쪽 빈 곳이면 가장 가까운 봉으로.
+  const pointAt = (param) => {
+    if (!param.point || !candleRef.current) return null
+    const price = candleRef.current.coordinateToPrice(param.point.y)
+    let time = param.time
+    if (time == null && param.logical != null) {
+      const bars = barsRef.current
+      if (bars.length) time = bars[Math.max(0, Math.min(bars.length - 1, Math.round(param.logical)))].time
+    }
+    return price > 0 && time != null ? { time, price, x: param.point.x, y: param.point.y } : null
+  }
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart) return undefined
+    const onMove = (param) => {
+      if (!measureOnRef.current || measurePtsRef.current.length !== 1) return
+      setHoverPt(pointAt(param))
+    }
+    chart.subscribeCrosshairMove(onMove)
+    return () => chart.unsubscribeCrosshairMove(onMove)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  const measurePair = measurePts.length === 2 ? measurePts
+    : measurePts.length === 1 && hoverPt ? [measurePts[0], hoverPt] : null
+  const previewing = measurePts.length === 1
   useEffect(() => {
     const chart = chartRef.current
     if (!chart) return
-    if (measurePts.length < 2) {
+    const pts = measurePair || measurePts
+    if (!pts.length) {
       if (measureSeriesRef.current) {
         chart.removeSeries(measureSeriesRef.current)
         measureSeriesRef.current = null
@@ -183,14 +213,18 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
     if (!measureSeriesRef.current) {
       measureSeriesRef.current = chart.addLineSeries({
         color: '#7b1fa2', lineWidth: 2, priceLineVisible: false, lastValueVisible: false,
-        crosshairMarkerVisible: false, autoscaleInfoProvider: () => null,
+        crosshairMarkerVisible: false, pointMarkersVisible: true, pointMarkersRadius: 4,
+        autoscaleInfoProvider: () => null,
       })
     }
-    const [a, b] = [...measurePts].sort((x, y) => x.time - y.time)
-    measureSeriesRef.current.setData(a.time === b.time
-      ? [{ time: a.time, value: b.price }]
-      : [{ time: a.time, value: a.price }, { time: b.time, value: b.price }])
-  }, [measurePts])
+    measureSeriesRef.current.applyOptions({ lineStyle: previewing ? 2 : 0 })
+    const sorted = [...pts].sort((x, y) => x.time - y.time)
+    // 같은 봉이면 점 하나(첫 점)만.
+    const data = sorted.length === 2 && sorted[0].time !== sorted[1].time
+      ? sorted.map((p) => ({ time: p.time, value: p.price }))
+      : [{ time: measurePts[0].time, value: measurePts[0].price }]
+    measureSeriesRef.current.setData(data)
+  }, [measurePts, hoverPt]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 가격 찍기. 콜백은 ref로 들고 구독은 한 번만 한다(부모가 매 렌더 새 함수를 넘겨도).
   const priceClickRef = useRef(onPriceClick)
@@ -200,10 +234,11 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
     if (!chart) return undefined
     const onClick = (param) => {
       if (measureOnRef.current) {
-        if (!param.point || param.time == null || !candleRef.current || Date.now() < suppressClickUntilRef.current) return
-        const price = candleRef.current.coordinateToPrice(param.point.y)
-        if (price === null || !(price > 0)) return
-        setMeasurePts((pts) => (pts.length >= 2 ? [] : pts).concat({ time: param.time, price }))
+        if (Date.now() < suppressClickUntilRef.current) return
+        const pt = pointAt(param)
+        if (!pt) return
+        setHoverPt(null)
+        setMeasurePts((pts) => (pts.length >= 2 ? [] : pts).concat({ time: pt.time, price: pt.price }))
         return
       }
       const cb = priceClickRef.current
@@ -465,17 +500,28 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
     return interval === 1440 ? md : `${md} ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`
   }
   const priceLabel = (p) => Math.round(p).toLocaleString('ko-KR')
-  let measureText = '두 점을 차트에서 누르세요'
-  if (measurePts.length === 1) {
-    measureText = `첫 점 ${priceLabel(measurePts[0].price)} (${timeLabel(measurePts[0].time)}) — 두 번째 점을 누르세요`
-  } else if (measurePts.length === 2) {
-    const [a, b] = [...measurePts].sort((x, y) => x.time - y.time)
+  // 두 점 사이 변화율·봉 수(왼쪽 점 → 오른쪽 점).
+  const measureOf = (pair) => {
+    const [a, b] = [...pair].sort((x, y) => x.time - y.time)
     const pct = (b.price - a.price) / a.price * 100
     const idx = (t) => barsRef.current.findIndex((bar) => bar.time === t)
-    const n = idx(b.time) - idx(a.time)
-    measureText = `${priceLabel(a.price)} (${timeLabel(a.time)}) → ${priceLabel(b.price)} (${timeLabel(b.time)}) = `
-    measureText += `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}% · ${n >= 0 && idx(a.time) >= 0 ? `${n}봉` : ''}`
+    const ia = idx(a.time)
+    const n = ia >= 0 ? idx(b.time) - ia : null
+    return { a, b, pctText: `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`, bars: n != null && n >= 0 ? `${n}봉` : '', up: pct >= 0 }
   }
+  const measured = measurePair ? measureOf(measurePair) : null
+  let measureText = '첫 점을 차트에서 누르세요'
+  if (measured) {
+    measureText = `${priceLabel(measured.a.price)} (${timeLabel(measured.a.time)}) → ${priceLabel(measured.b.price)} `
+      + `(${timeLabel(measured.b.time)}) = ${measured.pctText}${measured.bars ? ` · ${measured.bars}` : ''}`
+      + (previewing ? ' — 두 번째 점을 누르면 확정' : '')
+  } else if (measurePts.length === 1) {
+    measureText = `첫 점 ${priceLabel(measurePts[0].price)} (${timeLabel(measurePts[0].time)}) — 두 번째 점을 누르세요`
+  }
+  // 미리보기 중엔 포인터 옆에 변화율을 띄운다.
+  const floatLabel = previewing && hoverPt && measured
+    ? { x: hoverPt.x, y: hoverPt.y, text: `${measured.pctText}${measured.bars ? ` · ${measured.bars}` : ''}`, up: measured.up }
+    : null
 
   return (
     <div className="chart-container">
@@ -487,7 +533,7 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
             📏 측정{measureOn ? ' 끄기' : ''}
           </button>
           {measureOn && (
-            <span className={`measure-result${measurePts.length === 2 ? ' done' : ''}`}>
+            <span className={`measure-result${measurePts.length === 2 ? ' done' : ''}`} aria-live="polite">
               {measureText}
               {measurePts.length > 0 && <button type="button" className="link-btn" onClick={clearMeasure}>지우기</button>}
             </span>
@@ -505,11 +551,21 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
           <span>봉에 마우스를 올리면 해당 봉의 수량을 표시합니다.</span>
         </div>
       )}
-    <div
-      ref={containerRef}
-      className={`chart-canvas${onPriceClick || measureOn ? ' picking' : ''}`}
-      style={{ width: '100%', '--chart-height': `${height}px` }}
-    />
+    <div className="chart-canvas-wrap">
+      <div
+        ref={containerRef}
+        className={`chart-canvas${onPriceClick || measureOn ? ' picking' : ''}`}
+        style={{ width: '100%', '--chart-height': `${height}px` }}
+      />
+      {floatLabel && (
+        <div className={`measure-float ${floatLabel.up ? 'up' : 'down'}`}
+          style={(containerRef.current && floatLabel.x > containerRef.current.clientWidth * 0.7)
+            ? { left: floatLabel.x - 14, top: Math.max(0, floatLabel.y - 30), transform: 'translateX(-100%)' }
+            : { left: floatLabel.x + 14, top: Math.max(0, floatLabel.y - 30) }}>
+          {floatLabel.text}
+        </div>
+      )}
+    </div>
     </div>
   )
 }
