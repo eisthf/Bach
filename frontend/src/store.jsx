@@ -112,7 +112,7 @@ export function StoreProvider({ children }) {
           setIn(setOrder, acc, (arr) =>
             (arr || []).includes(s.code) ? arr : [...(arr || []), s.code])
         } else if (msg.type === 'stock_removed') {
-          // [수동 전환]으로 [매매] 목록에서 빠졌다(수동 매매로 옮겨감).
+          // [수동 전환]으로 [상한가 매매] 목록에서 빠졌다(수동 매매로 옮겨감).
           setIn(setStocks, acc, (m) => {
             const n = { ...(m || {}) }
             delete n[msg.code]

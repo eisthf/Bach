@@ -48,7 +48,7 @@ export const api = {
   addStock: (a, code, name) =>
     req(`/api/${enc(a)}/stocks`, { method: 'POST', body: JSON.stringify({ code, name }) }),
   removeStock: (a, code) => req(`/api/${enc(a)}/stocks/${code}`, { method: 'DELETE' }),
-  // [수동 전환]: [매매] 종목을 어느 상태에서든 수동 매매 목록으로 옮긴다(되돌리기 없음).
+  // [수동 전환]: [상한가 매매] 종목을 어느 상태에서든 수동 매매 목록으로 옮긴다(되돌리기 없음).
   transferToManual: (a, code) => req(`/api/${enc(a)}/stocks/${enc(code)}/manual`, { method: 'POST' }),
 
   // 수동 매매 (계좌 스코프) — 어느 자동매매에서든 넘겨받은 종목 + 직접 사고파는 종목.
@@ -80,7 +80,7 @@ export const api = {
 
   push: (a, code) => req(`/api/${enc(a)}/state/${code}/push`, { method: 'POST' }),
 
-  // 대금 양봉 매매 (계좌 스코프, [매매] 목록과 분리). base = 기준 캔들 {date, open, close}
+  // 대금 양봉 매매 (계좌 스코프, [상한가 매매] 목록과 분리). base = 기준 캔들 {date, open, close}
   candleTrades: (a) => req(`/api/${enc(a)}/candle-trades`),
   addCandleTrade: (a, code, name, base) =>
     req(`/api/${enc(a)}/candle-trades`, { method: 'POST', body: JSON.stringify({ code, name, base }) }),

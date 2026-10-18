@@ -19,7 +19,7 @@ const STATE_SHORT = { IDLE: '대기', MONITOR: '감시', AUTO_TRADING: '자동' 
 const STATE_LABEL = { IDLE: '대기', MONITOR: '모니터', AUTO_TRADING: '자동매매' }
 
 // 한 계좌(모의/실전)의 종목 입력 + 칩바 + 패널 목록. 실전(danger)은 위험 톤.
-// [매매]는 상한가 자동매매 전용이다 — 계좌 보유 가져오기·수동 매수·매도는 수동 매매 화면에 있다.
+// [상한가 매매]는 상한가 자동매매 전용이다 — 계좌 보유 가져오기·수동 매수·매도는 수동 매매 화면에 있다.
 function AccountColumn({ account }) {
   const { stocks, order, hidden, actions } = useStore()
   const acc = account.id

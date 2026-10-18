@@ -1,6 +1,6 @@
 """계좌별 수동 매매 관리자.
 
-어떤 자동매매(ULC [매매], 대금 양봉, 구간)에서든 사람이 넘겨받은 종목과, 처음부터 사람이
+어떤 자동매매(ULC [상한가 매매], 대금 양봉, 구간)에서든 사람이 넘겨받은 종목과, 처음부터 사람이
 직접 사고파는 종목을 한 목록에서 관리한다. 자동매매 화면에는 수동 매매가 없다 — 전환하면
 종목이 원래 목록에서 빠지고 이 목록으로 옮겨진다(되돌리기는 없다: 보유 0이 되면 지우고
 해당 화면에 새로 추가한다).
@@ -163,7 +163,7 @@ class ManualTradeManager:
                 self.broadcast(code)
             return self.payload(code)
         if code in self.hub.stocks:
-            raise ValueError("[매매](상한가 자동매매) 목록에 있는 종목입니다. 그 화면에서 [수동 전환]하세요.")
+            raise ValueError("[상한가 매매] 목록에 있는 종목입니다. 그 화면에서 [수동 전환]하세요.")
         if code in self.hub.candle_trades.occupied():
             raise ValueError("대금 양봉·구간 매매에서 운용 중인 종목입니다. 그 화면에서 [수동 전환]하세요.")
         it = ManualItem(code=code, name=name or code, origin=origin, notice=notice,

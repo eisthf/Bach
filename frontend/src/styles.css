@@ -49,14 +49,17 @@ input:focus { outline: none; border-color: var(--accent); }
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
 }
 .app-header {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 18px;
   padding: 12px 20px; background: var(--card);
   border-bottom: 1px solid var(--border);
 }
-.head-left { display: flex; align-items: center; gap: 18px; min-width: 0; }
+.head-left { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 18px; min-width: 0; }
 .brand { display: flex; align-items: baseline; gap: 8px; }
 
-/* 페이지 전환(매매 / 상한가 종목) */
+/* 페이지 전환: 조회 묶음 · 매매 묶음을 따로 보인다 */
+.page-nav-groups { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; min-width: 0; }
+.page-nav-group { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.page-nav-label { font-size: 11px; font-weight: 700; color: var(--muted); letter-spacing: 0.5px; white-space: nowrap; }
 .page-nav {
   display: flex; gap: 3px;
   background: var(--bg); border: 1px solid var(--border);
@@ -510,16 +513,22 @@ input:focus { outline: none; border-color: var(--accent); }
   .brand-sub { display: none; }
   .brand-mark { font-size: 20px; }
   .brand-name { font-size: 19px; }
-  /* 브랜드 아래로 페이지 탭을 내려, 헤더 1행 오른쪽의 장 제어 자리를 지킨다. */
-  .head-left { flex-direction: column; align-items: flex-start; gap: 8px; }
-  .page-nav { width: 100%; }
-  /* 탭이 5개라 좁은 폭에서 한 줄에 안 들어간다 — 같은 폭으로 줄이고 글자는 단어 단위로 두 줄까지. */
+  /* 1행: 브랜드 | 장 제어, 2행: 페이지 탭(조회·매매 묶음이 한 줄씩, 전폭), 3행: 계좌 필터. */
+  .head-left { display: contents; }
+  .page-nav-groups {
+    grid-column: 1 / -1; grid-row: 2;
+    width: 100%; flex-direction: column; align-items: stretch; gap: 6px;
+  }
+  .page-nav-group { width: 100%; }
+  .page-nav-label { flex: 0 0 26px; }
+  .page-nav { flex: 1; min-width: 0; }
+  /* 좁은 폭: 묶음마다 한 줄. 같은 폭으로 줄이고 글자는 단어 단위로 두 줄까지. */
   .page-tab {
     flex: 1 1 0; min-width: 0; min-height: 38px; padding: 4px 4px;
     white-space: normal; word-break: keep-all; line-height: 1.25; font-size: 12.5px;
   }
   .account-filter {
-    grid-column: 1 / -1; grid-row: 2;
+    grid-column: 1 / -1; grid-row: 3;
     width: 100%; overflow-x: auto;
   }
   .acc-tab { flex: 1; min-height: 38px; padding: 6px 10px; }

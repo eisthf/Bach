@@ -240,8 +240,8 @@ class Hub:
     async def restore(self) -> None:
         """재시작 복원. 엔진 이력은 (장외 이월분 말고는) 복원하지 않는다.
 
-        계좌에 보유가 있는 종목은 수동 매매 목록으로 넘긴다 — [매매]는 자동매매 전용이고,
-        재시작 뒤 그 보유를 누가 어떻게 샀는지는 계좌만 안다. 보유가 없는 [매매] 종목은 대기로 둔다.
+        계좌에 보유가 있는 종목은 수동 매매 목록으로 넘긴다 — [상한가 매매]는 자동매매 전용이고,
+        재시작 뒤 그 보유를 누가 어떻게 샀는지는 계좌만 안다. 보유가 없는 [상한가 매매] 종목은 대기로 둔다.
         """
         saved = self._load_state()
         positions = {}
@@ -318,7 +318,7 @@ class Hub:
         finally:
             self._restoring = False
         for code, name, entry, state, notice in to_manual:
-            # 예전 [매매] 수동매매의 자동 손절 설정을 이어받는다(저장 파일의 옛 필드).
+            # 예전 [상한가 매매] 수동매매의 자동 손절 설정을 이어받는다(저장 파일의 옛 필드).
             cfg = entry.get("config") or {}
             try:
                 pct = float(cfg.get("manual_stop_pct", 5.0))
@@ -333,7 +333,7 @@ class Hub:
             if state == TradeState.AUTO_TRADING.value:
                 self._record_handoff(code, "SERVER_RESTORE", positions[code].quantity)
         self._persist()
-        self._log(f"종목 복원: [매매] {len(self.stocks)}개, 수동 매매 {len(self.manual_trades.items)}개")
+        self._log(f"종목 복원: [상한가 매매] {len(self.stocks)}개, 수동 매매 {len(self.manual_trades.items)}개")
 
     def _restore_config(self, stock: Stock, entry: dict) -> None:
         cfg = entry.get("config")
@@ -410,7 +410,7 @@ class Hub:
             logger.exception("[%s] 인계 기록 실패", code)
 
     async def transfer_to_manual(self, code: str, reason: str = "USER_MANUAL", notice: str = "") -> dict:
-        """[매매] 종목을 수동 매매 목록으로 옮긴다(어느 상태에서든). 되돌리기는 없다.
+        """[상한가 매매] 종목을 수동 매매 목록으로 옮긴다(어느 상태에서든). 되돌리기는 없다.
 
         순서: 셋업 취소 → 진행 중인 엔진 평가가 끝나길 기다려 엔진을 뗀다(새 주문 차단) →
         틱 루프를 끝내 시세 구독을 해제 → 계좌 잔고·미체결 확인 → 수동 매매에 올린다.

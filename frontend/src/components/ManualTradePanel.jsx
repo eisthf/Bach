@@ -4,7 +4,7 @@ import { useStore } from '../store'
 const fmt = (n) => Number(n || 0).toLocaleString('ko-KR')
 
 // 수동매매: 매수 금액(원)·매도 수량(주) 입력 + 버튼 + 평단 대비 자동 손절. 수동 매매 화면 전용.
-// readOnly 면 보유·평가손익·미체결만 보인다([매매] 화면 — 자동매매 전용이라 주문 버튼이 없다).
+// readOnly 면 보유·평가손익·미체결만 보인다([상한가 매매] 화면 — 자동매매 전용이라 주문 버튼이 없다).
 // position/verified 는 계좌 잔고(진실원), stop = {enabled, pct}.
 export default function ManualTradePanel({ account, code, position, verified = true, tick, stop, readOnly = false }) {
   const { actions, orders } = useStore()

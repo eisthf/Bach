@@ -161,11 +161,11 @@ def remove_stock(account: str, code: str):
 
 @app.post("/api/{account}/stocks/{code}/manual")
 async def transfer_stock_to_manual(account: str, code: str):
-    """[수동 전환]: [매매] 종목을 어느 상태에서든 수동 매매 목록으로 옮긴다(되돌리기 없음)."""
+    """[수동 전환]: [상한가 매매] 종목을 어느 상태에서든 수동 매매 목록으로 옮긴다(되돌리기 없음)."""
     try:
         return await _hub(account).transfer_to_manual(code, "USER_MANUAL")
     except KeyError:
-        raise HTTPException(404, "[매매] 목록에 없는 종목입니다.")
+        raise HTTPException(404, "[상한가 매매] 목록에 없는 종목입니다.")
     except ValueError as e:
         raise HTTPException(409, str(e))
 
@@ -245,7 +245,7 @@ async def remove_manual_trade(account: str, code: str):
 
 # ---------------------------------------------------------------------------
 # 대금 양봉 매매·구간 매매 (계좌 스코프) — 매입 구간에서 여러 거래일에 걸친 2분할
-# 매수·절반 익절·트레일링. [매매] 목록과 분리. 구간 매매(kind="zone")는 구간을
+# 매수·절반 익절·트레일링. [상한가 매매] 목록과 분리. 구간 매매(kind="zone")는 구간을
 # 사람이 정하는 같은 전략이라 같은 목록·엔드포인트를 쓴다(등록·구간 지정만 다름).
 # ---------------------------------------------------------------------------
 def _candle(account: str):

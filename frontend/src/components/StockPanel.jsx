@@ -7,7 +7,7 @@ import StateButton from './StateButton'
 import ManualTradePanel from './ManualTradePanel'
 import AutoConfigForm from './AutoConfigForm'
 
-// [매매](상한가 자동매매) 종목 1개 카드: 차트 + 시세 + 상태버튼·수동 전환 + 계좌 보유(읽기 전용) + 자동매매 설정.
+// [상한가 매매] 종목 1개 카드: 차트 + 시세 + 상태버튼·수동 전환 + 계좌 보유(읽기 전용) + 자동매매 설정.
 // 수동 매수·매도는 없다 — [수동 전환]하면 종목이 수동 매매 화면으로 옮겨간다.
 // 컴팩트 모드: 자동매매설정을 숨기고 차트(좌)+보유(우)를 나란히 → 카드 높이 절약.
 export default function StockPanel({ account, stock }) {

@@ -56,13 +56,13 @@ cd backend && uv run python backtest.py 079650:20260903 --state real     --varia
 | `main.py` | FastAPI 진입점. REST + `/ws` WebSocket. 계좌 스코프 라우팅(`/api/{account}/...`), 전역 장 시계(`/api/market*`), 선택적 `X-API-Token` 인증 |
 | `hub.py` | `AccountManager`(여러 계좌 총괄, 공유 장 시계 + 공유 WS 버스) + 계좌별 `Hub`(종목·상태머신·틱태스크·자동매매 엔진·미체결·영속화) |
 | `accounts.py` | `ACCOUNTS` 환경변수 파싱, 계좌별 prefix 자격증명(`MOCK_APPKEY` 등) 로드, provider/broker 쌍 조립 |
-| `state_machine.py` | [매매] 종목별 상태머신. `IDLE`(대기)/`MONITOR`/`AUTO_TRADING` + 장전/장중 가드. 수동 매매는 상태머신 밖(목록 이동) |
+| `state_machine.py` | [상한가 매매] 종목별 상태머신. `IDLE`(대기)/`MONITOR`/`AUTO_TRADING` + 장전/장중 가드. 수동 매매는 상태머신 밖(목록 이동) |
 | `market_clock.py` | 장 단계(PRE_OPEN/OPEN/CLOSED). mock=수동 토글, live=실제 KST 시계 자동 판정. 차트 시간축 epoch 변환 헬퍼 |
 | `models.py` | Pydantic 모델 + enum. 프런트와 주고받는 모든 페이로드의 단일 정의처 |
 | `screener.py` | 상한가 종목 스크리너(D 종가 vs 직전 거래일 +29~30%) + 거래대금 상위 양봉 스크리너(거래대금 ≥150억 & 현재가/종가 > 시가, 시가 대비 상승률 필터). 거래일 탐색 + 합성 mock 소스 포함 |
 | `strategy/ulc.py` | 상한가 따라잡기(ULC) 자동매매 엔진. 틱 기반 진입필터·분할매수·익절/손절/트레일링 |
 | `strategy/big_candle_trade.py` | 대금 양봉·구간 매매 엔진. 매입 구간(기준 캔들 몸통에서 자동 / `kind="zone"`이면 수동 지정)에서 여러 거래일에 걸친 2분할 매수·절반 익절+트레일링·구간 이탈 손절. 틱/분 감시. 상태 직렬화 |
-| `big_candle_trade.py` | 계좌별 대금 양봉·구간 매매 관리자(한 목록, `kind`로 구분). [매매] 목록과 분리된 목록·틱 루프·세션별 일봉 맥락(전일 종가·경과 거래일·기준 캔들 확정)·영속화(`state.{계좌}.candle.json`)·재시작 잔고 대조·수동 인계 |
+| `big_candle_trade.py` | 계좌별 대금 양봉·구간 매매 관리자(한 목록, `kind`로 구분). [상한가 매매] 목록과 분리된 목록·틱 루프·세션별 일봉 맥락(전일 종가·경과 거래일·기준 캔들 확정)·영속화(`state.{계좌}.candle.json`)·재시작 잔고 대조·수동 인계 |
 | `manual_trade.py` | 계좌별 수동 매매 관리자. 어느 자동매매에서든 [수동 전환]한 종목 + 직접 추가한 종목. 엔진 없음(보유·평단=계좌 잔고), 틱 루프·평단 대비 자동 손절·영속화(`state.{계좌}.manual.json`) |
 | `backtest.py` | ULC 백테스트. 1분봉 → 합성 틱으로 운영 엔진을 재생(CLI는 `backend/backtest.py`) |
 | `providers/base.py` | `DataProvider` / `Broker` ABC. `VALID_INTERVALS=(3,5,10,30,60,1440)`, `DAY_INTERVAL=1440` |
@@ -80,19 +80,20 @@ cd backend && uv run python backtest.py 079650:20260903 --state real     --varia
 | `indicators.js` | SMA 계산(전체 재계산 `sma`, 틱 갱신용 O(period) `lastSma`) |
 | `router.js` | 최소 해시 라우터(`#/`, `#/upper-limit`, `#/big-candle`, `#/candle-trade`, `#/zone-trade`, `#/manual-trade`). react-router 의존 없음 |
 | `App.jsx` | 라우팅 + 공통 헤더, 계좌 컬럼 레이아웃, 계좌 필터 세그먼트 |
+| `components/PageNav.jsx` | 페이지 탭을 두 묶음으로 — 조회(상한가 종목·대금 양봉) / 매매(상한가 매매·대금 양봉 매매·구간 매매·수동 매매) |
 | `pages/` | UpperLimitPage — 상한가 종목 조회/표, BigCandlePage — 거래대금 상위 양봉 조회/표, CandleTradePage — 대금 양봉 매매, ZoneTradePage — 구간 매매(둘 다 `components/CandleTradeCard`), ManualTradePage — 수동 매매 |
 | `components/` | Chart, PriceTicker, StateButton, ManualTradePanel, AutoConfigForm, IntervalSelector, StockInput, StockPanel, MarketControls, AccountSummary, LogPanel, PageNav |
 
 ## 핵심 개념
 
-- **[매매] = 상한가 자동매매 전용, 수동 매매는 별도 화면**(`#/manual-trade`, `manual_trade.py`).
+- **[상한가 매매] = 상한가 자동매매 전용, 수동 매매는 별도 화면**(`#/manual-trade`, `manual_trade.py`).
   상태머신: `[*] → IDLE`(대기). `PUSH`(장전에만 `IDLE↔MONITOR`), `MARKET-OPEN`(`MONITOR→AUTO`),
   `MARKET-CLOSE`(모두 `→IDLE` + 장 단계 `PRE_OPEN` 리셋), `POSITION-FLAT`(엔진 전량매도로 보유 0 →
   `AUTO→IDLE`). 장중 `IDLE`은 종착(그날 끝). **청산 버튼은 없다**(청산은 매매의 결과).
-  **[수동 전환]은 어느 상태에서든**(자동매매 중의 PUSH 포함, `Hub.transfer_to_manual`) 종목을 [매매]에서
+  **[수동 전환]은 어느 상태에서든**(자동매매 중의 PUSH 포함, `Hub.transfer_to_manual`) 종목을 [상한가 매매]에서
   빼 수동 매매 목록으로 옮긴다 — 되돌리기 없음(보유 0에서 지우고 해당 화면에 새로 추가). 대금 양봉·구간의
   [수동 전환]도 설정 중·감시 중·보유 중 어디서든 같은 곳으로 간다. 엔진 잔량·손절 수동 인계·장중 재시작·
-  이월 재개 실패처럼 보유가 남은 자동 인계도 수동 매매로 간다(보유 0이면 [매매]에 대기로 남음).
+  이월 재개 실패처럼 보유가 남은 자동 인계도 수동 매매로 간다(보유 0이면 [상한가 매매]에 대기로 남음).
   전환 순서: 엔진 평가가 끝나길 기다려 엔진 분리(새 주문 차단) → 틱 루프 종료(구독 해제) → 수동 매매에
   올림. 엔진이 낸 미체결은 취소하지 않고 알림에 건수만 남긴다(보유·평단은 계좌 잔고라 나중 체결도 맞는다).
   전환 로그는 `to_state="MANUAL"`(옛 로그는 `MANUAL_TRADING`). 예전 저장값 `MANUAL_TRADING`은 IDLE로 읽는다.
@@ -107,7 +108,7 @@ cd backend && uv run python backtest.py 079650:20260903 --state real     --varia
 - **서버가 권위**: 상태머신·틱 스트림·이벤트는 서버가 관리하고 WS로 브로드캐스트한다.
 - **영속화**: 계좌별 종목 목록은 `backend/state.json`(데모는 `state.demo.json`), 수동 매매 목록은
   옆 파일 `.manual.json`. 재시작 시 `manager.restore()`로 복원 — 대금 양봉·수동 매매를 먼저 복원하고,
-  [매매] 종목 중 계좌 보유가 있는 것과 어느 목록에도 없는 계좌 보유는 수동 매매로 넘긴다.
+  [상한가 매매] 종목 중 계좌 보유가 있는 것과 어느 목록에도 없는 계좌 보유는 수동 매매로 넘긴다.
   체결 기록은 `state.{계좌}.trades.json`(`trade_history.py`, 개수 제한 없음). 주문을 낸 쪽이
   `Hub.tag_order`로 주문번호에 전략·사유·맥락(`strategy` ulc/candle/zone/manual, `reason` "1차"·"익절 절반"·
   청산 사유, `ctx` X·Z·시나리오·청산 설정(`exit`) / 기준 캔들·매입 구간·익절 %)을 붙여 체결 행에 함께 남긴다 — 이벤트 로그
@@ -155,7 +156,7 @@ cd backend && uv run python backtest.py 079650:20260903 --state real     --varia
   주문 보류)하고, 같은 조회로 기준일 일봉 확정값을 반영한다(장중 스냅샷 등록 대비).
   상태머신·MARKET-CLOSE와 무관하고 재시작 시 저장 단계부터 이어간다(계좌 잔고로 대조 — 부족하면
   수동 인계, 조회 실패면 주문 보류). 이전 '종가 매매' 기록(`.close.json`)은 옮기지 않는다.
-  **한 종목은 한 방식으로만**: [매매]·대금 양봉/구간·수동 매매 세 목록에 같은 종목을 함께 둘 수 없고,
+  **한 종목은 한 방식으로만**: [상한가 매매]·대금 양봉/구간·수동 매매 세 목록에 같은 종목을 함께 둘 수 없고,
   재시작 잔고 가져오기에서도 제외. [수동 전환]은 엔진을 멈추고 수동 매매 목록으로 옮긴다.
 - **구간 매매**(`#/zone-trade`, 엔진 `kind="zone"`): 임의 종목에 같은 전략을 쓰되 매입 구간 상단·하단을
   사람이 정한다(차트 클릭으로 수평선 찍기·선을 마우스/터치로 끌어 옮기기, 호가 단위로 맞춤 / 숫자 입력,
@@ -163,14 +164,14 @@ cd backend && uv run python backtest.py 079650:20260903 --state real     --varia
   (도중에 카드가 재렌더되며 경고 등이 생기면 차트가 밀려 끌기가 튄다).
   기준 캔들이 없으므로 **감시를 시작한 거래일부터** 평가하고 기한도 그날을 1일째로 센다(`watch_from`).
   구간은 1차 매수 전까지만 바꿀 수 있다. 같은 목록·엔드포인트(등록 시 `kind: "zone"`)라 한 종목
-  한 방식 규칙·예수금 가드·재시작 복원을 그대로 공유한다. ('수동매매'는 [매매]의 MANUAL_TRADING이라
+  한 방식 규칙·예수금 가드·재시작 복원을 그대로 공유한다. ('수동매매'는 [상한가 매매]의 MANUAL_TRADING이라
   이름을 피했다.)
 - **상한가 매매와의 병행**: 서로 다른 종목이면 두 전략이 동시에 돈다. 공유 자원은 계좌 현금과
   REST 게이트뿐이라 두 가지를 보완했다 — (1) **예수금 가드**: [감시 시작] 전에 주문가능금액
   (kt00001)을 조회해 `다른 전략 약정(다른 대금 양봉 매매 남은 차수 + MONITOR/AUTO 종목의
   max_buy_amount) + 1차 금액`을 못 대면 409로 막고, 계획 전체를 못 대면 경고만 남긴다
   (주문가능금액을 못 얻는 mock 등에서는 검사를 건너뛴다). (2) **09:00 주문 우선순위**:
-  대금 양봉 1차 매수는 [매매]에 1차 주문을 아직 못 낸 AUTO_TRADING 종목이 있으면 양보한다
+  대금 양봉 1차 매수는 [상한가 매매]에 1차 주문을 아직 못 낸 AUTO_TRADING 종목이 있으면 양보한다
   (최대 `ULC_YIELD_MAX_SEC`=90초). ULC는 시가 직후 몇 초가 전부지만 대금 양봉 매매는 급하지 않다.
 
 ## 규칙 / 관례

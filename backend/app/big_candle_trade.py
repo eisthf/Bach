@@ -222,7 +222,7 @@ class CandleTradeManager:
         """이 계좌에서 이미 '쓰기로 되어 있는' 금액.
 
         - 다른 대금 양봉 매매의 남은 차수 금액(아직 안 산 몫)
-        - [매매]에서 오늘 자동매매가 예정·진행 중인 종목(MONITOR/AUTO_TRADING)의 총 투자액
+        - [상한가 매매]에서 오늘 자동매매가 예정·진행 중인 종목(MONITOR/AUTO_TRADING)의 총 투자액
         설정 중(DRAFT)인 대금 양봉 매매는 아직 주문을 시작하지 않았으므로 제외한다.
         """
         from .models import TradeState
@@ -266,7 +266,7 @@ class CandleTradeManager:
         return ""
 
     def _ulc_first_orders_pending(self) -> bool:
-        """[매매] 쪽에 아직 1차 주문을 내지 못한 자동매매 종목이 있는가."""
+        """[상한가 매매] 쪽에 아직 1차 주문을 내지 못한 자동매매 종목이 있는가."""
         from .models import TradeState
 
         for stock in self.hub.stocks.values():
@@ -344,7 +344,7 @@ class CandleTradeManager:
 
     def _check_free(self, code: str) -> None:
         if code in self.hub.stocks:
-            raise ValueError("이미 [매매] 목록에 있는 종목입니다. 한 종목은 한 방식으로만 운용합니다.")
+            raise ValueError("이미 [상한가 매매] 목록에 있는 종목입니다. 한 종목은 한 방식으로만 운용합니다.")
         if code in self.hub.manual_trades.occupied():
             raise ValueError("수동 매매 목록에 있는 종목입니다. 한 종목은 한 방식으로만 운용합니다"
                              "(보유 0이 되면 수동 매매에서 지운 뒤 등록하세요).")
@@ -446,7 +446,7 @@ class CandleTradeManager:
     async def _tick_loop(self, it: CandleItem) -> None:
         try:
             # aclosing: 종료 시 구독 해제(finally)가 즉시 돌게 한다. 그냥 break 하면
-            # 제너레이터 정리가 GC 시점으로 밀려, 뒤이어 [매매]가 연 같은 종목
+            # 제너레이터 정리가 GC 시점으로 밀려, 뒤이어 [상한가 매매]가 연 같은 종목
             # 구독을 늦게 지울 수 있다.
             async with aclosing(self.hub.data.stream_ticks(it.code)) as ticks:
                 async for tick in ticks:
@@ -631,7 +631,7 @@ class CandleTradeManager:
     # -- 기타 ----------------------------------------------------------------
     async def _broadcast_with_position(self, code: str) -> None:
         self.broadcast(code)
-        # 포지션 표시는 [매매]와 같은 status 경로가 아니므로 카드 전용 필드로 보낸다.
+        # 포지션 표시는 [상한가 매매]와 같은 status 경로가 아니므로 카드 전용 필드로 보낸다.
         try:
             pos = await asyncio.to_thread(self.hub.broker.position, code)
         except Exception:  # noqa: BLE001
