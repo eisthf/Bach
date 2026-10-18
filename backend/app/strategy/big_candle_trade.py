@@ -153,6 +153,9 @@ class CandleTradeEngine:
     # 체결 이벤트를 귀속시킬 차수(방금 주문한 차수). 영속화한다 — 재시작 직후
     # 늦게 도착한 체결도 올바른 차수에 붙도록.
     active_leg: Optional[int] = None
+    # 지금 내는 주문의 사유("1차"·"절반 익절"·청산 사유). buy_fn/sell_fn 직전에 적어 두면 호출측이
+    # 주문번호에 붙여 체결 기록에 남긴다(영속화하지 않음).
+    order_reason: str = field(default="", repr=False)
     # 하루치 맥락(begin_day). day 가 오늘이 아니면 평가하지 않는다.
     day: str = ""
     days_elapsed: int = 0            # 기준일(구간 매매는 감시 시작일 전날) 이후 경과 거래일(오늘 포함)
@@ -402,6 +405,7 @@ class CandleTradeEngine:
     async def _buy(self, i: int, price: float, today: str, buy_fn: BuyFn) -> bool:
         leg = self.legs[i]
         self.active_leg = i
+        self.order_reason = f"{i + 1}차"
         est = await buy_fn(leg.amount)
         if est <= 0:
             leg.status = "failed"
@@ -425,6 +429,7 @@ class CandleTradeEngine:
             self._cancel_waiting()
             await self._exit(sell_fn, f"익절 +{c.take_profit_pct:g}% (1주라 전량)")
             return
+        self.order_reason = "절반 익절"
         sold = await sell_fn(half)
         if sold <= 0:
             self.hand_off("절반 익절 매도 실패 — 계좌에서 확인 필요")
@@ -438,6 +443,7 @@ class CandleTradeEngine:
 
     async def _exit(self, sell_fn: SellFn, reason: str) -> None:
         qty = self.shares
+        self.order_reason = reason
         sold = await sell_fn(qty)
         self.sold_qty += max(0, sold)
         self._cancel_waiting()

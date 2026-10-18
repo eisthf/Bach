@@ -376,6 +376,7 @@ def chart_trades(account: str, code: str):
 async def buy(account: str, req: BuyOrderReq):
     hub = _hub(account)
     res = await asyncio.to_thread(hub.broker.buy, req.code, req.amount_krw)
+    hub.tag_order(res, "manual", "수동 매수")
     if res.ok:
         hub._log(f"[{req.code}] 수동 매수: {res.message}")
         hub.broadcast_status(req.code)
@@ -387,6 +388,7 @@ async def buy(account: str, req: BuyOrderReq):
 async def sell(account: str, req: SellOrderReq):
     hub = _hub(account)
     res = await asyncio.to_thread(hub.broker.sell, req.code, req.qty)
+    hub.tag_order(res, "manual", "수동 매도")
     if res.ok:
         hub._log(f"[{req.code}] 수동 매도: {res.message}")
         hub.broadcast_status(req.code)

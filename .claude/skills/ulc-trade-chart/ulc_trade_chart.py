@@ -4,10 +4,12 @@
 찾아, 키움 차트 API(조회 전용, 주문 없음)로 3분봉·일봉을 받고 HTML 한 장으로 만든다.
 봉 조회·캐시·HTML 조립은 ../_trade_chart_common 공통 코드.
 
-- ULC 매매 판정: 그날 그 종목에 '자동매매 시작 (X=…, Z=…)' 엔진 메시지가 있고 체결이 있으면.
-  대금 양봉·구간 매매(candle_trade 이벤트)와 순수 수동매매는 그 메시지가 없어 자동 제외된다.
-- 체결은 주문번호로 묶고, 엔진 메시지 순서(1차/2차/3차 매수, 익절/트레일링/손절)로 사유를 붙인다.
-  메시지보다 주문이 많으면 남는 주문은 '수동'.
+- 체결 기록의 주문 태그(서버가 주문을 낼 때 붙인 strategy·reason·ctx)를 먼저 쓰고, 태그가 없는
+  예전 체결은 엔진 로그로 판정한다.
+- ULC 매매 판정: 그날 그 종목에 strategy="ulc" 체결이 있거나, '자동매매 시작 (X=…, Z=…)' 엔진
+  메시지와 체결이 있으면. 대금 양봉·구간 매매와 순수 수동매매는 자동 제외된다.
+- 체결은 주문번호로 묶고 사유는 태그 reason, 없으면 엔진 메시지 순서(1차/2차/3차 매수,
+  익절/트레일링/손절)로 붙인다. 수동 태그 주문이나 메시지보다 많은 주문은 '수동'.
 - 3분봉 MA60 예열용으로 직전 거래일 정규장 3분봉 마지막 60개를 앞에 붙인다.
 
 실행(backend 의 uv 환경에서):
@@ -71,6 +73,17 @@ def scan_log(account: str) -> dict:
     return msgs
 
 
+def ulc_label(reason: str) -> str:
+    """태그 reason → 차트 라벨. "익절 절반"→익절, "트레일링 스탑 (max …)"→트레일링, "트레일링 중 손절"→손절."""
+    if "손절" in reason:
+        return "손절"
+    if reason.startswith("트레일링"):
+        return "트레일링"
+    if reason.startswith("익절"):
+        return "익절"
+    return reason
+
+
 def main():
     args = parse_args()
     tpath, fills = load_fills(args.account)
@@ -78,10 +91,11 @@ def main():
     since = (args.since or "0000-00-00").replace("-", "")
     until = (args.until or "9999-99-99").replace("-", "")
 
-    fill_days = sorted({(f["code"], f["id"][:10].replace("-", "")) for f in fills}, key=lambda c: (c[1], c[0]))
+    fill_days = sorted({(f["code"], ymd(f["time"])) for f in fills}, key=lambda c: (c[1], c[0]))
+    ulc_tagged = {(f["code"], ymd(f["time"])) for f in fills if f.get("strategy") == "ulc"}
     cases = [(c, d) for c, d in fill_days
-             if msgs.get((c, d), {}).get("x") is not None and since <= d <= until
-             and (not args.code or c in args.code)]
+             if ((c, d) in ulc_tagged or msgs.get((c, d), {}).get("x") is not None)
+             and since <= d <= until and (not args.code or c in args.code)]
     if not cases:
         raise SystemExit("조건에 맞는 상한가(ULC) 매매가 없습니다.")
 
@@ -92,12 +106,24 @@ def main():
 
     trades = []
     for code, day in cases:
-        date_iso = f"{day[:4]}-{day[4:6]}-{day[6:]}"
-        day_fills = [f for f in fills if f["code"] == code and f["id"].startswith(date_iso)]
+        day_fills = [f for f in fills if f["code"] == code and ymd(f["time"]) == day]
         info = msgs[(code, day)]
         blabels, slabels = iter(info["buy"]), iter(info["sell"])
-        orders = [{**g, "label": next(blabels if g["side"] == "buy" else slabels, None) or "수동"}
-                  for g in group_orders(day_fills)]
+        orders = []
+        for g in group_orders(day_fills):
+            tag = g.pop("tag")
+            if tag and tag["strategy"] != "ulc":
+                label = "수동"
+            else:
+                # 엔진 주문은 로그 메시지와 같은 순서라 태그가 있어도 로그 차례를 넘긴다.
+                logged = next(blabels if g["side"] == "buy" else slabels, None)
+                label = ulc_label(tag["reason"]) if tag and tag.get("reason") else (logged or "수동")
+            if tag and tag["strategy"] == "ulc" and tag.get("ctx"):
+                ctx = tag["ctx"]
+                info["sc"] = info["sc"] or ctx.get("scenario")
+                info["x"] = info["x"] if info["x"] is not None else ctx.get("x")
+                info["z"] = info["z"] if info["z"] is not None else ctx.get("z")
+            orders.append({**g, "label": label})
         side_sum = lambda side, k: sum(o[k] for o in orders if o["side"] == side)
         buy_q, sell_q = side_sum("buy", "qty"), side_sum("sell", "qty")
         buy_a, sell_a = side_sum("buy", "amt"), side_sum("sell", "amt")

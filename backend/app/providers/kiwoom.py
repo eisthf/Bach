@@ -677,7 +677,8 @@ class KiwoomDataProvider(DataProvider):
                 pass
         execution_no = str(v.get("909") or "").strip()
         identity = f"{executed.date()}:{fill['order_no']}:{execution_no}" if execution_no and fill["order_no"] else None
-        self.record_trade(code, side, fill["qty"], fill["price"], time=chart_epoch(executed), time_source=source, identity=identity)
+        self.record_trade(code, side, fill["qty"], fill["price"], time=chart_epoch(executed), time_source=source,
+                          identity=identity, order_no=fill["order_no"])
         try:
             self.on_order_fill(fill)
         except Exception:  # noqa: BLE001

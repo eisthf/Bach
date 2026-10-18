@@ -83,14 +83,27 @@ def regular(rows: list) -> list:
     return [b for b in rows if "0900" <= b["_hhmm"] <= "1527"]
 
 
+def order_key(f: dict) -> str:
+    """체결의 주문 식별자: order_no 필드(태그 도입 뒤) 또는 키움 id 두 번째 칸."""
+    if f.get("order_no"):
+        return f["order_no"]
+    parts = f["id"].split(":")
+    return parts[1] if len(parts) == 3 else f["id"]
+
+
 def group_orders(fills: list) -> list:
-    """체결을 주문번호(id 두 번째 칸)로 묶어 시간순 [{side, qty, amt, time, price}]."""
+    """체결을 주문번호로 묶어 시간순 [{side, qty, amt, time, price, tag}].
+
+    tag: 서버가 주문을 낼 때 붙인 {strategy, reason, ctx}(app/trade_history.py tag_order). 예전 체결엔 없다(None).
+    """
     groups = {}
     for f in fills:
-        g = groups.setdefault(f["id"].split(":")[1], {"side": f["side"], "qty": 0, "amt": 0.0, "time": f["time"]})
+        g = groups.setdefault(order_key(f), {"side": f["side"], "qty": 0, "amt": 0.0, "time": f["time"], "tag": None})
         g["qty"] += f["qty"]
         g["amt"] += f["qty"] * f["price"]
         g["time"] = min(g["time"], f["time"])
+        if g["tag"] is None and f.get("strategy"):
+            g["tag"] = {k: f.get(k) for k in ("strategy", "reason", "ctx")}
     out = sorted(groups.values(), key=lambda g: g["time"])
     for g in out:
         g["price"] = round(g["amt"] / g["qty"], 1)

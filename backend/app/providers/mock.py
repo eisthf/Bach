@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import calendar
 import random
+import time
 import zlib
 from datetime import timedelta
 from typing import AsyncIterator, Dict, List
@@ -273,6 +274,9 @@ class MockBroker(Broker):
         self._data = data
         self._positions: Dict[str, Position] = {}
         self._order_seq = 0
+        # 재시작하면 일련번호가 1부터 다시 시작한다. 체결 기록이 (거래일, 주문번호)로 전략 태그를
+        # 붙이므로, 같은 날 앞선 프로세스의 주문과 겹치지 않게 프로세스 시작 시각을 앞에 붙인다.
+        self._order_prefix = time.strftime("%H%M%S")
 
     def _price(self, code: str) -> float:
         t = self._data.last_tick(code)
@@ -284,7 +288,7 @@ class MockBroker(Broker):
 
     def _next_order_no(self) -> str:
         self._order_seq += 1
-        return f"MOCK{self._order_seq:06d}"
+        return f"MOCK{self._order_prefix}-{self._order_seq:06d}"
 
     def position(self, code: str) -> Position:
         pos = self._positions.get(code)
@@ -312,9 +316,10 @@ class MockBroker(Broker):
         new_qty = pos.quantity + qty
         pos.avg_price = (pos.avg_price * pos.quantity + price * qty) / new_qty
         pos.quantity = new_qty
-        self._data.record_trade(code, "buy", qty, price, time_source="execution")
+        order_no = self._next_order_no()
+        self._data.record_trade(code, "buy", qty, price, time_source="execution", order_no=order_no)
         return OrderResult(ok=True, code=code, side="buy", filled_qty=qty, price=price,
-                           order_no=self._next_order_no(),
+                           order_no=order_no,
                            message=f"{qty}주 매수 체결 @ {price:,.0f}")
 
     def buy_ask3(self, code: str, amount_krw: int) -> OrderResult:
@@ -331,9 +336,10 @@ class MockBroker(Broker):
         price = self._price(code)
         pos.realized_pnl += (price - pos.avg_price) * qty
         pos.quantity -= qty
-        self._data.record_trade(code, "sell", qty, price, time_source="execution")
+        order_no = self._next_order_no()
+        self._data.record_trade(code, "sell", qty, price, time_source="execution", order_no=order_no)
         if pos.quantity == 0:
             pos.avg_price = 0.0
         return OrderResult(ok=True, code=code, side="sell", filled_qty=qty, price=price,
-                           order_no=self._next_order_no(),
+                           order_no=order_no,
                            message=f"{qty}주 매도 체결 @ {price:,.0f}")

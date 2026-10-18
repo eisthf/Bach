@@ -99,6 +99,12 @@ cd backend && uv run python backtest.py 079650:20260903 --state real     --varia
 - **서버가 권위**: 상태머신·틱 스트림·이벤트는 서버가 관리하고 WS로 브로드캐스트한다.
 - **영속화**: 계좌별 종목 목록은 `backend/state.json`(데모는 `state.demo.json`).
   재시작 시 `manager.restore()`로 복원.
+  체결 기록은 `state.{계좌}.trades.json`(`trade_history.py`, 개수 제한 없음). 주문을 낸 쪽이
+  `Hub.tag_order`로 주문번호에 전략·사유·맥락(`strategy` ulc/candle/zone/manual, `reason` "1차"·"익절 절반"·
+  청산 사유, `ctx` X·Z·시나리오 / 기준 캔들·매입 구간·익절 %)을 붙여 체결 행에 함께 남긴다 — 이벤트 로그
+  (`logs/events.log`, 10MB×11개 넘겨쓰기)는 결국 지워지므로 매매 되짚기(차트 스킬)의 근거는 이쪽이다.
+  엔진은 주문 직전에 `order_reason`을 적어 두고(콜백 시그니처는 그대로), 체결 통지가 주문 응답보다
+  먼저 와도 (거래일, 주문번호)로 소급해 붙는다.
 - **자동매매 전략(ULC)**: `X`=전일 **마지막 거래가**(키움 일봉 종가 — 시간외 KRX·NXT
   포함이라 시간외 상한가 종목은 공식 기준가와 다르다), `Z`=당일 시가. '상한가 도달' 청산만은
   X가 아니라 **실제 상한가**(ka10001 `upl_pric`, 공식 기준가=전일 정규장 종가 기준)로 판단. 진입필터 →

@@ -111,6 +111,19 @@ class Hub:
         record_event(text, account=self.account, **fields)
         self.manager.broadcast({"type": "log", "text": text, "account": self.account})
 
+    def tag_order(self, result, strategy: str, reason: str = "", ctx: dict | None = None) -> None:
+        """보낸 주문의 주문번호에 전략·사유를 붙여 체결 기록(trades.json)에 남긴다.
+
+        이벤트 로그는 넘겨 쓰다 지워지므로, 나중에 매매를 되짚을 근거를 체결 기록에 둔다.
+        기록 실패가 주문 흐름을 막지 않게 격리한다.
+        """
+        if result is None or not result.ok or not result.order_no:
+            return
+        try:
+            self.trade_history.tag_order(result.order_no, {"strategy": strategy, "reason": reason, "ctx": ctx})
+        except Exception:  # noqa: BLE001
+            logger.exception("[%s] 주문 태그 기록 실패", result.code)
+
     def _log_transition(self, stock: Stock, previous, reason: str, **fields) -> None:
         before = previous.value if isinstance(previous, TradeState) else previous
         after = stock.machine.state.value
@@ -505,6 +518,7 @@ class Hub:
         stock.manual_stop_triggered = True
         try:
             result = await asyncio.to_thread(self.broker.sell, stock.code, pos.quantity)
+            self.tag_order(result, "manual", "수동 자동손절")
         except Exception as exc:  # noqa: BLE001
             stock.manual_stop_triggered = False
             self._log(
@@ -606,6 +620,9 @@ class Hub:
                 )
         before_shares = eng.shares
 
+        def ulc_ctx() -> dict:
+            return {"scenario": eng.scenario, "x": eng.x, "z": eng.z}
+
         async def buy_fn(amount: int) -> float:
             trace = {"decision": time.perf_counter_ns(), "tick_received": eng.decision_tick_received_ns,
                      "open_received": stock.open_received_ns,
@@ -618,6 +635,7 @@ class Hub:
                 buy = (self.broker.buy_ask3 if first_leg and eng.config.ulc_first_buy_ask3
                        else self.broker.buy)
                 result = await asyncio.to_thread(buy, stock.code, amount)
+                self.tag_order(result, "ulc", eng.order_reason, ulc_ctx())
                 if not result.ok:
                     self._log(f"[{stock.code}] 자동매수 실패: {result.message}")
                 return result.price if result.ok else 0.0
@@ -640,6 +658,7 @@ class Hub:
 
         async def sell_fn(qty: int) -> float:
             res = await asyncio.to_thread(self.broker.sell, stock.code, qty)
+            self.tag_order(res, "ulc", eng.order_reason, ulc_ctx())
             return res.price if res.ok else 0.0
 
         await eng.on_tick(tick, buy_fn, sell_fn)

@@ -573,9 +573,20 @@ class CandleTradeManager:
         asyncio.get_running_loop().create_task(self._broadcast_with_position(code))
 
     # -- 주문 콜백 -----------------------------------------------------------
+    def _tag(self, it: CandleItem, res) -> None:
+        """주문번호에 전략(candle/zone)·사유·매매 맥락을 붙여 체결 기록에 남긴다."""
+        eng = it.engine
+        z = eng.zone()
+        ctx = {"created": it.created_at, "zone": list(z) if z else None,
+               "take_profit_pct": eng.config.take_profit_pct, "entry_days": eng.config.entry_days}
+        if eng.kind == "candle":
+            ctx.update(base_date=eng.base_date, base_open=eng.base_open, base_close=eng.base_close)
+        self.hub.tag_order(res, eng.kind, eng.order_reason, ctx)
+
     def _buy_fn(self, it: CandleItem):
         async def buy_fn(amount: int) -> float:
             res = await asyncio.to_thread(self.hub.broker.buy, it.code, amount)
+            self._tag(it, res)
             if not res.ok:
                 self._log(it.code, f"매수 실패: {res.message}")
             return res.price if res.ok else 0.0
@@ -594,6 +605,7 @@ class CandleTradeManager:
                 self._log(it.code, "⚠️ 매도할 계좌 잔고가 없습니다")
                 return 0
             res = await asyncio.to_thread(self.hub.broker.sell, it.code, qty)
+            self._tag(it, res)
             if not res.ok:
                 self._log(it.code, f"매도 실패: {res.message}")
             return qty if res.ok else 0

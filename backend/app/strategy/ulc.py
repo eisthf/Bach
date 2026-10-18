@@ -97,6 +97,9 @@ class UlcEngine:
     _bar_bucket: Optional[int] = None
     _bar_close: Optional[Tick] = None
     decision_tick_received_ns: int = 0  # 3분봉 모드에서는 판단에 사용한 직전 봉 틱
+    # 지금 내는 주문의 사유("1차"·"익절 절반"·"손절" 등). buy_fn/sell_fn 을 부르기 직전에 적어 두면
+    # 호출측(Hub)이 주문번호에 붙여 체결 기록에 남긴다. 콜백 시그니처는 바꾸지 않는다.
+    order_reason: str = ""
 
     # ------------------------------------------------------------------
     def _emit(self, msg: str) -> None:
@@ -315,6 +318,7 @@ class UlcEngine:
                     continue
                 hit = (i == 0) or (price <= leg.target)
                 if hit:
+                    self.order_reason = f"{i+1}차"
                     fill = await buy_fn(leg.amount)
                     if fill > 0:
                         qty = int(leg.amount // fill)
@@ -393,6 +397,7 @@ class UlcEngine:
                     await self._sync_from_account()
                     half = self.shares // 2
                     if half > 0:
+                        self.order_reason = "익절 절반"
                         fill = await sell_fn(half)
                         if fill <= 0:
                             # 주문 전송 실패(fill=0 은 주문번호를 못 받은 경우라
@@ -510,6 +515,7 @@ class UlcEngine:
         # 청산 수량은 추정치가 아니라 실보유를 따른다(과다 매도 → 주문거부 방지).
         await self._sync_from_account()
         if self.shares > 0:
+            self.order_reason = reason
             fill = await sell_fn(self.shares)
             if fill <= 0:
                 # 주문 전송 실패. 여기서 DONE 으로 가면 "팔았다"는 착각 속에

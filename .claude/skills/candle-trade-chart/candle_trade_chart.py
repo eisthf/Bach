@@ -6,6 +6,8 @@
 봉 조회·캐시·HTML 조립은 ../_trade_chart_common 공통 코드.
 
 - 매매 한 건: 종목의 '등록' 메시지부터 다음 '등록' 전까지. 체결이 없는 건(기한 만료·설정 중 삭제)은 뺀다.
+  로그가 넘겨쓰기로 지워져 등록 기록이 없으면, 체결 기록의 주문 태그(strategy=candle/zone, ctx 의 등록 시각·
+  기준 캔들·매입 구간·익절 %)로 다시 세운다. 사유도 태그 reason 을 먼저 쓴다.
 - 체결 범위: 첫 엔진 매수 메시지 이후. 엔진 매수·매도 메시지 순서로 사유를 붙이고, 수동 인계 뒤
   체결은 '수동'으로 포함하되 보유 수량이 0이 되거나 그 종목의 상한가(ULC) 매매가 시작되면 멈춘다.
 - 일봉: 기준 캔들(대금 양봉)·매입 구간·평단·익절선 표시. 3분봉: 체결이 있었던 날들(+ 첫날 전일 60봉 예열).
@@ -98,6 +100,41 @@ def scan_log(account: str):
     return camps, ulc_days
 
 
+def created_epoch(created: str) -> int | None:
+    """CandleItem.created_at(KST ISO, 초 단위) → 차트 epoch."""
+    try:
+        return int(datetime.fromisoformat(created).replace(tzinfo=timezone.utc).timestamp())
+    except (TypeError, ValueError):
+        return None
+
+
+def tag_campaigns(fills: list, camps: list) -> list:
+    """로그에 등록 기록이 없는 매매 건을 체결 태그 맥락으로 다시 세운다(로그 건과 겹치면 뺀다)."""
+    out = {}
+    for f in sorted(fills, key=lambda f: f["time"]):
+        if f.get("strategy") not in ("candle", "zone"):
+            continue
+        ctx = f.get("ctx") or {}
+        reg = created_epoch(ctx.get("created", "")) or f["time"]
+        key = (f["code"], ctx.get("created") or reg)
+        if key in out:
+            continue
+        if any(c["code"] == f["code"] and abs(c["reg"] - reg) <= 60 for c in camps):
+            continue  # 로그에 있는 건(등록 메시지 시각 ≈ created_at)
+        base = None
+        if ctx.get("base_date"):
+            base = {"date": ctx["base_date"].replace("-", ""), "open": ctx.get("base_open"), "close": ctx.get("base_close")}
+        out[key] = {"code": f["code"], "kind": f["strategy"], "reg": reg, "base": base, "zone": ctx.get("zone"),
+                    "tp": ctx.get("take_profit_pct"), "entry_days": ctx.get("entry_days"), "buys": [], "sells": [],
+                    "engine_from": f["time"], "handoff": None, "end_reason": None, "log": []}
+    return list(out.values())
+
+
+def short_reason(reason: str) -> str:
+    """"트레일링 스톱: 고점 14,000 −5%" → "트레일링 스톱"."""
+    return reason.split(":")[0].split(" (")[0]
+
+
 def campaign_fills(c: dict, fills: list, ulc_days: set, next_reg: int | None) -> list:
     """이 매매 건에 속한 체결(시간순)."""
     if c["engine_from"] is None:
@@ -107,7 +144,7 @@ def campaign_fills(c: dict, fills: list, ulc_days: set, next_reg: int | None) ->
     for f in sorted((f for f in fills if f["code"] == c["code"]), key=lambda f: f["time"]):
         if f["time"] < start or (next_reg and f["time"] >= next_reg):
             continue
-        if (c["code"], f["id"][:10].replace("-", "")) in ulc_days:
+        if (c["code"], ymd(f["time"])) in ulc_days:
             break
         out.append(f)
         net += f["qty"] if f["side"] == "buy" else -f["qty"]
@@ -120,6 +157,8 @@ def main():
     args = parse_args()
     tpath, fills = load_fills(args.account)
     camps, ulc_days = scan_log(args.account)
+    ulc_days |= {(f["code"], ymd(f["time"])) for f in fills if f.get("strategy") == "ulc"}
+    camps = sorted(camps + tag_campaigns(fills, camps), key=lambda c: c["reg"])
     since = (args.since or "0000-00-00").replace("-", "")
     until = (args.until or "9999-99-99").replace("-", "")
 
@@ -145,12 +184,22 @@ def main():
             first_day = min(first_day, c["base"]["date"])
         rows = bars.daily(code, first_day)
 
-        # 엔진 구간(인계 전) 주문은 엔진 메시지 순서로 사유, 그 뒤는 '수동'
+        # 사유: 주문 태그 reason 우선. 태그가 없으면 엔진 구간(인계 전) 주문은 엔진 메시지 순서, 그 뒤는 '수동'
         blabels, slabels = iter(c["buys"]), iter(c["sells"])
         orders = []
         for g in group_orders(cf):
-            engine = c["handoff"] is None or g["time"] < c["handoff"]
-            label = (next(blabels if g["side"] == "buy" else slabels, None) if engine else None) or "수동"
+            tag = g.pop("tag")
+            engine = tag["strategy"] in ("candle", "zone") if tag else (c["handoff"] is None or g["time"] < c["handoff"])
+            logged = next(blabels if g["side"] == "buy" else slabels, None) if engine else None
+            if tag and engine and tag.get("reason"):
+                label = short_reason(tag["reason"])
+            else:
+                label = logged if engine and logged else "수동"
+            if tag and engine:
+                ctx = tag.get("ctx") or {}
+                c["zone"] = c["zone"] or ctx.get("zone")
+                c["tp"] = c["tp"] or ctx.get("take_profit_pct")
+                c["entry_days"] = c["entry_days"] or ctx.get("entry_days")
             orders.append({**g, "label": label, "day": ymd(g["time"])})
 
         side_sum = lambda side, k: sum(o[k] for o in orders if o["side"] == side)
