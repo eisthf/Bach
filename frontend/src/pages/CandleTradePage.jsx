@@ -12,6 +12,7 @@ import { useStore } from '../store'
 import { ROUTES, navigate } from '../router'
 import CandleTradeCard, { ACTIVE } from '../components/CandleTradeCard'
 import TradeChipBar, { useHiddenCards } from '../components/TradeChipBar'
+import AccountViewFilter, { useAccountView } from '../components/AccountViewFilter'
 
 export default function CandleTradePage() {
   const { accounts, candleTrades } = useStore()
@@ -27,7 +28,10 @@ export default function CandleTradePage() {
       || String(y.item.created_at).localeCompare(String(x.item.created_at)))
   }, [accounts, candleTrades])
   const { isHidden, toggle } = useHiddenCards('bach.hidden.candleTrade')
-  const shown = rows.filter(({ account, item }) => !isHidden(account, item))
+  // 계좌 보기 필터(페이지별). 칩바·카드 모두 고른 계좌만.
+  const { view, choose, visible } = useAccountView('bach.accountView.candleTrade', accounts)
+  const inView = rows.filter(({ account }) => visible(account))
+  const shown = inView.filter(({ account, item }) => !isHidden(account, item))
 
   return (
     <main className="candle-trade">
@@ -39,11 +43,15 @@ export default function CandleTradePage() {
         </span>
         <button className="ghost" onClick={() => navigate(ROUTES.BIG_CANDLE)}>대금 양봉에서 고르기</button>
       </div>
-      <TradeChipBar rows={rows} isHidden={isHidden} toggle={toggle} showAccount={accounts.length > 1} />
+      <AccountViewFilter accounts={accounts} rows={rows} view={view} choose={choose} />
+      <TradeChipBar rows={inView} isHidden={isHidden} toggle={toggle} showAccount={accounts.length > 1} />
       {rows.length === 0 && (
         <div className="screener-empty">등록된 대금 양봉 매매 종목이 없습니다.</div>
       )}
-      {rows.length > 0 && shown.length === 0 && (
+      {rows.length > 0 && inView.length === 0 && (
+        <div className="screener-empty">이 계좌에는 종목이 없습니다.</div>
+      )}
+      {inView.length > 0 && shown.length === 0 && (
         <div className="screener-empty">모든 종목이 숨김 상태입니다. 위 종목 배지를 누르면 다시 보입니다.</div>
       )}
       <div className="panels-col">

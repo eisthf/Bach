@@ -8,6 +8,7 @@ import React, { useMemo, useState } from 'react'
 import { useStore } from '../store'
 import CandleTradeCard, { ACTIVE } from '../components/CandleTradeCard'
 import TradeChipBar, { useHiddenCards } from '../components/TradeChipBar'
+import AccountViewFilter, { useAccountView } from '../components/AccountViewFilter'
 
 export default function ZoneTradePage() {
   const { accounts, candleTrades } = useStore()
@@ -23,7 +24,10 @@ export default function ZoneTradePage() {
       || String(y.item.created_at).localeCompare(String(x.item.created_at)))
   }, [accounts, candleTrades])
   const { isHidden, toggle } = useHiddenCards('bach.hidden.zoneTrade')
-  const shown = rows.filter(({ account, item }) => !isHidden(account, item))
+  // 계좌 보기 필터(페이지별). 칩바·카드 모두 고른 계좌만.
+  const { view, choose, visible } = useAccountView('bach.accountView.zoneTrade', accounts)
+  const inView = rows.filter(({ account }) => visible(account))
+  const shown = inView.filter(({ account, item }) => !isHidden(account, item))
 
   return (
     <main className="candle-trade">
@@ -35,11 +39,15 @@ export default function ZoneTradePage() {
         </span>
         <ZoneAddForm accounts={accounts} />
       </div>
-      <TradeChipBar rows={rows} isHidden={isHidden} toggle={toggle} showAccount={accounts.length > 1} />
+      <AccountViewFilter accounts={accounts} rows={rows} view={view} choose={choose} />
+      <TradeChipBar rows={inView} isHidden={isHidden} toggle={toggle} showAccount={accounts.length > 1} />
       {rows.length === 0 && (
         <div className="screener-empty">등록된 구간 매매 종목이 없습니다.</div>
       )}
-      {rows.length > 0 && shown.length === 0 && (
+      {rows.length > 0 && inView.length === 0 && (
+        <div className="screener-empty">이 계좌에는 종목이 없습니다.</div>
+      )}
+      {inView.length > 0 && shown.length === 0 && (
         <div className="screener-empty">모든 종목이 숨김 상태입니다. 위 종목 배지를 누르면 다시 보입니다.</div>
       )}
       <div className="panels-col">
@@ -77,10 +85,14 @@ function ZoneAddForm({ accounts }) {
 
   return (
     <form className="zone-add" onSubmit={submit}>
+      {/* 새 종목을 넣을 계좌. 아래 목록의 필터가 아니다(목록은 '계좌 보기'로 거른다). */}
       {accounts.length > 1 && (
-        <select value={acc} onChange={(e) => setAccount(e.target.value)} aria-label="계좌">
-          {accounts.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
-        </select>
+        <label className={`zone-add-acct${accounts.find((a) => a.id === acc)?.danger ? ' danger' : ''}`}>
+          추가할 계좌
+          <select value={acc} onChange={(e) => setAccount(e.target.value)}>
+            {accounts.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
+          </select>
+        </label>
       )}
       <input placeholder="종목코드 (예: 002990)" value={code} onChange={(e) => setCode(e.target.value)}
         aria-label="종목코드" />

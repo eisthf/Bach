@@ -660,6 +660,13 @@ input:focus { outline: none; border-color: var(--accent); }
 .candle-trade-intro .zone-add .add-btn { background: var(--accent); color: #fff; border: none; margin-left: 0; }
 .candle-trade-intro .zone-add .add-btn:hover:not(:disabled) { background: #2f4ac0; }
 .zone-add input, .zone-add select { padding: 6px 8px; border: 1px solid var(--border, #ccc); border-radius: 6px; }
+.zone-add-acct { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.zone-add-acct.danger select { border-color: #e53935; color: #e53935; font-weight: 600; }
+/* 대금 양봉·구간 매매 페이지의 계좌 보기 필터 */
+.page-account-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 13px; }
+.page-account-filter .account-filter { display: inline-flex; }
+.acc-count { font-weight: 400; opacity: 0.75; margin-left: 2px; }
+.page-account-filter .link-btn { border: none; background: none; color: var(--accent); cursor: pointer; font-size: 13px; padding: 0; }
 .ct-config label.ct-sub { padding-left: 14px; }
 .ct-error, .ct-msg { font-size: 12px; margin-top: 8px; }
 .ct-error { color: var(--down); }
