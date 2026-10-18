@@ -924,6 +924,66 @@ def _signed(val) -> float:
         return 0.0
 
 
+def fetch_order_history(token: str, day: str, code: str = "", mock: bool = False,
+                        max_pages: int = 20) -> List[dict]:
+    """그날(YYYYMMDD) 계좌 주문의 체결 내역(kt00007, 체결내역만). 주문 단위 dict 리스트, 주문순.
+
+    Bach 서버가 꺼져 있을 때 HTS(영웅문)로 낸 주문처럼 체결 통지(00)로 받지 못한 체결을
+    나중에 되짚는 용도(매매 기록 차트). 주문 하나가 여러 번 나눠 체결돼도 한 행이며,
+    ``price``(cntr_uv)는 그 주문의 체결 단가, ``time``은 주문 시각(HH:MM:SS)이다.
+    ``channel``(comm_ord_tp)은 "영웅문4"·"영웅문S#"·"REST API" 등 주문 경로.
+    조회 실패는 ``KiwoomRequestError``(빈 결과와 구분한다).
+    """
+    import time as _time
+
+    url = f"{rest_host(mock)}/api/dostk/acnt"
+    base_hdr = {
+        "Content-Type": "application/json;charset=UTF-8",
+        "authorization": f"Bearer {token}",
+        "api-id": "kt00007",
+    }
+    body = {"ord_dt": day, "qry_tp": "4", "stk_bond_tp": "1", "sell_tp": "0",
+            "stk_cd": code, "fr_ord_no": "", "dmst_stex_tp": "%"}
+    out: List[dict] = []
+    cont_yn, next_key = "N", ""
+    for _ in range(max_pages):
+        hdr = dict(base_hdr)
+        if cont_yn == "Y" and next_key:
+            hdr["cont-yn"] = "Y"
+            hdr["next-key"] = next_key
+        resp = _post(url, hdr, body, timeout=15)
+        if resp is None or resp.status_code != 200:
+            sc = resp.status_code if resp is not None else "—"
+            raise KiwoomRequestError(f"{day} 주문체결내역 조회 실패(HTTP {sc})")
+        data = resp.json()
+        if data.get("return_code") != 0:
+            raise KiwoomRequestError(f"{day} 주문체결내역 API 오류: {data.get('return_msg')}")
+        for o in data.get("acnt_ord_cntr_prps_dtl") or []:
+            qty = parse_int(o.get("cntr_qty"))
+            stk = str(o.get("stk_cd", "")).strip()
+            if qty <= 0 or not stk:
+                continue
+            io = str(o.get("io_tp_nm", ""))
+            out.append({
+                "code": stk[1:] if stk[:1] in ("A", "J", "Q") else stk,
+                "side": "sell" if "매도" in io else "buy",
+                "qty": qty,
+                "price": parse_price(o.get("cntr_uv")),
+                "order_no": str(o.get("ord_no", "")).strip(),
+                "time": str(o.get("ord_tm", "")).strip(),
+                "order_type": str(o.get("trde_tp", "")).strip(),
+                "channel": str(o.get("comm_ord_tp", "")).strip(),
+                "exchange": str(o.get("dmst_stex_tp", "")).strip(),
+                "modify": str(o.get("mdfy_cncl", "")).strip(),
+            })
+        cont_yn = resp.headers.get("cont-yn", "N")
+        next_key = resp.headers.get("next-key", "")
+        if cont_yn != "Y" or not next_key:
+            break
+        _time.sleep(0.3)
+    return out
+
+
 def fetch_positions(token: str, mock: bool = False) -> Dict[str, dict]:
     """보유 종목 dict 반환.
 

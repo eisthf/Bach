@@ -27,8 +27,9 @@ from pathlib import Path
 
 SKILL = Path(__file__).resolve().parent
 sys.path.insert(0, str(SKILL.parent / "_trade_chart_common"))
-from common import (ROOT, Bars, chart_epoch, fill_points, group_orders, iter_events, load_fills,  # noqa: E402
-                    load_trade_events, ohlcv, regular, trim_daily, write_html, ymd)
+from common import (ROOT, Bars, chart_epoch, day_fills, fill_points, group_orders, iter_events,  # noqa: E402
+                    load_fills, load_trade_events, net_qty, ohlcv, order_key, regular, trim_daily,
+                    write_html, ymd)
 
 WARMUP = 60  # 3분봉 MA60 예열
 
@@ -100,6 +101,10 @@ def handoffs_with_position(transitions: list, fills: list) -> list:
     return out
 
 
+def md(day: str) -> str:
+    return f"{day[4:6]}/{day[6:]}"
+
+
 def ulc_label(reason: str) -> str:
     """태그 reason → 차트 라벨. "익절 절반"→익절, "트레일링 스탑 (max …)"→트레일링, "트레일링 중 손절"→손절."""
     if "손절" in reason:
@@ -146,16 +151,29 @@ def main():
     first_of = {c: min(d for cc, d in cases if cc == c) for c in codes}
     daily = {c: bars.daily(c, first_of[c]) for c in codes}
 
+    warn: list = []
+    case_set = set(cases)
     trades = []
     for code, day in cases:
-        day_fills = [f for f in fills if f["code"] == code and ymd(f["time"]) == day]
+        # 그날 체결(Bach 기록 + 계좌 주문체결내역). 그날 청산되지 않았으면 다음 거래일들을 따라가며
+        # 보유가 0이 될 때까지 묶는다(그 종목의 다음 ULC 매매일 전까지). 서버가 꺼져 있을 때
+        # HTS로 판 경우(2026-10-06 KBI동양철관)도 계좌 내역으로 잡힌다.
+        all_fills = day_fills(fills, code, day, bars, warn)
+        days_used = [day]
+        for d in (b["_date"] for b in daily[code] if b["_date"] > day):
+            if net_qty(all_fills) <= 0 or (code, d) in case_set:
+                break
+            more = day_fills(fills, code, d, bars, warn)
+            if more:
+                all_fills += more
+                days_used.append(d)
         info = msgs[(code, day)]
         blabels, slabels = iter(info["buy"]), iter(info["sell"])
         orders = []
-        for g in group_orders(day_fills):
+        for g in group_orders(all_fills):
             tag = g.pop("tag")
             if tag and tag["strategy"] != "ulc":
-                label = "수동"
+                label = tag.get("reason") or "수동"
             else:
                 # 엔진 주문은 로그 메시지와 같은 순서라 태그가 있어도 로그 차례를 넘긴다.
                 logged = next(blabels if g["side"] == "buy" else slabels, None)
@@ -172,28 +190,49 @@ def main():
         buy_a, sell_a = side_sum("buy", "amt"), side_sum("sell", "amt")
         closed = buy_q == sell_q and buy_q > 0
         labels = [o["label"] for o in orders if o["side"] == "sell"]
-        result = ("손절" if "손절" in labels else "익절+트레일링" if "트레일링" in labels else "청산") if closed else "미청산"
-        handoffs = handoffs_with_position(info["handoffs"], day_fills)
+        if not closed:
+            result = "미청산"
+        elif "손절" in labels:
+            result = "손절"
+        elif "트레일링" in labels:
+            result = "익절+트레일링"
+        elif labels and all(lab.startswith("수동") for lab in labels):
+            result = "수동 청산"
+        else:
+            result = "청산"
+        handoffs = handoffs_with_position(info["handoffs"], all_fills)
         notes = [f"{datetime.fromtimestamp(h['time'], timezone.utc):%H:%M} 수동 전환({h['label']}) — "
                  f"그때 보유 {h['qty']}주, 이후는 사람 관리(차트의 옅은 배경)" for h in handoffs]
-        if "수동" in labels:
-            notes.append("엔진 매도 외에 계좌 잔량을 수동 매도")
+        if len(days_used) > 1:
+            notes.append(f"그날 청산되지 않아 {', '.join(md(d) for d in days_used[1:])}의 체결까지 이어서 표시")
+        account_n = len({order_key(f) for f in all_fills if f.get("source") == "account"})
+        if account_n:
+            notes.append(f"Bach 체결 기록에 없던 주문 {account_n}건을 계좌 주문체결내역에서 채움"
+                         f"(서버가 꺼져 있을 때 HTS 등으로 낸 주문 — 시각은 주문 시각)")
         if not closed:
-            notes.append(f"{buy_q - sell_q}주 보유 상태로 그날 종료 — 이후 매도는 이 차트에 없음(손익 미산정)")
-        m3 = [b for b in bars.min3(code, day) if b["_hhmm"] <= "1527"]
+            notes.append(f"{buy_q - sell_q}주 보유 중(마지막 확인 {md(days_used[-1])}) — 손익 미산정")
         prev = bars.prev_day(daily[code], day)
-        p3 = regular(bars.min3(code, prev))[-WARMUP:] if prev else []
+        m3 = regular(bars.min3(code, prev))[-WARMUP:] if prev else []
+        day_starts = []
+        for d in days_used:
+            day_starts.append({"day": d, "idx": len(m3)})
+            m3 += regular(bars.min3(code, d))
         trades.append({
             "code": code, "name": bars.name(code), "day": day,
             "sc": info["sc"], "x": info["x"], "z": info["z"],
             "exit": describe_exit(exit_settings_of(info["exit"])) if info["exit"] else None,
             "orders": orders, "buy_q": buy_q, "sell_q": sell_q, "buy_a": buy_a, "sell_a": sell_a,
             "pnl": (sell_a - buy_a) if closed else None, "result": result, "notes": notes,
-            "min3": ohlcv(p3 + m3), "prev_n": len(p3), "fills": fill_points(day_fills),
+            "min3": ohlcv(m3), "prev_n": day_starts[0]["idx"], "day_starts": day_starts,
+            "fills": fill_points(all_fills),
             "handoffs": [{"time": h["time"], "label": h["label"]} for h in handoffs],
         })
         pnl = trades[-1]["pnl"]
-        print(f"{day} {code} {trades[-1]['name']} SC{info['sc']} {result} {'' if pnl is None else f'{pnl:+,.0f}원'}")
+        extra = f" (+{len(days_used) - 1}일)" if len(days_used) > 1 else ""
+        print(f"{day} {code} {trades[-1]['name']} SC{info['sc']} {result}{extra} "
+              f"{'' if pnl is None else f'{pnl:+,.0f}원'}")
+    for w in warn:
+        print(f"⚠ {w}")
 
     write_html(SKILL / "template.html", {
         "trades": trades, "account": args.account, "trades_file": tpath.name,

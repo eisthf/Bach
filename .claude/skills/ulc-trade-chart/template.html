@@ -32,6 +32,9 @@
 
 const DATA = __DATA__;
 const hhmm = t => iso(t).slice(11, 19);
+const md = d => `${d.slice(4,6)}/${d.slice(6)}`;
+// 여러 날에 걸친 매매(그날 청산되지 않아 다음 거래일까지 따라간 경우)는 날짜도 붙인다.
+const when = (t, multi) => multi ? `${iso(t).slice(5, 10).replace("-", "/")} ${hhmm(t)}` : hhmm(t);
 const resultTag = t => `<span class="tag ${t.result === "미청산" ? "open" : t.pnl > 0 ? "win" : "loss"}">${t.result}</span>`;
 
 const T = DATA.trades;
@@ -72,11 +75,11 @@ T.forEach((t, i) => {
     </div>
     ${t.notes.length ? `<ul class="notes">${t.notes.map(n => `<li>⚠ ${n}</li>`).join("")}</ul>` : ""}
     <div class="charts">
-      <div class="chartbox"><div class="cap">3분봉 · ${dayStr(t.day)} 정규장 (왼쪽은 전일) <button class="tog" id="b${i}">전체 보기</button></div><div class="chart" id="m${i}"></div></div>
+      <div class="chartbox"><div class="cap"><span>3분봉 · ${dayStr(t.day)} 정규장 (왼쪽은 전일)</span><span class="days" id="days${i}"><button class="tog" id="b${i}">전체 보기</button></span></div><div class="chart" id="m${i}"></div></div>
       <div class="chartbox"><div class="cap">일봉 · 매매일 표시 (마우스 휠·드래그로 이동)</div><div class="chart" id="d${i}"></div></div>
     </div>
     <div class="tablewrap orders"><table><thead><tr><th>시각</th><th>구분</th><th>사유</th><th>수량</th><th>체결 평균가</th><th>금액</th></tr></thead><tbody>
-      ${t.orders.map(o => `<tr><td>${hhmm(o.time)}</td><td class="${o.side === "buy" ? "pos" : "neg"}">${o.side === "buy" ? "매수" : "매도"}</td>
+      ${t.orders.map(o => `<tr><td>${when(o.time, t.day_starts.length > 1)}</td><td class="${o.side === "buy" ? "pos" : "neg"}">${o.side === "buy" ? "매수" : "매도"}</td>
         <td>${o.label}</td><td>${o.qty.toLocaleString()}</td><td>${o.price.toLocaleString("ko-KR", { maximumFractionDigits: 1 })}</td><td>${fmt(o.amt)}</td></tr>`).join("")}
     </tbody></table></div>`;
   addBackButton(card, i);
@@ -89,25 +92,34 @@ T.forEach((t, i) => {
   M.series.setMarkers([...orderMarkers(m3, t.orders, g => `${g.side === "buy" ? "B" : "S"} ${g.labels.join("·")}`),
     ...handoffMarkers(M.series, m3, t.handoffs)].sort((a, b) => a.time - b.time));
   addFillCrosses(M.series, m3, t.fills);
-  const lastIdx = Math.max(...[...t.orders, ...t.handoffs].map(o => m3.findIndex(b => b.time === barAt(m3, o.time))));
-  let full = false;
-  M.fit = () => M.chart.timeScale().setVisibleLogicalRange(full
-    ? { from: t.prev_n - 2, to: m3.length + 1 }
-    : { from: t.prev_n - 2, to: Math.min(m3.length + 1, Math.max(lastIdx + 20, t.prev_n + 40)) });
-  const btn = document.getElementById("b" + i);
-  btn.onclick = () => { full = !full; btn.textContent = full ? "매매 구간 확대" : "전체 보기"; M.fit(); };
+  // 첫날: 처음엔 매매 구간 확대, [전체 보기]로 하루 전체. 다음 날들은 날짜 버튼으로 그날 전체.
+  const dayEnd = k => k + 1 < t.day_starts.length ? t.day_starts[k + 1].idx : m3.length;
+  const lastIdx = Math.max(...[...t.orders, ...t.handoffs].map(o => m3.findIndex(b => b.time === barAt(m3, o.time)))
+    .filter(x => x < dayEnd(0)));
+  let full = false, sel = 0;
+  M.fit = () => {
+    const s = t.day_starts[sel].idx, e = dayEnd(sel);
+    M.chart.timeScale().setVisibleLogicalRange(sel > 0 || full
+      ? { from: s - 2, to: e + 1 }
+      : { from: s - 2, to: Math.min(e + 1, Math.max(lastIdx + 20, s + 40)) });
+  };
+  const btn = document.getElementById("b" + i), days = document.getElementById("days" + i);
+  btn.onclick = () => { sel = 0; full = !full; btn.textContent = full ? "매매 구간 확대" : "전체 보기"; M.fit(); };
+  t.day_starts.slice(1).forEach((s, k) => {
+    const b = document.createElement("button");
+    b.className = "tog"; b.textContent = md(s.day);
+    b.onclick = () => { sel = k + 1; M.fit(); };
+    days.appendChild(b);
+  });
 
-  // 일봉: 매매일 봉에 매수 평단·매도 평균 마커 + 체결 ✕
   const rows = DATA.daily[t.code];
   const D = makeChart(document.getElementById("d" + i), rows, false);
+  // 일봉: 날짜별 B/S(수량·평균가) + 체결 ✕
   const idx = rows.findIndex(b => ymdOf(b.time) === t.day);
   if (idx >= 0) {
-    const tm = rows[idx].time;
-    const mk = [{ time: tm, position: "belowBar", shape: "arrowUp", color: TRADE_COLORS.buy, text: `B ${t.buy_q}주 · ${fmt(avg)}` }];
-    if (t.sell_q) mk.push({ time: tm, position: "aboveBar", shape: "arrowDown", color: TRADE_COLORS.sell,
-      text: `S ${t.sell_q}주 · ${fmt(t.sell_a / t.sell_q)}` });
+    const mk = orderMarkers(rows, t.orders, g => `${g.side === "buy" ? "B" : "S"} ${g.qty}주 · ${fmt(g.amt / g.qty)}`);
     D.series.setMarkers([...mk, ...handoffMarkers(D.series, rows, t.handoffs)].sort((a, b) => a.time - b.time));
-    addFillCrosses(D.series, rows, t.fills, () => tm);
+    addFillCrosses(D.series, rows, t.fills);
     D.fit = () => D.chart.timeScale().setVisibleLogicalRange({ from: Math.max(-1, idx - 35), to: Math.max(rows.length + 6, idx + 15) });
   }
   M.fit(); D.fit();

@@ -25,8 +25,8 @@ from pathlib import Path
 
 SKILL = Path(__file__).resolve().parent
 sys.path.insert(0, str(SKILL.parent / "_trade_chart_common"))
-from common import (ROOT, Bars, chart_epoch, fill_points, group_orders, iter_events, load_fills,  # noqa: E402
-                    load_trade_events, ohlcv, regular, trim_daily, write_html, ymd)
+from common import (ROOT, Bars, chart_epoch, day_fills, fill_points, group_orders, iter_events,  # noqa: E402
+                    load_fills, load_trade_events, ohlcv, regular, trim_daily, write_html, ymd)
 
 WARMUP = 60  # 3분봉 MA60 예열
 
@@ -136,21 +136,26 @@ def short_reason(reason: str) -> str:
     return reason.split(":")[0].split(" (")[0]
 
 
-def campaign_fills(c: dict, fills: list, ulc_days: set, next_reg: int | None) -> list:
-    """이 매매 건에 속한 체결(시간순)."""
+def campaign_fills(c: dict, fills: list, ulc_days: set, next_reg: int | None,
+                   days: list, bars, warn: list) -> list:
+    """이 매매 건에 속한 체결(시간순). 거래일을 차례로 보며 Bach 체결 기록 + 계좌 주문체결내역
+    (서버가 꺼져 있을 때 HTS로 낸 주문 등)을 모으고, 보유가 0이 되면 멈춘다."""
     if c["engine_from"] is None:
         return []
     start = c["engine_from"] - 120  # 매수 메시지가 체결 직전·직후로 찍힐 수 있다
     out, net = [], 0
-    for f in sorted((f for f in fills if f["code"] == c["code"]), key=lambda f: f["time"]):
-        if f["time"] < start or (next_reg and f["time"] >= next_reg):
+    for d in days:
+        if d < ymd(start) or (next_reg and d > ymd(next_reg)):
             continue
-        if (c["code"], ymd(f["time"])) in ulc_days:
+        if (c["code"], d) in ulc_days:
             break
-        out.append(f)
-        net += f["qty"] if f["side"] == "buy" else -f["qty"]
-        if net <= 0:
-            break
+        for f in day_fills(fills, c["code"], d, bars, warn):
+            if f["time"] < start or (next_reg and f["time"] >= next_reg):
+                continue
+            out.append(f)
+            net += f["qty"] if f["side"] == "buy" else -f["qty"]
+            if net <= 0:
+                return out
     return out
 
 
@@ -163,14 +168,28 @@ def main():
     since = (args.since or "0000-00-00").replace("-", "")
     until = (args.until or "9999-99-99").replace("-", "")
 
+    bars = Bars(args.account, args.refresh)
+    warn: list = []
+    daily_cache: dict = {}
+
+    def first_day_of(c: dict) -> str:
+        d = ymd(c["reg"])
+        return min(d, c["base"]["date"]) if c["base"] else d
+
     picked = []
     for i, c in enumerate(camps):
         if not since <= ymd(c["reg"]) <= until or (args.code and c["code"] not in args.code):
             continue
         if args.kind and c["kind"] != args.kind:
             continue
+        if c["engine_from"] is None:
+            continue
         nxt = next((d["reg"] for d in camps[i + 1:] if d["code"] == c["code"]), None)
-        cf = campaign_fills(c, fills, ulc_days, nxt)
+        key = (c["code"], first_day_of(c))
+        if key not in daily_cache:
+            daily_cache[key] = bars.daily(*key)
+        days = [b["_date"] for b in daily_cache[key]]
+        cf = campaign_fills(c, fills, ulc_days, nxt, days, bars, warn)
         if cf:
             picked.append((c, cf))
     if not picked:
@@ -190,14 +209,11 @@ def main():
                 c["handoff"], c["handoff_reason"] = e["time"], e.get("reason", "")
                 break
 
-    bars = Bars(args.account, args.refresh)
     trades, daily_out = [], {}
     for c, cf in picked:
         code = c["code"]
-        first_day = ymd(min(c["reg"], cf[0]["time"]))
-        if c["base"]:
-            first_day = min(first_day, c["base"]["date"])
-        rows = bars.daily(code, first_day)
+        first_day = first_day_of(c)
+        rows = daily_cache[(code, first_day)]
 
         # 사유: 주문 태그 reason 우선. 태그가 없으면 엔진 구간(인계 전) 주문은 엔진 메시지 순서, 그 뒤는 '수동'
         blabels, slabels = iter(c["buys"]), iter(c["sells"])
@@ -208,6 +224,8 @@ def main():
             logged = next(blabels if g["side"] == "buy" else slabels, None) if engine else None
             if tag and engine and tag.get("reason"):
                 label = short_reason(tag["reason"])
+            elif tag and not engine and tag.get("reason"):
+                label = tag["reason"]                    # 수동 매수·수동(영웅문S#) 등
             else:
                 label = logged if engine and logged else "수동"
             if tag and engine:
@@ -238,6 +256,10 @@ def main():
             handoffs.append({"time": c["handoff"], "label": label})
             notes.append(f"{datetime.fromtimestamp(c['handoff'], timezone.utc):%m-%d %H:%M} 수동 전환({label}) — "
                          f"이후 체결은 '수동', 차트의 옅은 배경")
+        account_n = len({f["order_no"] for f in cf if f.get("source") == "account"})
+        if account_n:
+            notes.append(f"Bach 체결 기록에 없던 주문 {account_n}건을 계좌 주문체결내역에서 채움"
+                         f"(서버가 꺼져 있을 때 HTS 등으로 낸 주문 — 시각은 주문 시각)")
         if hold > 0 and last:
             notes.append(f"{hold}주 보유 중 · 평가는 최근 일봉 종가 {last['close']:,.0f}({last['_date'][4:6]}/{last['_date'][6:]}) 기준")
 
@@ -265,6 +287,8 @@ def main():
         extra = "" if unreal is None else f" 평가 {unreal:+,.0f}원"
         print(f"{ymd(c['reg'])} {code} {trades[-1]['name']} {tag} {status} 실현 {pnl:+,.0f}원{extra}")
 
+    for w in warn:
+        print(f"⚠ {w}")
     write_html(SKILL / "template.html", {
         "trades": trades, "daily": daily_out, "account": args.account, "trades_file": tpath.name,
     }, args.out)

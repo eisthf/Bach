@@ -168,6 +168,14 @@ class Bars:
             self.token(), code, mock=self.cfg.kiwoom_mock, today=asof, lookback_extra=lookback))
         return [b for b in rows if b.get("volume", 0) > 0]
 
+    def account_orders(self, code: str, day: str) -> list:
+        """그날 그 종목의 계좌 주문체결내역(kt00007). 지난 날은 캐시, 오늘은 늘 새로 조회."""
+        name = f"{code}_{day}_orders.json"
+        if day >= datetime.now().strftime("%Y%m%d"):
+            return self.kw.fetch_order_history(self.token(), day, code, mock=self.cfg.kiwoom_mock)
+        return self._cached(name, lambda: self.kw.fetch_order_history(
+            self.token(), day, code, mock=self.cfg.kiwoom_mock))
+
     def name(self, code: str) -> str:
         return self._cached(f"{code}_name.json", lambda: self.kw.fetch_stock_name(
             self.token(), code, mock=self.cfg.kiwoom_mock)) or code
@@ -175,6 +183,54 @@ class Bars:
     def prev_day(self, daily: list, day: str) -> str | None:
         prev = [b["_date"] for b in daily if b["_date"] < day]
         return prev[-1] if prev else None
+
+
+def day_fills(fills: list, code: str, day: str, bars: "Bars | None", warn: list | None = None) -> list:
+    """그날 그 종목 체결: Bach 체결 기록(trades.json) + 계좌 주문체결내역(kt00007)에만 있는 주문.
+
+    Bach 는 서버가 켜져 있을 때 받은 체결 통지만 적는다. 서버가 꺼져 있을 때 HTS(영웅문)로 낸 주문,
+    재시작 중에 놓친 체결은 계좌 내역에서 채운다(source="account", time_source="order" — 시각은 주문
+    시각, 가격은 주문별 체결 단가(원 미만 절사)). HTS·모바일 주문은 strategy="manual",
+    reason="수동(경로)"로 표시한다. 계좌 조회가 안 되면 Bach 기록만 돌려주고 warn 에 사유를 남긴다.
+    """
+    mine = [dict(f) for f in fills if f["code"] == code and ymd(f["time"]) == day]
+    if bars is None:
+        return mine
+    try:
+        orders = bars.account_orders(code, day)
+    except Exception as exc:  # noqa: BLE001 — 계좌 조회 실패는 Bach 기록만으로 진행
+        if warn is not None:
+            warn.append(f"{day} {code} 계좌 체결내역 조회 실패: {exc}")
+        return mine
+    recorded = {}
+    for f in mine:
+        k = order_key(f)
+        q, a = recorded.get(k, (0, 0.0))
+        recorded[k] = (q + f["qty"], a + f["qty"] * f["price"])
+    by_order = {o["order_no"]: o for o in orders}
+    for f in mine:   # Bach 가 받았지만 HTS·모바일로 낸 주문(예: 손절 뒤 잔량 수동 매도)
+        o = by_order.get(order_key(f))
+        if o and o["channel"] != "REST API" and not f.get("strategy"):
+            f.update(strategy="manual", reason=f"수동({o['channel']})", channel=o["channel"])
+    for o in orders:
+        q, a = recorded.get(o["order_no"], (0, 0.0))
+        missing = o["qty"] - q
+        if missing <= 0:
+            continue
+        h, m, sec = (int(x) for x in (o["time"] or "00:00:00").split(":"))
+        t = int(datetime(int(day[:4]), int(day[4:6]), int(day[6:]), h, m, sec, tzinfo=timezone.utc).timestamp())
+        price = (o["price"] * o["qty"] - a) / missing if q else o["price"]
+        row = {"code": code, "side": o["side"], "qty": missing, "price": price,
+               "id": f"{day[:4]}-{day[4:6]}-{day[6:]}:{o['order_no']}:account", "time": t,
+               "time_source": "order", "order_no": o["order_no"], "source": "account", "channel": o["channel"]}
+        if o["channel"] != "REST API":
+            row.update(strategy="manual", reason=f"수동({o['channel']})")
+        mine.append(row)
+    return sorted(mine, key=lambda f: f["time"])
+
+
+def net_qty(fills: list) -> int:
+    return sum(f["qty"] if f["side"] == "buy" else -f["qty"] for f in fills)
 
 
 def trim_daily(rows: list, first_day: str, before: int = 95) -> list:
