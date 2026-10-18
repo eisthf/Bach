@@ -259,3 +259,12 @@ def test_candle_handoff_is_recorded_with_campaign():
     eng.on_handoff = broken
     eng.hand_off("다시")          # 기록 실패가 인계를 막지 않는다
     assert eng.exit_reason == "다시"
+
+
+def test_describe_exit_settings():
+    from app.models import AutoConfig
+    from app.strategy.ulc import describe_exit, exit_settings
+
+    assert describe_exit(exit_settings(AutoConfig())) == "손절 −5% · 익절 +5% · 트레일링 −2%·보장 +15%"
+    cfg = AutoConfig(ulc_sl=0.03, ulc_manual_on_stop=True, ulc_trailing=False)
+    assert describe_exit(exit_settings(cfg)) == "손절 −3%(자동매도 없이 수동 인계) · 익절 +5% · 트레일링 끔"

@@ -101,7 +101,7 @@ cd backend && uv run python backtest.py 079650:20260903 --state real     --varia
   재시작 시 `manager.restore()`로 복원.
   체결 기록은 `state.{계좌}.trades.json`(`trade_history.py`, 개수 제한 없음). 주문을 낸 쪽이
   `Hub.tag_order`로 주문번호에 전략·사유·맥락(`strategy` ulc/candle/zone/manual, `reason` "1차"·"익절 절반"·
-  청산 사유, `ctx` X·Z·시나리오 / 기준 캔들·매입 구간·익절 %)을 붙여 체결 행에 함께 남긴다 — 이벤트 로그
+  청산 사유, `ctx` X·Z·시나리오·청산 설정(`exit`) / 기준 캔들·매입 구간·익절 %)을 붙여 체결 행에 함께 남긴다 — 이벤트 로그
   (`logs/events.log`, 10MB×11개 넘겨쓰기)는 결국 지워지므로 매매 되짚기(차트 스킬)의 근거는 이쪽이다.
   엔진은 주문 직전에 `order_reason`을 적어 두고(콜백 시그니처는 그대로), 체결 통지가 주문 응답보다
   먼저 와도 (거래일, 주문번호)로 소급해 붙는다.
@@ -109,6 +109,8 @@ cd backend && uv run python backtest.py 079650:20260903 --state real     --varia
   지금은 `kind="handoff"`(자동매매 → 사람 인계): ULC는 `_log_transition`의 `AUTO_TRADING → MANUAL_TRADING`
   전부(원인 코드, 보유 여부는 읽는 쪽이 체결로 판단), 대금 양봉·구간은 엔진 `hand_off`(`on_handoff` 콜백,
   `ctx.created`로 매매 건 연결).
+  `자동매매 시작` 로그에도 그 종목의 설정 전체(`config` 필드)와 청산 설정 요약(`describe_exit`)을 남긴다 —
+  종목별 설정은 종목을 지우면 `state.json`에서도 사라지므로, 손절이 왜 그 가격에서 났는지 되짚는 근거다.
 - **자동매매 전략(ULC)**: `X`=전일 **마지막 거래가**(키움 일봉 종가 — 시간외 KRX·NXT
   포함이라 시간외 상한가 종목은 공식 기준가와 다르다), `Z`=당일 시가. '상한가 도달' 청산만은
   X가 아니라 **실제 상한가**(ka10001 `upl_pric`, 공식 기준가=전일 정규장 종가 기준)로 판단. 진입필터 →

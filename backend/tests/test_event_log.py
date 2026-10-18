@@ -165,3 +165,20 @@ def test_test_run_never_writes_production_event_log():
              if isinstance(h, AsyncEventHandler)]
     assert paths, "app.main 이 이벤트 로그를 설정하지 않았다"
     assert all(production not in p.parents for p in paths)
+
+
+async def test_auto_start_records_exit_settings(mock_hub, event_file, monkeypatch):
+    """종목별 청산 설정은 종목을 지우면 저장 파일에서도 사라진다 — 시작 로그에 남겨 나중에 되짚는다."""
+    hub, _, clock = mock_hub
+    stock = hub.add_stock("048770")
+    hub.push(stock.code)
+    stock.config = stock.config.model_copy(update={"ulc_sl": 0.03, "ulc_stop_requires_below_prev_close": True})
+    monkeypatch.setattr(hub.data, "prev_close", lambda code: 10000)
+    monkeypatch.setattr(hub.data, "day_open", lambda code: 10200)
+    clock.open()
+    await hub.apply_market_open()
+    await stock.setup_task
+    started = next(r for r in events(event_file) if r.get("text", "").startswith("[048770] 자동매매 시작"))
+    assert started["text"].startswith("[048770] 자동매매 시작 (X=10,000, Z=10,200) — 손절 −3%(전일 종가 이하일 때만)")
+    assert started["config"]["ulc_sl"] == 0.03 and started["config"]["ulc_tp"] == 0.05
+    assert (started["x"], started["z"], started["scenario"]) == (10000, 10200, 1)

@@ -34,6 +34,32 @@ class Phase(str, Enum):
     DONE = "DONE"            # 청산 완료
 
 
+# 매매를 되짚을 때 필요한 청산 설정. 종목마다 다를 수 있어 자동매매 시작 로그와 주문 태그에 남긴다.
+EXIT_KEYS = ("ulc_tp", "ulc_sl", "ulc_manual_on_stop", "ulc_stop_requires_below_prev_close",
+             "ulc_trailing", "ulc_t", "ulc_g")
+
+
+def exit_settings(config) -> dict:
+    return {key: getattr(config, key) for key in EXIT_KEYS}
+
+
+def describe_exit(s: dict) -> str:
+    """청산 설정 한 줄: "손절 −3%(전일 종가 이하일 때만) · 익절 +5% · 트레일링 −2%·보장 +15%"."""
+    def pct(v):
+        return f"{v * 100:g}%"
+    stop = f"손절 −{pct(s['ulc_sl'])}"
+    if s.get("ulc_stop_requires_below_prev_close"):
+        stop += "(전일 종가 이하일 때만)"
+    if s.get("ulc_manual_on_stop"):
+        stop += "(자동매도 없이 수동 인계)"
+    parts = [stop, f"익절 +{pct(s['ulc_tp'])}"]
+    if s.get("ulc_trailing"):
+        parts.append(f"트레일링 −{pct(s['ulc_t'])}·보장 +{pct(s['ulc_g'])}")
+    else:
+        parts.append("트레일링 끔")
+    return " · ".join(parts)
+
+
 @dataclass
 class BuyLeg:
     target: float            # 매수 목표가

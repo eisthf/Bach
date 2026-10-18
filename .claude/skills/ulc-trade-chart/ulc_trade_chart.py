@@ -46,7 +46,7 @@ def parse_args():
 
 def scan_log(account: str) -> dict:
     """(code, YYYYMMDD) → 엔진 메시지 요약."""
-    msgs = defaultdict(lambda: {"buy": [], "sell": [], "sc": None, "x": None, "z": None, "handoffs": []})
+    msgs = defaultdict(lambda: {"buy": [], "sell": [], "sc": None, "x": None, "z": None, "handoffs": [], "exit": None})
     for e in iter_events(account):
         if (e.get("event") == "state_transition" and e.get("from_state") == "AUTO_TRADING"
                 and e.get("to_state") == "MANUAL_TRADING" and e.get("code")):
@@ -65,6 +65,8 @@ def scan_log(account: str) -> dict:
             d["sc"] = int(mm.group(1))
         elif mm := re.match(r"자동매매 시작 \(X=([\d,]+), Z=([\d,]+)\)", body):
             d["x"], d["z"] = (float(v.replace(",", "")) for v in mm.groups())
+            if e.get("config"):   # 2026-10-18 이후 로그: 그 종목의 설정 전체
+                d["exit"] = e["config"]
         elif mm := re.match(r"(\d)차 매수", body):
             d["buy"].append(f"{mm.group(1)}차")
         elif body.startswith("익절"):
@@ -133,6 +135,13 @@ def main():
         raise SystemExit("조건에 맞는 상한가(ULC) 매매가 없습니다.")
 
     bars = Bars(args.account, args.refresh)
+    from app.models import AutoConfig                          # Bars 가 backend 를 경로에 넣은 뒤
+    from app.strategy.ulc import EXIT_KEYS, describe_exit
+
+    def exit_settings_of(cfg: dict) -> dict:
+        """로그·태그의 설정(전체 또는 청산 키만) → 청산 설정. 빠진 키는 기본값."""
+        base = AutoConfig().model_dump()
+        return {k: cfg.get(k, base[k]) for k in EXIT_KEYS}
     codes = sorted({c for c, _ in cases})
     first_of = {c: min(d for cc, d in cases if cc == c) for c in codes}
     daily = {c: bars.daily(c, first_of[c]) for c in codes}
@@ -156,6 +165,7 @@ def main():
                 info["sc"] = info["sc"] or ctx.get("scenario")
                 info["x"] = info["x"] if info["x"] is not None else ctx.get("x")
                 info["z"] = info["z"] if info["z"] is not None else ctx.get("z")
+                info["exit"] = ctx.get("exit") or info["exit"]
             orders.append({**g, "label": label})
         side_sum = lambda side, k: sum(o[k] for o in orders if o["side"] == side)
         buy_q, sell_q = side_sum("buy", "qty"), side_sum("sell", "qty")
@@ -176,6 +186,7 @@ def main():
         trades.append({
             "code": code, "name": bars.name(code), "day": day,
             "sc": info["sc"], "x": info["x"], "z": info["z"],
+            "exit": describe_exit(exit_settings_of(info["exit"])) if info["exit"] else None,
             "orders": orders, "buy_q": buy_q, "sell_q": sell_q, "buy_a": buy_a, "sell_a": sell_a,
             "pnl": (sell_a - buy_a) if closed else None, "result": result, "notes": notes,
             "min3": ohlcv(p3 + m3), "prev_n": len(p3), "fills": fill_points(day_fills),

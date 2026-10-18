@@ -66,6 +66,7 @@ T.forEach((t, i) => {
   card.innerHTML = `
     <div class="head"><h2>${t.name} <span class="meta">${t.code}</span></h2>
       <span class="meta">${dayStr(t.day)} · SC${t.sc ?? "?"} · X(전일 종가) ${fmt(t.x)} · Z(시가) ${fmt(t.z)} · 평단 ${fmt(avg)}</span>
+      <span class="meta" title="그 매매를 시작할 때의 종목 설정">${t.exit ? "설정: " + t.exit : "설정: 기록 없음(2026-10-18 이전)"}</span>
       ${resultTag(t)}
       <span class="${cls(t.pnl)}"><b>${t.pnl == null ? "손익 미산정" : signed(t.pnl) + "원 (" + pct(t.pnl / t.buy_a * 100) + ")"}</b></span>
     </div>

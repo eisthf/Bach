@@ -35,7 +35,7 @@ from .models import (
 )
 from .providers import build_provider
 from .state_machine import StateMachine
-from .strategy.ulc import Phase, UlcEngine
+from .strategy.ulc import Phase, UlcEngine, describe_exit, exit_settings
 from .timing import order_trace, durations
 
 
@@ -631,7 +631,7 @@ class Hub:
         before_shares = eng.shares
 
         def ulc_ctx() -> dict:
-            return {"scenario": eng.scenario, "x": eng.x, "z": eng.z}
+            return {"scenario": eng.scenario, "x": eng.x, "z": eng.z, "exit": exit_settings(eng.config)}
 
         async def buy_fn(amount: int) -> float:
             trace = {"decision": time.perf_counter_ns(), "tick_received": eng.decision_tick_received_ns,
@@ -1003,7 +1003,11 @@ class Hub:
             **durations({"open_received": stock.open_received_ns,
                          "setup_ready": stock.setup_ready_ns}),
         )
-        self._log(f"[{stock.code}] 자동매매 시작 (X={x:,.0f}, Z={z:,.0f})")
+        # 청산 설정은 종목마다 다를 수 있고 종목을 지우면 저장 파일에서도 사라진다 — 시작 시점 값을 남긴다.
+        settings = exit_settings(eng.config)
+        self._log(f"[{stock.code}] 자동매매 시작 (X={x:,.0f}, Z={z:,.0f}) — {describe_exit(settings)}",
+                  event="message", code=stock.code, scenario=eng.scenario, x=x, z=z,
+                  config=eng.config.model_dump())
         return True
 
     # -- 라이프사이클 -----------------------------------------------------
