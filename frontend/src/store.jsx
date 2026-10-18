@@ -211,7 +211,7 @@ export function StoreProvider({ children }) {
     },
     addManual: (acc, code, name) => api.addManualTrade(acc, code, name),
     removeManual: (acc, code) => api.removeManualTrade(acc, code),
-    setManualStop: (acc, code, enabled, pct) => api.setManualStop(acc, code, enabled, pct),
+    setManualExits: (acc, code, stop, takeProfit) => api.setManualExits(acc, code, stop, takeProfit),
     clearManualNotice: (acc, code) => api.clearManualNotice(acc, code),
     buy: (acc, code, amount) => {
       if (dangerRef.current[acc] &&

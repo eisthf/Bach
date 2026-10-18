@@ -265,8 +265,24 @@ input:focus { outline: none; border-color: var(--accent); }
   border: 1px solid var(--border); border-radius: 8px; padding: 12px; background: #fcfcfd;
 }
 .manual-panel.disabled, .auto-form.locked { opacity: 0.65; }
-/* 수동 매매 카드: 주문 패널 한 칸 */
-.panels.manual-panels { grid-template-columns: 1fr; max-width: 640px; }
+/* 수동 매매 카드: 주문 패널 | 자동 손절·익절 */
+.panels.manual-panels { grid-template-columns: 1fr 1fr; }
+.manual-exits { border: 1px solid var(--border); border-radius: 8px; padding: 12px; background: #fcfcfd; }
+.exit-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.exit-row .checkfield { min-width: 58px; font-weight: 700; }
+.exit-row select { padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px; }
+.exit-input { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); }
+.exit-input input { width: 90px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px; }
+.exit-actions { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.exit-actions .ghost { border: 1px solid var(--border); background: var(--card); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+.exit-dirty { font-size: 12px; color: #e65100; }
+/* 차트 두 점 측정 */
+.chart-measure { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 2px 0 6px; font-size: 12px; }
+.measure-btn { border: 1px solid var(--border); background: var(--card); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+.measure-btn.on { border-color: #7b1fa2; color: #7b1fa2; font-weight: 700; }
+.measure-result { color: var(--muted); display: inline-flex; gap: 8px; align-items: center; }
+.measure-result.done { color: #7b1fa2; font-weight: 700; }
+.measure-result .link-btn { border: none; background: none; color: var(--accent); cursor: pointer; font-size: 12px; padding: 0; }
 .origin-badge {
   font-size: 11px; font-weight: 600; color: var(--muted); border: 1px solid var(--border);
   border-radius: 999px; padding: 1px 8px;
@@ -598,6 +614,7 @@ input:focus { outline: none; border-color: var(--accent); }
   .save-btn { width: 100%; }
   .auto-actions { flex-wrap: wrap; }
   .manual-stop-row { flex-wrap: wrap; }
+  .panels.manual-panels { grid-template-columns: 1fr; }
   .manual-stop-row .checkfield { flex-basis: 100%; }
   .manual-stop-row .save-btn { width: auto; }
   .recovery-notice { margin: 8px 0; padding: 10px; }

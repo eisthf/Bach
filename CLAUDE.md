@@ -63,7 +63,7 @@ cd backend && uv run python backtest.py 079650:20260903 --state real     --varia
 | `strategy/ulc.py` | 상한가 따라잡기(ULC) 자동매매 엔진. 틱 기반 진입필터·분할매수·익절/손절/트레일링 |
 | `strategy/big_candle_trade.py` | 대금 양봉·구간 매매 엔진. 매입 구간(기준 캔들 몸통에서 자동 / `kind="zone"`이면 수동 지정)에서 여러 거래일에 걸친 2분할 매수·절반 익절+트레일링·구간 이탈 손절. 틱/분 감시. 상태 직렬화 |
 | `big_candle_trade.py` | 계좌별 대금 양봉·구간 매매 관리자(한 목록, `kind`로 구분). [상한가 매매] 목록과 분리된 목록·틱 루프·세션별 일봉 맥락(전일 종가·경과 거래일·기준 캔들 확정)·영속화(`state.{계좌}.candle.json`)·재시작 잔고 대조·수동 인계 |
-| `manual_trade.py` | 계좌별 수동 매매 관리자. 어느 자동매매에서든 [수동 전환]한 종목 + 직접 추가한 종목. 엔진 없음(보유·평단=계좌 잔고), 틱 루프·평단 대비 자동 손절·영속화(`state.{계좌}.manual.json`) |
+| `manual_trade.py` | 계좌별 수동 매매 관리자. 어느 자동매매에서든 [수동 전환]한 종목 + 직접 추가한 종목. 엔진 없음(보유·평단=계좌 잔고), 틱 루프·자동 손절·익절(`ExitRule`: 평단 대비 % 또는 가격 라인 — 손절 라인은 '미만', 나머지는 경계 포함, 발동 시 전량 시장가 1회 후 둘 다 해제)·영속화(`state.{계좌}.manual.json`) |
 | `backtest.py` | ULC 백테스트. 1분봉 → 합성 틱으로 운영 엔진을 재생(CLI는 `backend/backtest.py`) |
 | `providers/base.py` | `DataProvider` / `Broker` ABC. `VALID_INTERVALS=(3,5,10,30,60,1440)`, `DAY_INTERVAL=1440` |
 | `providers/mock.py` | 자격증명 없는 합성 시뮬레이터(시드 기반 랜덤워크 봉 + 틱 + 즉시체결 브로커) |
@@ -80,6 +80,7 @@ cd backend && uv run python backtest.py 079650:20260903 --state real     --varia
 | `indicators.js` | SMA 계산(전체 재계산 `sma`, 틱 갱신용 O(period) `lastSma`) |
 | `router.js` | 최소 해시 라우터(`#/`, `#/upper-limit`, `#/big-candle`, `#/candle-trade`, `#/zone-trade`, `#/manual-trade`). react-router 의존 없음 |
 | `App.jsx` | 라우팅 + 공통 헤더, 계좌 컬럼 레이아웃, 계좌 필터 세그먼트 |
+| `components/ManualExits.jsx` | 수동 매매 자동 손절·익절 폼 + 차트 선(평단·손절·익절). 카드가 초안을 들고, 선을 끌면 가격 라인 방식으로 바뀜(저장은 폼). Chart의 `measurable`은 두 점 변화율 측정 |
 | `components/PageNav.jsx` | 페이지 탭을 두 묶음으로 — 조회(상한가 종목·대금 양봉) / 매매(상한가 매매·대금 양봉 매매·구간 매매·수동 매매) |
 | `pages/` | UpperLimitPage — 상한가 종목 조회/표, BigCandlePage — 거래대금 상위 양봉 조회/표, CandleTradePage — 대금 양봉 매매, ZoneTradePage — 구간 매매(둘 다 `components/CandleTradeCard`), ManualTradePage — 수동 매매 |
 | `components/` | Chart, PriceTicker, StateButton, ManualTradePanel, AutoConfigForm, IntervalSelector, StockInput, StockPanel, MarketControls, AccountSummary, LogPanel, PageNav |

@@ -217,14 +217,11 @@ async def import_held(account: str):
     return {"added": added}
 
 
-@app.put("/api/{account}/manual-trades/{code}/stop")
-def set_manual_stop(account: str, code: str, payload: dict):
-    """평단 대비 자동 손절 {enabled, pct}."""
-    try:
-        pct = float(payload.get("pct", 5.0))
-    except (TypeError, ValueError):
-        raise HTTPException(400, "pct 숫자 필요")
-    return _manual_call(_manual(account).set_stop, code, bool(payload.get("enabled")), pct)
+@app.put("/api/{account}/manual-trades/{code}/exits")
+def set_manual_exits(account: str, code: str, payload: dict):
+    """자동 손절·익절 {stop: {enabled, mode: pct|price, pct, price}, take_profit: {...}}."""
+    return _manual_call(_manual(account).set_exits, code,
+                        payload.get("stop"), payload.get("take_profit"))
 
 
 @app.delete("/api/{account}/manual-trades/{code}/notice")

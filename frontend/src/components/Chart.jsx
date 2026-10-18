@@ -27,7 +27,9 @@ const volumePoint = (bar) => ({
 // draggableLines: [{id, price}] 마우스·터치로 위아래로 끌 수 있는 선. 같은 선을 priceLines에
 //   dragId: id 로 넘기면, 끄는 동안엔 차트 안에서만 그 선을 옮긴다(부모 재렌더·레이아웃 이동 없음).
 // onLineDrag(id, price): 놓을 때 한 번, 마지막 가격으로 호출.
-export default function Chart({ account, code, interval, tick, height = 360, sessionOnly = false, includeToday = false, extended = false, anchorDate = null, priceLines = null, onPriceClick = null, draggableLines = null, onLineDrag = null, onSessionDate }) {
+// measurable: [측정] 단추를 보인다. 켜고 두 점을 누르면 두 점을 잇는 선과 변화율·봉 수를 보여준다
+//   (화면 표시만, 저장 안 함). 세 번째 누르면 새로 잰다. 봉 단위를 바꾸면 지운다.
+export default function Chart({ account, code, interval, tick, height = 360, sessionOnly = false, includeToday = false, extended = false, anchorDate = null, priceLines = null, onPriceClick = null, draggableLines = null, onLineDrag = null, onSessionDate, measurable = false }) {
   const anchor = interval === 1440 ? anchorDate : null
   const anchorRef = useRef(anchor)
   anchorRef.current = anchor
@@ -154,6 +156,42 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
     }
   }, [])
 
+  // 두 점 측정. 점은 (봉 시각, 가격). 선은 필요할 때 만든 라인 시리즈 하나로 그린다.
+  const [measureOn, setMeasureOn] = useState(false)
+  const measureOnRef = useRef(false)
+  measureOnRef.current = measureOn
+  const [measurePts, setMeasurePts] = useState([])
+  const measureSeriesRef = useRef(null)
+  const clearMeasure = () => {
+    setMeasurePts([])
+    if (measureSeriesRef.current) {
+      chartRef.current?.removeSeries(measureSeriesRef.current)
+      measureSeriesRef.current = null
+    }
+  }
+  useEffect(() => { clearMeasure() }, [interval, code]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart) return
+    if (measurePts.length < 2) {
+      if (measureSeriesRef.current) {
+        chart.removeSeries(measureSeriesRef.current)
+        measureSeriesRef.current = null
+      }
+      return
+    }
+    if (!measureSeriesRef.current) {
+      measureSeriesRef.current = chart.addLineSeries({
+        color: '#7b1fa2', lineWidth: 2, priceLineVisible: false, lastValueVisible: false,
+        crosshairMarkerVisible: false, autoscaleInfoProvider: () => null,
+      })
+    }
+    const [a, b] = [...measurePts].sort((x, y) => x.time - y.time)
+    measureSeriesRef.current.setData(a.time === b.time
+      ? [{ time: a.time, value: b.price }]
+      : [{ time: a.time, value: a.price }, { time: b.time, value: b.price }])
+  }, [measurePts])
+
   // 가격 찍기. 콜백은 ref로 들고 구독은 한 번만 한다(부모가 매 렌더 새 함수를 넘겨도).
   const priceClickRef = useRef(onPriceClick)
   priceClickRef.current = onPriceClick
@@ -161,6 +199,13 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
     const chart = chartRef.current
     if (!chart) return undefined
     const onClick = (param) => {
+      if (measureOnRef.current) {
+        if (!param.point || param.time == null || !candleRef.current || Date.now() < suppressClickUntilRef.current) return
+        const price = candleRef.current.coordinateToPrice(param.point.y)
+        if (price === null || !(price > 0)) return
+        setMeasurePts((pts) => (pts.length >= 2 ? [] : pts).concat({ time: param.time, price }))
+        return
+      }
       const cb = priceClickRef.current
       // 선을 끌고 놓은 직후의 클릭은 '찍기'로 치지 않는다.
       if (!cb || !param.point || !candleRef.current || Date.now() < suppressClickUntilRef.current) return
@@ -414,8 +459,41 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
     })
   }, [tick, interval, refreshBars])
 
+  const timeLabel = (t) => {
+    const d = new Date(t * 1000)  // KST 벽시계를 UTC로 둔 epoch → UTC 필드가 곧 KST
+    const md = `${d.getUTCMonth() + 1}/${d.getUTCDate()}`
+    return interval === 1440 ? md : `${md} ${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`
+  }
+  const priceLabel = (p) => Math.round(p).toLocaleString('ko-KR')
+  let measureText = '두 점을 차트에서 누르세요'
+  if (measurePts.length === 1) {
+    measureText = `첫 점 ${priceLabel(measurePts[0].price)} (${timeLabel(measurePts[0].time)}) — 두 번째 점을 누르세요`
+  } else if (measurePts.length === 2) {
+    const [a, b] = [...measurePts].sort((x, y) => x.time - y.time)
+    const pct = (b.price - a.price) / a.price * 100
+    const idx = (t) => barsRef.current.findIndex((bar) => bar.time === t)
+    const n = idx(b.time) - idx(a.time)
+    measureText = `${priceLabel(a.price)} (${timeLabel(a.time)}) → ${priceLabel(b.price)} (${timeLabel(b.time)}) = `
+    measureText += `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}% · ${n >= 0 && idx(a.time) >= 0 ? `${n}봉` : ''}`
+  }
+
   return (
     <div className="chart-container">
+      {measurable && (
+        <div className="chart-measure">
+          <button type="button" className={`measure-btn${measureOn ? ' on' : ''}`} aria-pressed={measureOn}
+            onClick={() => { setMeasureOn((v) => !v); clearMeasure() }}
+            title="두 점을 눌러 변화율을 잽니다">
+            📏 측정{measureOn ? ' 끄기' : ''}
+          </button>
+          {measureOn && (
+            <span className={`measure-result${measurePts.length === 2 ? ' done' : ''}`}>
+              {measureText}
+              {measurePts.length > 0 && <button type="button" className="link-btn" onClick={clearMeasure}>지우기</button>}
+            </span>
+          )}
+        </div>
+      )}
       <div className="chart-trade-legend"><span className="up">▲ B 매수 체결</span> · <span className="down">▼ S 매도 체결</span> · 캔들 안 ✕ = 체결 건별 체결가 · 수량·평균 체결가 · 시각 미제공 건은 수신 시각 기준{interval === 1440 && <> · <span className="amount-stripe-legend">노란 띠</span> = 거래대금 150억원 이상</>}{anchor && <> · <span style={{ color: ANCHOR_COLOR }}>▼ 기준봉</span> = 조회일 {anchor}</>}</div>
       {tradeError && <div role="status">체결 표시를 갱신하지 못했습니다. 재연결 중…</div>}
       {loadState === 'loading' && <p role="status">차트 불러오는 중…</p>}
@@ -429,7 +507,7 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
       )}
     <div
       ref={containerRef}
-      className={`chart-canvas${onPriceClick ? ' picking' : ''}`}
+      className={`chart-canvas${onPriceClick || measureOn ? ' picking' : ''}`}
       style={{ width: '100%', '--chart-height': `${height}px` }}
     />
     </div>

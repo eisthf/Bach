@@ -57,8 +57,9 @@ export const api = {
   addManualTrade: (a, code, name) =>
     req(`/api/${enc(a)}/manual-trades`, { method: 'POST', body: JSON.stringify({ code, name }) }),
   removeManualTrade: (a, code) => req(`/api/${enc(a)}/manual-trades/${enc(code)}`, { method: 'DELETE' }),
-  setManualStop: (a, code, enabled, pct) =>
-    req(`/api/${enc(a)}/manual-trades/${enc(code)}/stop`, { method: 'PUT', body: JSON.stringify({ enabled, pct }) }),
+  // 자동 손절·익절. stop/take_profit = {enabled, mode: 'pct'|'price', pct, price}
+  setManualExits: (a, code, stop, take_profit) =>
+    req(`/api/${enc(a)}/manual-trades/${enc(code)}/exits`, { method: 'PUT', body: JSON.stringify({ stop, take_profit }) }),
   clearManualNotice: (a, code) => req(`/api/${enc(a)}/manual-trades/${enc(code)}/notice`, { method: 'DELETE' }),
   importHeld: (a) => req(`/api/${enc(a)}/manual-trades/import-held`, { method: 'POST' }),
 

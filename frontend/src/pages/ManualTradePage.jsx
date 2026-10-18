@@ -2,7 +2,8 @@
 // 어느 자동매매([상한가 매매] · 대금 양봉 매매 · 구간 매매)에서든 [수동 전환]한 종목이 여기로 모이고,
 // 아무 종목이나 추가해 처음부터 직접 사고팔 수도 있다. 엔진이 없으므로 보유·평단은 계좌 잔고가 기준이다.
 //   전환은 되돌리지 않는다 — 다시 자동매매하려면 보유 0에서 지우고 해당 화면에 새로 추가
-//   평단 대비 자동 손절(전량 시장가, 주문 전송 후 자동 해제)은 종목별로 켠다
+//   자동 손절·익절(평단 대비 % 또는 가격 라인, 전량 시장가, 주문 전송 후 둘 다 해제)은 종목별로 켠다.
+//   차트에 평단·손절·익절 선을 그리고, 손절·익절 선은 끌어서 옮긴다. [측정]으로 두 점의 변화율을 본다
 //   재시작·[보유 종목 가져오기]: 계좌 보유 중 어느 목록에도 없는 종목도 여기로 들어온다
 import React, { useMemo, useState } from 'react'
 import { useStore } from '../store'
@@ -10,6 +11,8 @@ import Chart from '../components/Chart'
 import IntervalSelector from '../components/IntervalSelector'
 import PriceTicker from '../components/PriceTicker'
 import ManualTradePanel from '../components/ManualTradePanel'
+import ManualExits, { useExitDraft, useExitLines } from '../components/ManualExits'
+import { roundToTick } from '../candleZone'
 import { useHiddenCards } from '../components/TradeChipBar'
 import AccountViewFilter, { useAccountView } from '../components/AccountViewFilter'
 
@@ -164,6 +167,11 @@ function ManualTradeCard({ account, item }) {
   const [interval, setInterval] = useState(3)
   const tick = (ticks[account.id] || {})[item.code]
   const verified = item.position_verified !== false
+  const exitDraft = useExitDraft(item)
+  const avg = verified ? Number(item.position?.avg_price || 0) : 0
+  const { lines, drag } = useExitLines(exitDraft.draft, avg)
+  // 선을 끌면 그 가격(호가 단위)의 '가격 라인' 방식으로 바꾼다. 저장은 폼에서.
+  const onLineDrag = (side, p) => exitDraft.update(side, { mode: 'price', price: roundToTick(p), enabled: true })
 
   const remove = async () => {
     if (!window.confirm(`${item.code} 를 수동 매매 목록에서 지울까요? (계좌 보유가 0일 때만 지워집니다)`)) return
@@ -204,10 +212,13 @@ function ManualTradeCard({ account, item }) {
       <div className="chart-toolbar">
         <IntervalSelector value={interval} onChange={setInterval} />
       </div>
-      <Chart account={account.id} code={item.code} interval={interval} tick={tick} height={300} />
+      <Chart account={account.id} code={item.code} interval={interval} tick={tick} height={300}
+        priceLines={lines} draggableLines={drag} onLineDrag={onLineDrag} measurable />
       <div className="panels manual-panels">
         <ManualTradePanel account={account.id} code={item.code} position={item.position}
-          verified={verified} tick={tick} stop={item.stop} />
+          verified={verified} tick={tick} />
+        <ManualExits account={account.id} code={item.code} position={item.position}
+          verified={verified} tick={tick} exitDraft={exitDraft} />
       </div>
     </div>
   )

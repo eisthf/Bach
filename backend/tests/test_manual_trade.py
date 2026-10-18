@@ -109,9 +109,9 @@ async def test_persist_round_trip(mock_hub, tmp_path):
     hub, _, _ = mock_hub
     hub.manual_trades._path = tmp_path / "x.manual.json"
     hub.manual_trades.add("005930", "삼성전자", "zone", "구간 매매에서 수동 전환")
-    hub.manual_trades.set_stop("005930", True, 2.5)
+    hub.manual_trades.set_exits("005930", {"enabled": True, "mode": "pct", "pct": 2.5}, None)
     raw = json.loads(hub.manual_trades._path.read_text(encoding="utf-8"))["items"][0]
-    assert (raw["origin"], raw["stop_enabled"], raw["stop_pct"]) == ("zone", True, 2.5)
+    assert (raw["origin"], raw["stop"]["enabled"], raw["stop"]["pct"]) == ("zone", True, 2.5)
     with pytest.raises(ValueError):
-        hub.manual_trades.set_stop("005930", True, 0)
+        hub.manual_trades.set_exits("005930", {"enabled": True, "mode": "pct", "pct": 0}, None)
     await hub.manual_trades.close()

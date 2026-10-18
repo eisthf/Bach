@@ -52,7 +52,7 @@ async def test_restore_holding_moves_to_manual(mock_hub, tmp_path, monkeypatch, 
     assert it.origin == "restore" and it.name == "삼성전자"
     assert "계좌 잔량 7주" in it.notice
     # 예전 [매매] 수동매매의 자동 손절 설정을 이어받는다.
-    assert it.stop_enabled and it.stop_pct == 3
+    assert it.stop.enabled and it.stop.mode == "pct" and it.stop.pct == 3
     p = hub.manual_trades.payload("005930")
     assert p["position"]["quantity"] == 7 and p["position"]["avg_price"] == 71000
     assert any(it.notice in log for log in mgr.logs())
@@ -69,12 +69,12 @@ async def test_restore_manual_list_survives_restart(mock_hub, tmp_path, monkeypa
     hub, mgr, clock = mock_hub
     saved(hub, tmp_path, [])
     hub.manual_trades.add("000660", "SK하이닉스", "candle", "대금 양봉 매매에서 수동 전환")
-    hub.manual_trades.set_stop("000660", True, 4)
+    hub.manual_trades.set_exits("000660", {"enabled": True, "mode": "pct", "pct": 4}, None)
     await hub.manual_trades.close()
     hub.manual_trades.items.clear()
     await hub.restore()
     it = hub.manual_trades.items["000660"]
-    assert (it.origin, it.stop_enabled, it.stop_pct) == ("candle", True, 4)
+    assert (it.origin, it.stop.enabled, it.stop.pct) == ("candle", True, 4)
     assert "000660" not in hub.stocks
     await hub.manual_trades.close()
 
