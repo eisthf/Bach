@@ -156,6 +156,12 @@ export default function ManualExits({ account, code, position, verified, tick, e
             )}
             <span className="hint">
               {level == null ? (r.mode === 'pct' ? '평단 확인 후 계산' : '') : `${fmt(level)}원 ${cmp}`}
+              {/* 라인 방식은 그 선이 평단에서 몇 % 떨어졌는지도 보인다(비율 방식은 입력값이 곧 %). */}
+              {r.mode === 'price' && level != null && avg > 0 && (
+                <span className={`exit-vs-avg ${level >= avg ? 'up' : 'down'}`}>
+                  {' · 평단 '}{((level - avg) / avg * 100).toLocaleString('ko-KR', { minimumFractionDigits: 1, maximumFractionDigits: 1, signDisplay: 'exceptZero' })}%
+                </span>
+              )}
             </span>
           </div>
         )
