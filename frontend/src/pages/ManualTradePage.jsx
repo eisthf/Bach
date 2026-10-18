@@ -170,8 +170,12 @@ function ManualTradeCard({ account, item }) {
   const exitDraft = useExitDraft(item)
   const avg = verified ? Number(item.position?.avg_price || 0) : 0
   const { lines, drag } = useExitLines(exitDraft.draft, avg)
-  // 선을 끌면 그 가격(호가 단위)의 '가격 라인' 방식으로 바꾼다. 저장은 폼에서.
-  const onLineDrag = (side, p) => exitDraft.update(side, { mode: 'price', price: roundToTick(p), enabled: true })
+  // 선을 끌면 그 가격(호가 단위)의 라인 방식으로 바꾼다. 저장은 폼에서.
+  // 그 선을 긋는 중이었으면 끌어서 놓은 것으로 긋기를 마친다(뒤이은 클릭이 선을 다시 옮기지 않게).
+  const onLineDrag = (side, p) => {
+    exitDraft.update(side, { mode: 'price', price: roundToTick(p), enabled: true })
+    if (exitDraft.pick === side) exitDraft.setPick(null)
+  }
 
   const remove = async () => {
     if (!window.confirm(`${item.code} 를 수동 매매 목록에서 지울까요? (계좌 보유가 0일 때만 지워집니다)`)) return
@@ -211,9 +215,16 @@ function ManualTradeCard({ account, item }) {
 
       <div className="chart-toolbar">
         <IntervalSelector value={interval} onChange={setInterval} />
+        {exitDraft.pick && (
+          <span className={`draw-hint draw-${exitDraft.pick}`}>
+            차트를 눌러 {exitDraft.pick === 'stop' ? '손절' : '익절'} 라인을 그으세요
+            <button type="button" className="link-btn" onClick={() => exitDraft.setPick(null)}>취소</button>
+          </span>
+        )}
       </div>
       <Chart account={account.id} code={item.code} interval={interval} tick={tick} height={300}
-        priceLines={lines} draggableLines={drag} onLineDrag={onLineDrag} measurable />
+        priceLines={lines} draggableLines={drag} onLineDrag={onLineDrag} measurable
+        onPriceClick={exitDraft.pick ? exitDraft.drawAt : null} />
       <div className="panels manual-panels">
         <ManualTradePanel account={account.id} code={item.code} position={item.position}
           verified={verified} tick={tick} />

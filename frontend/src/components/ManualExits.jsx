@@ -1,17 +1,18 @@
-// 수동 매매의 자동 손절·익절 설정 + 차트 선.
-//   손절  평단 대비 −x% (이하)  | 손절 라인 미만
-//   익절  평단 대비 +y% (이상)  | 익절 라인 이상
+// 수동 매매의 자동 손절·익절 설정 + 차트 선. 각각 두 방식:
+//   (1) 평단 대비 %: 숫자로 지정 — 손절 평단 −x% 이하, 익절 평단 +y% 이상
+//   (2) 라인: 차트에 수평선을 그어 지정([차트에 긋기] 후 차트 클릭, 끌어서 옮기기) — 손절 라인 미만, 익절 라인 이상
 // 조건이 되면 서버가 보유 전량을 시장가로 한 번 팔고 둘 다 끈다(backend/app/manual_trade.py).
 // 설정은 카드가 '초안(draft)'으로 들고 있다 — 폼과 차트 선이 같은 초안을 보고, 차트의 선을 끌면
-// 그 가격의 '가격 라인' 방식으로 바뀐다. [저장]해야 서버에 반영된다.
+// 그 가격의 라인 방식으로 바뀐다. 긋는 중(pick)인 쪽도 초안이 들고 있다. [저장]해야 서버에 반영된다.
 import React, { useEffect, useMemo, useState } from 'react'
 import { useStore } from '../store'
 import { roundToTick } from '../candleZone'
 
 const fmt = (n) => Math.round(Number(n || 0)).toLocaleString('ko-KR')
+// 화면 순서: 익절(위) → 손절(아래). 차트에서 익절선이 손절선보다 위에 있는 것과 맞춘다.
 const SIDES = [
-  { key: 'stop', name: '손절', sign: '−', color: '#d32f2f', defaultPct: 5 },
   { key: 'take_profit', name: '익절', sign: '+', color: '#2e7d32', defaultPct: 10 },
+  { key: 'stop', name: '손절', sign: '−', color: '#d32f2f', defaultPct: 5 },
 ]
 const ruleOf = (r, pct) => ({ enabled: !!r?.enabled, mode: r?.mode || 'pct', pct: r?.pct ?? pct, price: r?.price || 0 })
 const fromItem = (exits) => ({
@@ -39,6 +40,7 @@ export function useExitDraft(item) {
   const serverKey = JSON.stringify(item.exits || {})
   const [draft, setDraft] = useState(() => fromItem(item.exits))
   const [dirty, setDirty] = useState(false)
+  const [pick, setPick] = useState(null)  // 차트에 긋는 중인 쪽('stop' | 'take_profit')
   useEffect(() => {
     if (!dirty) setDraft(fromItem(item.exits))
   }, [serverKey]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -49,8 +51,15 @@ export function useExitDraft(item) {
   const reset = () => {
     setDraft(fromItem(item.exits))
     setDirty(false)
+    setPick(null)
   }
-  return { draft, dirty, update, reset, setDirty }
+  // 차트를 눌러 긋는다(호가 단위로 맞춤).
+  const drawAt = (price) => {
+    if (!pick) return
+    update(pick, { mode: 'price', price: roundToTick(price), enabled: true })
+    setPick(null)
+  }
+  return { draft, dirty, update, reset, setDirty, pick, setPick, drawAt }
 }
 
 // 차트에 넘길 선(켜진 것만) + 평단선. 손절·익절 선은 끌 수 있다.
@@ -73,28 +82,23 @@ export function useExitLines(draft, avg) {
 
 export default function ManualExits({ account, code, position, verified, tick, exitDraft }) {
   const { actions } = useStore()
-  const { draft, dirty, update, reset, setDirty } = exitDraft
+  const { draft, dirty, update, reset, setDirty, pick, setPick } = exitDraft
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState(false)
   const avg = verified ? Number(position?.avg_price || 0) : 0
   const price = tick?.price
 
-  // 가격 라인으로 바꿀 때 값이 없으면 지금 보이는 선(없으면 평단·현재가 기준 ±기본 %)에서 시작한다.
+  // 라인 방식으로 바꿀 때 아직 그은 선이 없으면 바로 긋기 모드로 들어간다.
   const setMode = (s, mode) => {
-    const rule = draft[s.key]
-    const patch = { mode }
-    if (mode === 'price' && !(Number(rule.price) > 0)) {
-      const base = avg > 0 ? avg : price || 0
-      const fromPct = exitLevel({ ...rule, mode: 'pct' }, base, s.key)
-      patch.price = roundToTick(fromPct || 0)
-    }
-    update(s.key, patch)
+    update(s.key, { mode })
+    if (mode === 'price' && !(Number(draft[s.key].price) > 0)) setPick(s.key)
+    else if (pick === s.key) setPick(null)
   }
 
   const problems = SIDES.flatMap((s) => {
     const r = draft[s.key]
     if (!r.enabled) return []
-    if (r.mode === 'price' && !(Number(r.price) > 0)) return [`${s.name} 라인 가격을 정하세요.`]
+    if (r.mode === 'price' && !(Number(r.price) > 0)) return [`차트에 ${s.name} 라인을 그으세요.`]
     const high = s.key === 'stop' ? 100 : 1000
     if (r.mode === 'pct' && !(Number(r.pct) > 0 && Number(r.pct) < high)) return [`${s.name} 비율은 0 초과 ${high}% 미만이어야 합니다.`]
     return []
@@ -136,7 +140,7 @@ export default function ManualExits({ account, code, position, verified, tick, e
             </label>
             <select value={r.mode} onChange={(e) => setMode(s, e.target.value)} aria-label={`${s.name} 방식`}>
               <option value="pct">평단 대비 %</option>
-              <option value="price">{s.name} 라인</option>
+              <option value="price">{s.name} 라인(차트)</option>
             </select>
             {r.mode === 'pct' ? (
               <span className="exit-input">
@@ -144,12 +148,11 @@ export default function ManualExits({ account, code, position, verified, tick, e
                   onChange={(e) => update(s.key, { pct: e.target.value })} aria-label={`${s.name} 비율`} />%
               </span>
             ) : (
-              <span className="exit-input">
-                <input type="number" min="1" step="any" value={r.price || ''}
-                  onChange={(e) => update(s.key, { price: e.target.value })}
-                  onBlur={(e) => update(s.key, { price: roundToTick(Number(e.target.value)) })}
-                  aria-label={`${s.name} 라인 가격`} />원
-              </span>
+              <button type="button" className={`draw-btn${pick === s.key ? ' on' : ''}`}
+                style={pick === s.key ? { borderColor: s.color, color: s.color } : undefined}
+                onClick={() => setPick(pick === s.key ? null : s.key)}>
+                {pick === s.key ? '차트를 누르세요 · 취소' : Number(r.price) > 0 ? '다시 긋기' : '차트에 긋기'}
+              </button>
             )}
             <span className="hint">
               {level == null ? (r.mode === 'pct' ? '평단 확인 후 계산' : '') : `${fmt(level)}원 ${cmp}`}
@@ -165,7 +168,7 @@ export default function ManualExits({ account, code, position, verified, tick, e
       {problems.length > 0 && <div className="input-err">{problems[0]}</div>}
       <div className="manual-stop-note">
         정규장 체결가로 판단 · 조건 충족 시 보유 전량 시장가 매도 후 손절·익절 모두 해제 ·
-        차트의 빨강·초록 선을 끌면 그 가격의 라인 방식으로 바뀝니다
+        라인은 [차트에 긋기] 후 차트를 눌러 긋고, 그은 선은 끌어서 옮깁니다(비율 선을 끌어도 라인으로 바뀜)
       </div>
       {msg && <div className="trade-msg">{msg}</div>}
     </div>
