@@ -1,0 +1,57 @@
+---
+name: candle-trade-chart
+description: 대금 양봉 매매·구간 매매 실매매 기록을 매매 건별 일봉·3분봉 차트(HTML 한 장)로 만든다. 기준봉·매입 구간·평단·익절선, 체결가 ✕·B/S 마커, MA5/10/20/60, 실현·평가 손익 요약 포함. "대금 양봉 매매 차트", "구간 매매 결과 차트", "대금 양봉 매수 매도 지점 보여줘" 같은 요청에 사용. 상한가(ULC) 매매는 ulc-trade-chart 스킬.
+---
+
+# 대금 양봉·구간 매매 실매매 차트
+
+엔진 로그(`candle_trade` 이벤트) + 계좌 체결 기록에서 매매 건을 묶어, 키움 차트 API로 봉을 받아 HTML로 그린다.
+**조회 API만 쓰고 주문은 내지 않는다.** 실계좌 자격증명(`backend/.env`)이 필요하다.
+차트 규칙·검증 흐름은 [ulc-trade-chart](../ulc-trade-chart/SKILL.md)와 같다.
+
+## 실행
+
+```bash
+cd backend && uv run python ../.claude/skills/candle-trade-chart/candle_trade_chart.py
+```
+
+옵션:
+- `--since 2026-10-01` / `--until 2026-10-15`: 등록일 기간(포함)
+- `--code 000250`: 종목만(여러 번 가능)
+- `--kind candle|zone`: 대금 양봉만 / 구간 매매만
+- `--account real`: 계좌 id(기본 `real`). 체결 파일은 `state.{계좌}.trades.json`
+- `--out <path>`: 출력(기본 `research/candle_trades/index.html`, git 미추적)
+- `--refresh`: 봉 캐시(`backend/backtest_data/candle_chart/`) 무시
+
+Windows 콘솔에서 한글 출력이 깨지면 `PYTHONIOENCODING=utf-8`을 앞에 붙인다.
+
+## 만든 뒤
+
+1. 내장 브라우저로 `file:///<repo>/research/candle_trades/index.html`을 열어 콘솔 오류·차트 렌더를 확인한다
+   (파일이 ~550KB를 넘으면 패널이 못 연다).
+2. `SendUserFile`(display: render)로 HTML을 보낸다.
+3. 요약: 건수(보유 중 몇 건), 실현·평가 손익(수수료·세금 제외), 수동 인계·수동 체결 같은 주의 사항.
+
+## 판정 규칙 (스크립트 동작)
+
+- **매매 한 건** = 종목의 `대금양봉:`/`구간매매:` `등록` 메시지부터 그 종목의 다음 `등록` 전까지.
+  체결이 없는 건(기한 만료, 설정 중 삭제, 감시만 하다 끝남)은 뺀다.
+- 기준 캔들은 `등록` 메시지(`기준 캔들 날짜 시가 종가`), 매입 구간은 **1차 매수 전 마지막** `매입 구간 …` 값,
+  익절 %는 `절반 익절: 평단 +p%`, 진입 기한은 `N거래일 안에 진입`에서 읽는다.
+- 체결은 첫 엔진 `N차 매수` 메시지 120초 전부터. 주문번호로 묶어 엔진 메시지 순서대로 사유
+  (`1차`/`2차`, `절반 익절`, 청산 사유)를 붙인다. `수동매매 인계` 이후 체결은 `수동`으로 포함하고,
+  보유 수량이 0이 되거나 그 종목의 상한가(ULC) 매매(`자동매매 시작 (X=`)가 시작되는 날 멈춘다.
+- 손익: 청산이면 매도 − 매수. 보유 중이면 실현 = 매도 수량 × (매도가 − 평단), 평가 = (최근 일봉 종가 − 평단) × 보유.
+- 일봉: 기준일(구간 매매는 첫 체결일) 30봉 앞부터 최근까지 표시. 3분봉: 체결이 있었던 날들을 이어 붙이고
+  날짜 버튼으로 이동, 첫날 앞에 직전 거래일 정규장 60봉(MA60 예열).
+
+## 차트 표현 (Bach 프런트와 동일)
+
+- 체결가 ✕(매수 `#d32f2f`/매도 `#1565c0`), B/S 화살표 마커, MA5/10/20/60 — ulc-trade-chart 와 같은 코드
+- 기준봉 ▼ `#7b1fa2`(Bach `ANCHOR_COLOR`), 매입 구간 상단·하단 보라 점선, 평단 주황, 익절선(평단 × (1+p%)) 빨강 점선
+
+## 파일
+
+- `candle_trade_chart.py`: 매매 건 판정·조회·HTML 생성
+- `template.html`: lightweight-charts 4.2.0 페이지, `__DATA__` 자리에 JSON 주입.
+  ✕·이평선 코드(`TRADE_COLORS`~`TradeCross`)는 ulc-trade-chart/template.html 과 같으니 바꾸면 둘 다 맞춘다.
