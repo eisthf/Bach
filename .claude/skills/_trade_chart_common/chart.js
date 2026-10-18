@@ -120,12 +120,13 @@ function orderMarkers(rows, orders, label) {
 
 // -- 목록 ↔ 카드 이동 ---------------------------------------------------------
 // 목록 행(tr[data-i]) 클릭 → 카드 #c{i}. 카드 머리 [↑ 목록](addBackButton) + 목록이 안 보이면 떠 있는 버튼.
-// 돌아오면 방금 본 종목 행을 화면 가운데로 스크롤하고 잠깐 강조한다.
+// 돌아오면 방금 본 종목 행을 화면 가운데로 옮기고 잠깐 강조한다. 이동은 즉시(애니메이션 없음) —
+// 카드가 많으면 부드러운 스크롤이 목적지까지 한참 걸린다.
 function backToList(i) {
   const summary = document.getElementById("summary");
   const row = i == null ? null : summary.querySelector(`tr[data-i="${i}"]`);
-  if (!row) return summary.scrollIntoView({ behavior: "smooth", block: "start" });
-  row.scrollIntoView({ behavior: "smooth", block: "center" });
+  if (!row) return summary.scrollIntoView({ behavior: "instant", block: "start" });
+  row.scrollIntoView({ behavior: "instant", block: "center" });
   summary.querySelectorAll("tr.seen").forEach(r => r.classList.remove("seen"));
   row.classList.add("seen");
   setTimeout(() => row.classList.remove("seen"), 2500);
@@ -133,7 +134,7 @@ function backToList(i) {
 function wireSummary() {
   const summary = document.getElementById("summary");
   summary.querySelectorAll("tbody tr").forEach(tr =>
-    tr.addEventListener("click", () => document.getElementById("c" + tr.dataset.i).scrollIntoView({ behavior: "smooth" })));
+    tr.addEventListener("click", () => document.getElementById("c" + tr.dataset.i).scrollIntoView({ behavior: "instant" })));
   const totop = document.createElement("button");
   totop.className = "totop"; totop.textContent = "↑ 목록";
   document.body.appendChild(totop);
