@@ -40,6 +40,12 @@ input:focus { outline: none; border-color: var(--accent); }
 .chart-volume-value { display: flex; align-items: baseline; gap: 5px; padding: 4px 2px; font-size: 12px; color: var(--muted); }
 .chart-volume-value strong { color: var(--text); font-variant-numeric: tabular-nums; }
 .chart-volume-value span { margin-left: 8px; font-size: 11px; }
+.chart-height-toggle { margin-left: auto; display: inline-flex; align-self: center; }
+.chart-height-toggle button { border: 1px solid var(--border); background: var(--card); color: var(--muted);
+  padding: 2px 8px; font-size: 11px; cursor: pointer; }
+.chart-height-toggle button:first-child { border-radius: 6px 0 0 6px; }
+.chart-height-toggle button:last-child { border-radius: 0 6px 6px 0; border-left: none; }
+.chart-height-toggle button.on { color: var(--accent); background: var(--accent-soft); font-weight: 700; }
 
 /* Header */
 /* 상단(헤더+종목입력+칩) 고정: 스크롤해도 항상 보이게 */
@@ -611,7 +617,7 @@ input:focus { outline: none; border-color: var(--accent); }
   .iv-btn { min-width: 44px; min-height: 44px; padding: 6px 8px; }
   .state-box { flex: 0 0 auto; }
   .state-btn { min-width: 108px; min-height: 44px; padding: 4px 8px; }
-  .chart-canvas { height: min(var(--chart-height), 280px); }
+  .chart-canvas { height: min(var(--chart-height), var(--chart-max-mobile, 280px)); }
 
   .panels, .compact-body { grid-template-columns: 1fr; gap: 10px; }
   .manual-panel, .auto-form { padding: 12px 10px; }

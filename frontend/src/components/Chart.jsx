@@ -15,6 +15,12 @@ import { AmountStripePrimitive, amountStripeTimes } from '../amountStripePrimiti
 // 봉 경계를 넘었는데 서버 봉이 아직 안 만들어졌을 때, 매 틱 재조회하지 않도록.
 const REFRESH_COOLDOWN_MS = 10_000
 
+// 차트 높이 배율(기본 / 1.5배). 마지막 선택을 브라우저에 기억해 새로 여는 차트에도 쓴다.
+const TALL_SCALE = 1.5
+const TALL_KEY = 'bach.chartTall'
+const readTall = () => { try { return localStorage.getItem(TALL_KEY) === '1' } catch { return false } }
+const writeTall = (v) => { try { localStorage.setItem(TALL_KEY, v ? '1' : '0') } catch { /* 저장 불가면 이번 화면만 */ } }
+
 const volumePoint = (bar) => ({
   time: bar.time,
   value: Number(bar.volume || 0),
@@ -80,6 +86,8 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
     return () => { cancelled = true; clearInterval(timer) }
   }, [account, code, interval])
   const [displayVolume, setDisplayVolume] = useState(null)
+  const [tall, setTall] = useState(readTall)
+  const chooseTall = (v) => { setTall(v); writeTall(v) }
 
   // 차트 생성 (1회)
   useEffect(() => {
@@ -545,17 +553,27 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
       {loadState === 'loading' && <p role="status">차트 불러오는 중…</p>}
       {loadState === 'empty' && <p role="status">조회 가능한 봉 데이터가 없습니다.</p>}
       {loadState === 'error' && <div role="alert">{loadError} <button onClick={() => setRetry((value) => value + 1)}>다시 시도</button></div>}
-      {loadState === 'ready' && displayVolume !== null && (
-        <div className="chart-volume-value" aria-live="off">
-          거래량 <strong>{displayVolume.toLocaleString('ko-KR')}주</strong>
-          <span>봉에 마우스를 올리면 해당 봉의 수량을 표시합니다.</span>
+      <div className="chart-volume-value" aria-live="off">
+        {loadState === 'ready' && displayVolume !== null && (
+          <>
+            거래량 <strong>{displayVolume.toLocaleString('ko-KR')}주</strong>
+            <span>봉에 마우스를 올리면 해당 봉의 수량을 표시합니다.</span>
+          </>
+        )}
+        <div className="chart-height-toggle" role="group" aria-label="차트 높이">
+          <button type="button" className={tall ? '' : 'on'} aria-pressed={!tall} onClick={() => chooseTall(false)}>기본</button>
+          <button type="button" className={tall ? 'on' : ''} aria-pressed={tall} onClick={() => chooseTall(true)}>1.5배</button>
         </div>
-      )}
+      </div>
     <div className="chart-canvas-wrap">
       <div
         ref={containerRef}
         className={`chart-canvas${onPriceClick || measureOn ? ' picking' : ''}`}
-        style={{ width: '100%', '--chart-height': `${height}px` }}
+        style={{
+          width: '100%',
+          '--chart-height': `${Math.round(height * (tall ? TALL_SCALE : 1))}px`,
+          '--chart-max-mobile': `${tall ? Math.round(280 * TALL_SCALE) : 280}px`,
+        }}
       />
       {floatLabel && (
         <div className={`measure-float ${floatLabel.up ? 'up' : 'down'}`}
