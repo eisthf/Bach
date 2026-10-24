@@ -296,13 +296,28 @@ def test_default_add_mode_is_mixed():
 async def test_mixed_buys_low_in_wide_zone():
     eng, br, _ = make(add_mode="mixed")
     day(eng, D1, 1)
-    await tick(eng, br, 11_000, D1)          # 하단까지 여유 7.3% > 5% → 11,000 − 0.8×800 = 10,360
-    assert eng.add_plan() == (pytest.approx(10_360), "gap") and eng.add_possible()
+    await tick(eng, br, 11_500, D1)          # 여유 11.3% > 5% → 구간 비율 11,800 − 0.8×1,600 = 10,520
+    assert eng.add_plan() == (pytest.approx(10_520), "gap") and eng.add_possible()
     day(eng, D2, 2)
-    await tick(eng, br, 10_450, D2)          # 고정 −5% 가격에서는 사지 않는다
+    await tick(eng, br, 10_925, D2)          # 고정 −5% 가격에서는 사지 않는다
     assert len(br.buys) == 1
-    await tick(eng, br, 10_360, D2)
+    await tick(eng, br, 10_520, D2)
     assert len(br.buys) == 2 and eng.phase == CzPhase.HOLDING
+
+
+@pytest.mark.parametrize("first", [11_200, 11_500, 11_800])
+async def test_band_price_depends_on_zone_not_first_price(first):
+    eng, br, _ = make(add_mode="gap", add_gap_pct=80)
+    day(eng, D1, 1)
+    await tick(eng, br, first, D1)           # 구간 10,200~11,800: 상단에서 폭의 80% 아래 = 10,520
+    assert eng.add_plan() == (pytest.approx(10_520), "gap")
+
+
+async def test_mixed_uses_fixed_when_band_price_is_shallower():
+    eng, br, _ = make(add_mode="mixed")
+    day(eng, D1, 1)
+    await tick(eng, br, 11_000, D1)          # 구간 비율 10,520(−4.4%) vs 고정 10,450(−5%) → 더 깊은 고정
+    assert eng.add_plan() == (pytest.approx(10_450), "fixed")
 
 
 async def test_mixed_skips_second_leg_when_room_within_threshold():
@@ -329,7 +344,7 @@ async def test_mixed_uses_fixed_when_gap_price_is_shallower():
     eng, br, _ = make(add_mode="mixed")
     eng.set_base(BASE, 10_000, 11_000, confirmed=True)   # 구간 10,100 ~ 10,900
     day(eng, D1, 1)
-    await tick(eng, br, 10_700, D1)          # 갭 80% = 10,220(−4.5%) vs 고정 10,165(−5%) → 더 깊은 고정
+    await tick(eng, br, 10_700, D1)          # 구간 비율 10,260(−4.1%) vs 고정 10,165(−5%) → 더 깊은 고정
     assert eng.add_plan() == (pytest.approx(10_165), "fixed")
     day(eng, D2, 2)
     await tick(eng, br, 10_200, D2)
@@ -341,7 +356,7 @@ async def test_mixed_uses_fixed_when_gap_price_is_shallower():
 async def test_gap_below_min_drop_means_no_second_leg():
     eng, br, logs = make_small(add_mode="gap")
     day(eng, D1, 1)
-    await tick(eng, br, 10_100, D1)          # 하단까지 50원 → 갭 80% = 0.4% 하락 < 최소 2%
+    await tick(eng, br, 10_100, D1)          # 구간 비율 10,130은 1차가보다 위 → 하락 < 최소 2%
     assert not eng.add_possible()
     day(eng, D2, 2)
     await tick(eng, br, 10_050, D2)
@@ -361,12 +376,12 @@ async def test_fixed_mode_keeps_unreachable_trigger():
 async def test_gap_mode_on_big_candle_goes_deeper():
     eng, br, _ = make(add_mode="gap", add_gap_pct=80)
     day(eng, D1, 1)
-    await tick(eng, br, 11_000, D1)          # 11,000 − 0.8×800 = 10,360 (고정 −5%면 10,450)
-    assert eng.add_plan() == (pytest.approx(10_360), "gap")
+    await tick(eng, br, 11_500, D1)          # 11,800 − 0.8×1,600 = 10,520 (고정 −5%면 10,925)
+    assert eng.add_plan() == (pytest.approx(10_520), "gap")
     day(eng, D2, 2)
-    await tick(eng, br, 10_400, D2)
+    await tick(eng, br, 10_600, D2)
     assert len(br.buys) == 1
-    await tick(eng, br, 10_360, D2)
+    await tick(eng, br, 10_520, D2)
     assert len(br.buys) == 2
 
 

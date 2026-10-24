@@ -50,7 +50,7 @@ function validate(c) {
   if (!(c.first_ratio_pct >= 10 && c.first_ratio_pct <= 90)) return '1차 매수 비중은 10~90%여야 합니다.'
   if (!(c.zone_margin_pct >= 0 && c.zone_margin_pct < 50)) return '매입 구간 여백은 0 이상 50% 미만이어야 합니다.'
   if (!(c.add_drop_pct > 0 && c.add_drop_pct < 100)) return '2차 매수 하락률은 0~100% 사이여야 합니다.'
-  if (!(c.add_gap_pct > 0 && c.add_gap_pct <= 100)) return '2차 갭 비율은 0 초과 100% 이하여야 합니다.'
+  if (!(c.add_gap_pct > 0 && c.add_gap_pct <= 100)) return '2차 구간 폭 비율은 0 초과 100% 이하여야 합니다.'
   if (!(c.add_min_drop_pct >= 0 && c.add_min_drop_pct < 100)) return '2차 최소 하락률은 0~100% 사이여야 합니다.'
   if (!(c.take_profit_pct > 0 && c.take_profit_pct <= 500)) return '절반 익절 상승률은 0~500% 사이여야 합니다.'
   if (!(c.trailing_pct > 0 && c.trailing_pct < 100)) return '트레일링 하락률은 0~100% 사이여야 합니다.'
@@ -288,11 +288,11 @@ export default function CandleTradeCard({ account, item }) {
               <input type="number" min="1" max="60" step="1" value={form.entry_days} disabled={bought}
                 onChange={(e) => set('entry_days', e.target.value)} />거래일
             </label>
-            <label title="1차 매수 다음 날부터, 가격이 매입 구간 안이면서 2차 조건가 이하일 때 2차를 삽니다. 혼합: 1차가에서 구간 하단까지 여유가 문턱을 넘을 때만, 문턱 하락률과 갭 비율 중 더 깊이 내려간 가격에서 삽니다(넓은 구간에서 너무 위쪽 매수를 피하고, 최소 문턱만큼은 내려감).">2차 매수 기준
+            <label title="1차 매수 다음 날부터, 가격이 매입 구간 안이면서 2차 매수가 이하로 내려오면 2차를 삽니다. 혼합: ①1차가 대비 최소 하락과 ②구간 상단에서 구간 폭의 일정 비율 아래 중 더 낮은 가격. 1차가가 하단에 너무 가까우면 2차를 하지 않습니다.">2차 매수 가격
               <select value={form.add_mode} onChange={(e) => set('add_mode', e.target.value)}>
                 <option value="mixed">혼합</option>
-                <option value="fixed">고정 하락률</option>
-                <option value="gap">갭 비율</option>
+                <option value="fixed">1차가 대비 하락률</option>
+                <option value="gap">구간 폭 비율</option>
               </select>
             </label>
             {form.add_mode === 'fixed' && (
@@ -302,23 +302,25 @@ export default function CandleTradeCard({ account, item }) {
               </label>
             )}
             {form.add_mode === 'mixed' && (
-              <label className="ct-sub" title="1차 매수가에서 구간 하단까지 내려갈 여유가 이 비율 이하이면 2차를 하지 않습니다.">
-                1차가~구간 하단 여유가
+              <label className="ct-sub" title="① = 1차 매수가 × (1 − 이 비율). 1차가에서 구간 하단까지가 이 비율보다 가까우면(구간 안에서 그만큼 못 내려가면) 2차를 하지 않습니다.">
+                ① 1차가보다
                 <input type="number" min="0.1" max="99" step="any" value={form.add_drop_pct}
-                  onChange={(e) => set('add_drop_pct', e.target.value)} />% 초과일 때만 2차(최소 이만큼 하락)
+                  onChange={(e) => set('add_drop_pct', e.target.value)} />% 아래 (하단이 이보다 가까우면 2차 없음)
               </label>
             )}
             {form.add_mode !== 'fixed' && (
-              <label className="ct-sub" title="2차 조건가 = 1차 매수가 − (1차 매수가 − 구간 하단) × 이 비율">
-                {form.add_mode === 'mixed' ? '또는 ' : '2차: '}1차가~구간 하단 갭의
+              <label className="ct-sub" title="2차 가격 = 구간 상단 − (상단 − 하단) × 이 비율. 1차가와 무관하게 구간으로 정해진다. 100%면 하단.">
+                {form.add_mode === 'mixed' ? '② ' : '2차: '}구간 상단에서 구간 폭의
                 <input type="number" min="1" max="100" step="any" value={form.add_gap_pct}
-                  onChange={(e) => set('add_gap_pct', e.target.value)} />% 하락한 가격{form.add_mode === 'mixed' ? ' 중 더 깊은 곳' : ''}
+                  onChange={(e) => set('add_gap_pct', e.target.value)} />% 아래
+                {Number(form.add_gap_pct) > 0 && Number(form.add_gap_pct) <= 100 && ` (하단에서 ${+(100 - Number(form.add_gap_pct)).toFixed(2)}% 위)`}
+                {form.add_mode === 'mixed' ? ' — ①·② 중 낮은 가격에서 2차' : ''}
               </label>
             )}
             {form.add_mode === 'gap' && (
               <>
-                <label className="ct-sub" title="1차가 하단에 붙어 체결돼 갭이 작으면, 같은 가격에 금액만 두 배로 사지 않도록 2차를 하지 않습니다.">
-                  갭 기준 최소 하락률
+                <label className="ct-sub" title="1차가 2차 가격 근처나 그 아래에서 체결됐으면, 같은 가격에 금액만 두 배로 사지 않도록 2차를 하지 않습니다.">
+                  1차가 대비 최소 하락률
                   <input type="number" min="0" max="99" step="any" value={form.add_min_drop_pct}
                     onChange={(e) => set('add_min_drop_pct', e.target.value)} />% (이보다 얕으면 2차 없음)
                 </label>
@@ -366,7 +368,7 @@ export default function CandleTradeCard({ account, item }) {
                     ? '구간 안 진입'
                     : leg.status === 'waiting' && bought && leg2?.trigger
                       ? <>구간 안 & ≤ {fmtPrice(leg2.trigger.price)}
-                        <span className="muted"> ({leg2.trigger.basis === 'gap' ? `갭 ${cfg.add_gap_pct}%` : `−${cfg.add_drop_pct}%`}, 1차가 −{leg2.dropPct.toFixed(1)}%)</span></>
+                        <span className="muted"> ({leg2.trigger.basis === 'gap' ? `구간 상단 −폭 ${cfg.add_gap_pct}%` : `−${cfg.add_drop_pct}%`}, 1차가 −{leg2.dropPct.toFixed(1)}%)</span></>
                       : `1차 다음 날부터, ${addRuleText(cfg)}`}
                     {leg.no === 2 && leg2 && leg.status === 'waiting' && (
                       <div className={`ct-maxdrop ${leg2.possible ? 'muted' : 'down'}`}

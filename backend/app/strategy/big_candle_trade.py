@@ -20,11 +20,12 @@
     - D+entry_days 거래일까지 1차 조건이 없으면 → DONE(기한 만료, 매매 안 함)
   ACCUMULATING (1차만 보유, 2차 대기):
     - 2차: 1차 매수일 **다음 날부터**, 가격이 매입 구간 안이면서 2차 조건가 이하
-           → 나머지 금액 매수 → HOLDING. 조건가(P=1차 매수가, L=구간 하단, add_mode):
+           → 나머지 금액 매수 → HOLDING. 조건가(P=1차 매수가, L·H=구간 하단·상단, add_mode):
              fixed  P × (1 − u%)
-             gap    P − k% × (P − L)  (하락폭 < 최소 하락률이면 2차 없음 — 1차가 하단에
-                    붙어 체결됐을 때 같은 가격에 금액만 두 배로 사는 것을 막는다)
-             mixed  (P − L)/P > u% 일 때만 min(fixed, P − k% × (P − L)) — 둘 중 더 깊이
+             gap    H − k% × (H − L)  (구간 상단에서 구간 폭의 k% 아래 = 하단에서 (100−k)% 위.
+                    1차가 대비 하락폭 < 최소 하락률이면 2차 없음 — 1차가 그 가격 근처나 아래에서
+                    체결됐을 때 같은 가격에 금액만 두 배로 사는 것을 막는다)
+             mixed  (P − L)/P > u% 일 때만 min(fixed, H − k% × (H − L)) — 둘 중 더 깊이
                     내려간 가격 (기본). 아니면 2차 없음. 구간이 넓을 때 −u% 고정은 너무 위에서
                     사게 되므로 하단 쪽에서 사되, 여유가 빠듯해도 최소 u%는 내려간 곳에서 산다
   ACCUMULATING / HOLDING:
@@ -95,31 +96,27 @@ class CzLeg:
         return self.fill_avg if self.fill_qty else self.est_price
 
 
-_BASIS = {"fixed": "고정 하락률", "gap": "하단까지 갭 비율", "": ""}
+_BASIS = {"fixed": "고정 하락률", "gap": "구간 폭 비율", "": ""}
 
 
 def add_trigger_for(config: CandleTradeConfig, first_price: float,
                     zone: Optional[Tuple[float, float]]) -> Tuple[Optional[float], str]:
-    """2차 매수 조건가 (가격, 근거). 근거 "fixed"=1차가 −u%, "gap"=하단까지 갭의 k%."""
+    """2차 매수 조건가 (가격, 근거). 근거 "fixed"=1차가 −u%, "gap"=구간 상단에서 구간 폭의 k% 아래."""
     p = first_price
     if p <= 0:
         return None, ""
     fixed = p * (1 - config.add_drop_pct / 100)
-    low = zone[0] if zone else None
-    gap = None
-    if low is not None and p > low:
-        g = p - (p - low) * config.add_gap_pct / 100
-        if (p - g) / p * 100 >= config.add_min_drop_pct:
-            gap = g
+    low, high = zone if zone else (None, None)
+    band = high - (high - low) * config.add_gap_pct / 100 if zone else None
     if config.add_mode == "fixed":
         return fixed, "fixed"
     if config.add_mode == "gap":
-        return (gap, "gap") if gap is not None else (None, "")
-    # mixed: 1차가에서 하단까지 여유가 u% 를 넘을 때만, 고정·갭 중 더 깊은 가격에서
+        ok = band is not None and (p - band) / p * 100 >= config.add_min_drop_pct
+        return (band, "gap") if ok else (None, "")
+    # mixed: 1차가에서 하단까지 여유가 u% 를 넘을 때만, 고정·구간 비율 중 더 깊은 가격에서
     if low is None or p <= low or (p - low) / p * 100 <= config.add_drop_pct:
         return None, ""
-    deep = p - (p - low) * config.add_gap_pct / 100
-    return (deep, "gap") if deep < fixed else (fixed, "fixed")
+    return (band, "gap") if band < fixed else (fixed, "fixed")
 
 
 def build_legs(config: CandleTradeConfig) -> List[CzLeg]:

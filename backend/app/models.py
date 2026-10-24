@@ -193,13 +193,13 @@ class CandleTradeConfig(BaseModel):
     total_krw: int = Field(1_000_000, ge=10_000, description="총 투자액(원)")
     first_ratio_pct: float = Field(50.0, ge=10, le=90, description="1차 매수 비중(%). 나머지가 2차")
     zone_margin_pct: float = Field(10.0, ge=0, lt=50, description="매입 구간: 몸통 양 끝에서 안쪽으로(몸통 대비 %)")
-    # 2차 매수 조건가 (P=1차 매수가, L=구간 하단):
-    #   fixed = P×(1−u%)      gap = P − k%×(P−L), 단 하락폭이 최소 하락률 미만이면 2차 없음
-    #   mixed = (P−L)/P > u% 일 때만 min(fixed, P − k%×(P−L)) — 둘 중 더 깊은 하락. 아니면 2차 없음.
+    # 2차 매수 조건가 (P=1차 매수가, L·H=구간 하단·상단):
+    #   fixed = P×(1−u%)      gap = H − k%×(H−L), 단 1차가 대비 하락폭이 최소 하락률 미만이면 2차 없음
+    #   mixed = (P−L)/P > u% 일 때만 min(fixed, H − k%×(H−L)) — 둘 중 더 깊은 하락. 아니면 2차 없음.
     #           구간이 넓을 때 −u% 고정은 너무 위에서 사게 되므로 하단 쪽에서 사되, 최소 u%는 내려간다.
     add_mode: Literal["fixed", "gap", "mixed"] = Field("mixed", description="2차 매수 기준")
     add_drop_pct: float = Field(5.0, gt=0, lt=100, description="2차 매수: 고정=1차가 대비 하락률, 혼합=1차가~하단 여유 문턱(%) u")
-    add_gap_pct: float = Field(80.0, gt=0, le=100, description="2차 매수: 1차가~구간 하단 갭 대비 하락(%) k")
+    add_gap_pct: float = Field(80.0, gt=0, le=100, description="2차 매수: 구간 상단에서 구간 폭의 k% 아래(%) k")
     add_min_drop_pct: float = Field(2.0, ge=0, lt=100,
                                     description="갭 기준 2차의 최소 하락률(%). 갭이 작아 이보다 얕으면 2차 없음")
     take_profit_pct: float = Field(20.0, gt=0, le=500, description="절반 익절: 평단 대비 상승률(%)")

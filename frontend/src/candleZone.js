@@ -18,24 +18,20 @@ export function zoneOf(base, marginPct) {
   return { low: base.open + m, high: base.close - m }
 }
 
-// 2차 조건가 {price, basis}. basis 'fixed'=1차가 −u%, 'gap'=하단까지 갭의 k%.
-//   mixed: 1차가~하단 여유가 u%를 넘으면 고정 −u%와 갭의 k% 중 더 깊은 가격, 아니면 2차 없음
-//   gap:   갭의 k% 가격(하락폭 < 최소 하락률이면 2차 없음)
+// 2차 조건가 {price, basis}. basis 'fixed'=1차가 −u%, 'gap'=구간 상단에서 구간 폭의 k% 아래.
+//   mixed: 1차가~하단 여유가 u%를 넘으면 고정 −u%와 구간 비율 가격 중 더 깊은 가격, 아니면 2차 없음
+//   gap:   구간 비율 가격(1차가 대비 하락폭 < 최소 하락률이면 2차 없음)
 export function addTriggerFor(cfg, firstPrice, zone) {
   const p = firstPrice
   if (!(p > 0)) return null
   const fixed = p * (1 - cfg.add_drop_pct / 100)
-  const low = zone ? zone.low : null
-  let gap = null
-  if (low !== null && p > low) {
-    const g = p - (p - low) * cfg.add_gap_pct / 100
-    if ((p - g) / p * 100 >= cfg.add_min_drop_pct) gap = g
-  }
+  const band = zone ? zone.high - (zone.high - zone.low) * cfg.add_gap_pct / 100 : null
   if (cfg.add_mode === 'fixed') return { price: fixed, basis: 'fixed' }
-  if (cfg.add_mode === 'gap') return gap !== null ? { price: gap, basis: 'gap' } : null
-  if (low === null || p <= low || (p - low) / p * 100 <= cfg.add_drop_pct) return null
-  const deep = p - (p - low) * cfg.add_gap_pct / 100
-  return deep < fixed ? { price: deep, basis: 'gap' } : { price: fixed, basis: 'fixed' }
+  if (cfg.add_mode === 'gap') {
+    return band !== null && (p - band) / p * 100 >= cfg.add_min_drop_pct ? { price: band, basis: 'gap' } : null
+  }
+  if (!zone || p <= zone.low || (p - zone.low) / p * 100 <= cfg.add_drop_pct) return null
+  return band < fixed ? { price: band, basis: 'gap' } : { price: fixed, basis: 'fixed' }
 }
 
 // 2차 매수 가능성.
@@ -58,10 +54,10 @@ export function secondLegCheck(zone, cfg, firstPrice = 0) {
 // 2차 조건 설명(1차 체결 전).
 export function addRuleText(cfg) {
   const fixed = `1차가 −${cfg.add_drop_pct}%`
-  const gap = `1차가~하단 갭의 ${cfg.add_gap_pct}% 하락(최소 ${cfg.add_min_drop_pct}%)`
+  const band = `구간 상단에서 구간 폭의 ${cfg.add_gap_pct}% 아래`
   if (cfg.add_mode === 'fixed') return fixed
-  if (cfg.add_mode === 'gap') return gap
-  return `1차가~하단 여유가 ${cfg.add_drop_pct}% 초과면 −${cfg.add_drop_pct}%와 그 갭의 ${cfg.add_gap_pct}% 하락 중 더 깊은 곳, 아니면 2차 없음`
+  if (cfg.add_mode === 'gap') return `${band}(1차가 대비 최소 −${cfg.add_min_drop_pct}%)`
+  return `1차가 −${cfg.add_drop_pct}%와 ${band} 중 낮은 가격(1차가에서 하단이 −${cfg.add_drop_pct}%보다 가까우면 2차 없음)`
 }
 
 // KRX 호가 단위(backend/app/pricing.py tick_size 와 같음). 차트에서 찍은 가격을 맞춘다.
