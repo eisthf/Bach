@@ -41,6 +41,7 @@ function fromForm(f) {
     trailing: f.trailing !== false,
     trailing_pct: Number(f.trailing_pct),
     stop_margin_pct: Number(f.stop_margin_pct),
+    stop_mode: f.stop_mode || 'close',
     entry_days: Math.round(Number(f.entry_days) || 0),
     watch_mode: f.watch_mode,
     watch_minutes: Number(f.watch_minutes),
@@ -396,10 +397,15 @@ export default function CandleTradeCard({ account, item }) {
                   onChange={(e) => set('trailing_pct', e.target.value)} />% 하락</>
               )}
             </label>
-            <label title="손절선 = 구간 하단 × (1 − 이 비율). 전일 종가가 손절선 아래면 그날 손절선 아래 가격에서 전량 매도합니다. 0이면 하단 그대로.">
+            <label title="손절선 = 구간 하단 × (1 − 이 비율). 0이면 하단 그대로. 종가 확인: 전일 종가가 손절선 아래인 날만, 그날 손절선 아래에서 전량 매도(장중 일시 이탈은 무시). 즉시: 보유 중 손절선 아래 가격이 한 번이라도 나오면 바로 전량 매도.">
               구간 이탈 손절: 하단보다
               <input type="number" min="0" max="49" step="any" value={form.stop_margin_pct ?? 0}
-                onChange={(e) => set('stop_margin_pct', e.target.value)} />% 아래
+                onChange={(e) => set('stop_margin_pct', e.target.value)} />% 아래,
+              <select value={form.stop_mode || 'close'} onChange={(e) => set('stop_mode', e.target.value)}
+                aria-label="구간 이탈 손절 방식">
+                <option value="close">종가 확인</option>
+                <option value="instant">즉시</option>
+              </select>
             </label>
             <label title="틱: 체결마다 판단. 분: 완성된 N분봉의 종가로 판단.">가격 감시
               <select value={form.watch_mode} onChange={(e) => set('watch_mode', e.target.value)}>
@@ -414,9 +420,13 @@ export default function CandleTradeCard({ account, item }) {
               )}
             </label>
           </fieldset>
-          <p className="muted ct-rule">{Number(form.stop_margin_pct) > 0
-            ? `전일 종가가 매입 구간 하단의 ${+Number(form.stop_margin_pct)}% 아래(손절선)보다 낮으면, 그날 손절선 아래 가격에서 보유 전량을 매도합니다(1차 매수 다음 날부터).`
-            : '전일 종가가 매입 구간 하단 아래면, 그날 하단 아래 가격에서 보유 전량을 매도합니다(1차 매수 다음 날부터).'}</p>
+          <p className="muted ct-rule">{(() => {
+            const m = Number(form.stop_margin_pct) > 0 ? +Number(form.stop_margin_pct) : 0
+            const line = m > 0 ? `매입 구간 하단의 ${m}% 아래(손절선)` : '매입 구간 하단'
+            return form.stop_mode === 'instant'
+              ? `보유 중 가격이 ${line}보다 한 번이라도 낮아지면 바로 보유 전량을 매도합니다(1차 매수 당일 포함${form.watch_mode === 'minute' ? ', 분 단위 감시는 완성된 봉의 종가' : ''}).`
+              : `전일 종가가 ${line}보다 낮으면, 그날 ${m > 0 ? '손절선' : '하단'} 아래 가격에서 보유 전량을 매도합니다(1차 매수 다음 날부터, 장중 일시 이탈은 그날 무시).`
+          })()}</p>
           {formError && editable && <div className="ct-error">{formError}</div>}
         </div>
 

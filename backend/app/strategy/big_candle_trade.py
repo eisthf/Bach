@@ -34,9 +34,11 @@
         trailing=False       전량 매도 → DONE
   TRAILING: 고점 × (1 − t%) 이하 → 나머지 전량 매도 → DONE
             (이미 TRAILING이면 도중에 trailing을 꺼도 끝까지 트레일링한다 — 절반은 이미 팔았다)
-  구간 이탈 손절 (ACCUMULATING / HOLDING / TRAILING, 1차 매수 다음 날부터):
+  구간 이탈 손절 (ACCUMULATING / HOLDING / TRAILING):
     손절선 = 매입 구간 하단 × (1 − m%) (m=stop_margin_pct, 기본 0 = 하단 그대로).
-    전일 종가 < 손절선이면, 그날 가격이 손절선 아래로 내려오는 순간 전량 매도 → DONE
+    stop_mode="close"(기본, 종가 확인 — 1차 매수 다음 날부터): 매일 아침 전일 종가 < 손절선이면 그날
+      손절을 켜고, 켜진 날 가격이 손절선 아래로 내려오는 순간 전량 매도 → DONE. 꺼진 날의 장중 이탈은 무시.
+    stop_mode="instant"(즉시 — 1차 당일 포함): 보유 중 가격이 손절선 아래면 바로 전량 매도 → DONE.
   MANUAL: 사람이 수동매매로 인계받음(엔진 정지)
 
 새 구간(재진입, 구간 매매만 — ``rezone``): 보유 중이고 익절 전(ACCUMULATING/HOLDING)이면 매입 구간을
@@ -391,7 +393,8 @@ class CandleTradeEngine:
         '1차 다음 날부터' 조건 없이 전일 종가만 본다."""
         line, prev_close = self.stop_line(), self.prev_close
         held_before = self.carry_qty > 0 or (self.first_date and self.first_date < today)
-        self.stop_armed = bool(self.phase.holding and self.shares > 0 and line and held_before
+        self.stop_armed = bool(self.config.stop_mode == "close"
+                               and self.phase.holding and self.shares > 0 and line and held_before
                                and prev_close is not None and prev_close < line)
         if self.stop_armed:
             self.log(f"전일 종가 {prev_close:,.0f} < {self._stop_label()} {line:,.0f} — "
@@ -447,10 +450,15 @@ class CandleTradeEngine:
             return
 
         line = self.stop_line()
-        if self.stop_armed and line and price < line:
-            await self._exit(sell_fn, f"구간 이탈 손절: 전일 종가 < {self._stop_label()}, "
-                                      f"{line:,.0f} 아래 {price:,.0f}")
-            return
+        if line and price < line:
+            if c.stop_mode == "instant":
+                await self._exit(sell_fn, f"구간 이탈 손절(즉시): {self._stop_label()} "
+                                          f"{line:,.0f} 아래 {price:,.0f}")
+                return
+            if self.stop_armed:
+                await self._exit(sell_fn, f"구간 이탈 손절: 전일 종가 < {self._stop_label()}, "
+                                          f"{line:,.0f} 아래 {price:,.0f}")
+                return
 
         if self.phase == CzPhase.TRAILING:
             self.peak = max(self.peak, price)

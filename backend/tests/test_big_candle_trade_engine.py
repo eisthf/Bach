@@ -223,6 +223,42 @@ async def test_zone_break_stop_with_margin_below_low():
     assert eng.phase == CzPhase.DONE and "하단 −2%" in eng.exit_reason
 
 
+def test_stop_mode_defaults_to_close_confirmation():
+    assert CandleTradeConfig().stop_mode == "close"
+    assert CandleTradeConfig.model_validate({"total_krw": 1_000_000}).stop_mode == "close"   # 예전 저장값
+
+
+async def test_instant_stop_sells_on_first_touch_even_on_buy_day():
+    eng, br, logs = make(stop_mode="instant", stop_margin_pct=2)   # 손절선 9,996
+    day(eng, D1, 1)
+    await tick(eng, br, 11_000, D1)          # 1차
+    await tick(eng, br, 9_996, D1)           # 손절선 그 자체는 '아래'가 아니다
+    assert br.sells == [] and not eng.stop_armed
+    await tick(eng, br, 9_995, D1)           # 1차 당일이라도 즉시 전량
+    assert br.sells == [45] and eng.phase == CzPhase.DONE and "즉시" in eng.exit_reason
+
+
+async def test_instant_stop_ignores_prev_close_rule():
+    eng, br, _ = make(stop_mode="instant")
+    day(eng, D1, 1)
+    await tick(eng, br, 11_000, D1)
+    day(eng, D2, 2, prev_close=10_100)       # 종가 확인 방식이면 켜질 날 — 즉시 방식은 arm 없이 가격만 본다
+    assert not eng.stop_armed
+    await tick(eng, br, 10_200, D2)          # 하단 그대로 → 매도 없음(2차 조건엔 맞음)
+    assert br.sells == []
+    await tick(eng, br, 10_199, D2)
+    assert eng.phase == CzPhase.DONE
+
+
+async def test_close_stop_ignores_intraday_break_on_unarmed_day():
+    eng, br, _ = make()                      # 기본 = 종가 확인
+    day(eng, D1, 1)
+    await tick(eng, br, 11_000, D1)
+    day(eng, D2, 2, prev_close=10_300)
+    await tick(eng, br, 9_000, D2)           # 장중 크게 이탈해도 그날은 팔지 않는다
+    assert br.sells == [] and eng.phase != CzPhase.DONE
+
+
 def test_stop_margin_defaults_to_zero():
     assert CandleTradeConfig().stop_margin_pct == 0
     eng, _, _ = make()

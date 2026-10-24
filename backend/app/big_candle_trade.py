@@ -638,7 +638,8 @@ class CandleTradeManager:
         z = eng.zone()
         ctx = {"created": it.created_at, "zone": list(z) if z else None,
                "take_profit_pct": eng.config.take_profit_pct, "trailing": eng.config.trailing,
-               "stop_margin_pct": eng.config.stop_margin_pct, "round": eng.round_no,
+               "stop_margin_pct": eng.config.stop_margin_pct, "stop_mode": eng.config.stop_mode,
+               "round": eng.round_no,
                "entry_days": eng.config.entry_days}
         if eng.kind == "candle":
             ctx.update(base_date=eng.base_date, base_open=eng.base_open, base_close=eng.base_close)
