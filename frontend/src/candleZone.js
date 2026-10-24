@@ -51,6 +51,38 @@ export function secondLegCheck(zone, cfg, firstPrice = 0) {
   }
 }
 
+// 남은 매수 계획을 규칙대로 다 산다고 볼 때의 예상 평단(익절 라인 안내용, 어림).
+//   1차(미체결): 현재가가 구간 안이면 현재가, 위면 상단(내려오며 들어옴), 아래면 하단. 현재가를 모르면 상단.
+//   2차(대기): 1차가 기준 2차 조건가 — 구간 안에서 불가능하면 2차 없음(그 금액은 빼고 계산).
+// legs = 서버 차수 [{status, amount, price}], shares·avgCost = 지금 보유. 살 차수가 없으면 null.
+export function projectedAverage({ shares, avgCost, legs, zone, cfg, price }) {
+  if (!zone || !legs?.length || !legs.some((l) => l.status === 'waiting')) return null
+  let first = legs[0].status === 'filled' ? legs[0].price : null
+  let qty = shares > 0 ? shares : 0
+  let cost = qty * (avgCost || 0)
+  const out = { first: null, second: null, secondNone: false }
+  if (legs[0].status === 'waiting') {
+    first = !(price > 0) || price > zone.high ? zone.high : price < zone.low ? zone.low : price
+    const q = Math.floor(legs[0].amount / first)
+    qty += q
+    cost += q * first
+    out.first = first
+  }
+  if (legs[1]?.status === 'waiting' && first > 0) {
+    const t = addTriggerFor(cfg, first, zone)
+    if (t && t.price >= zone.low) {
+      const q = Math.floor(legs[1].amount / t.price)
+      qty += q
+      cost += q * t.price
+      out.second = t.price
+    } else {
+      out.secondNone = true
+    }
+  }
+  if (!(qty > 0)) return null
+  return { ...out, avg: cost / qty }
+}
+
 // 2차 조건 설명(1차 체결 전).
 export function addRuleText(cfg) {
   const fixed = `1차가 −${cfg.add_drop_pct}%`

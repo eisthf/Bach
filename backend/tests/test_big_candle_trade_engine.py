@@ -165,6 +165,33 @@ async def test_turning_trailing_off_while_trailing_keeps_trailing():
     assert br.sells == [22, 23] and eng.phase == CzPhase.DONE
 
 
+def test_take_profit_mode_defaults_to_pct_and_line_needs_price():
+    assert CandleTradeConfig().take_profit_mode == "pct"
+    assert CandleTradeConfig.model_validate({"total_krw": 1_000_000}).take_profit_mode == "pct"   # 예전 저장값
+    with pytest.raises(ValueError, match="익절 라인"):
+        CandleTradeConfig(take_profit_mode="line")
+
+
+async def test_take_profit_by_price_line():
+    eng, br, logs = make(take_profit_mode="line", take_profit_line=12_500)
+    day(eng, D1, 1)
+    await tick(eng, br, 11_000, D1)          # 45주 @ 11,000 — % 기준이면 13,200
+    assert eng.take_profit_price() == 12_500 and any("라인 12,500 이상" in m for m in logs)
+    await tick(eng, br, 12_499, D1)
+    assert br.sells == []
+    await tick(eng, br, 12_500, D1)          # 라인 포함
+    assert br.sells == [22] and eng.phase == CzPhase.TRAILING
+    assert any("라인 12,500" in m for m in logs)
+
+
+async def test_take_profit_line_with_full_exit():
+    eng, br, _ = make(take_profit_mode="line", take_profit_line=12_000, trailing=False)
+    day(eng, D1, 1)
+    await tick(eng, br, 11_000, D1)
+    await tick(eng, br, 12_100, D1)
+    assert br.sells == [45] and eng.phase == CzPhase.DONE and "라인 12,000" in eng.exit_reason
+
+
 async def test_take_profit_after_both_legs_uses_average():
     eng, br, _ = make()
     day(eng, D1, 1)

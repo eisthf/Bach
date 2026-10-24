@@ -29,7 +29,8 @@
                     내려간 가격 (기본). 아니면 2차 없음. 구간이 넓을 때 −u% 고정은 너무 위에서
                     사게 되므로 하단 쪽에서 사되, 여유가 빠듯해도 최소 u%는 내려간 곳에서 산다
   ACCUMULATING / HOLDING:
-    - 익절: 가격 ≥ 평단 × (1 + p%) → 남은 매수 계획 취소 후
+    - 익절: 가격 ≥ 익절가 → 남은 매수 계획 취소 후. 익절가 = 평단 × (1 + p%)(take_profit_mode="pct",
+      기본) 또는 사람이 그은 가격 라인(take_profit_mode="line")
         trailing=True(기본)  보유의 절반 매도 → TRAILING
         trailing=False       전량 매도 → DONE
   TRAILING: 고점 × (1 − t%) 이하 → 나머지 전량 매도 → DONE
@@ -249,8 +250,20 @@ class CandleTradeEngine:
     def take_profit_price(self) -> Optional[float]:
         if self.phase not in (CzPhase.ACCUMULATING, CzPhase.HOLDING):
             return None
+        return self._tp_target()
+
+    def _tp_target(self) -> Optional[float]:
+        """익절가 — 평단 +p% 또는 가격 라인."""
+        c = self.config
+        if c.take_profit_mode == "line":
+            return c.take_profit_line if c.take_profit_line > 0 else None
         avg = self.avg_cost
-        return avg * (1 + self.config.take_profit_pct / 100) if avg > 0 else None
+        return avg * (1 + c.take_profit_pct / 100) if avg > 0 else None
+
+    def _tp_label(self) -> str:
+        c = self.config
+        return (f"라인 {c.take_profit_line:,.0f}" if c.take_profit_mode == "line"
+                else f"+{c.take_profit_pct:g}%")
 
     def trailing_stop(self) -> Optional[float]:
         if self.phase != CzPhase.TRAILING or self.peak <= 0:
@@ -460,7 +473,9 @@ class CandleTradeEngine:
                     trigger, basis = self.add_plan()
                     add = (f"2차 매수: 다음 거래일부터 구간 안 & ≤ {trigger:,.0f}({_BASIS[basis]})"
                            if self.add_possible() else "2차 매수 없음(1차가에서 구간 하단까지 여유 부족)")
-                    self.log(f"{add}, {'절반 익절' if c.trailing else '전량 익절'}: 평단 +{c.take_profit_pct:g}%")
+                    tp = (f"라인 {c.take_profit_line:,.0f} 이상" if c.take_profit_mode == "line"
+                          else f"평단 +{c.take_profit_pct:g}%")
+                    self.log(f"{add}, {'절반 익절' if c.trailing else '전량 익절'}: {tp}")
                 else:
                     self.phase = CzPhase.DONE
                     self.exit_reason = "1차 매수 실패"
@@ -488,8 +503,8 @@ class CandleTradeEngine:
                 await self._exit(sell_fn, f"트레일링 스톱: 고점 {self.peak:,.0f} −{c.trailing_pct:g}%")
             return
 
-        avg = self.avg_cost
-        if avg > 0 and price >= avg * (1 + c.take_profit_pct / 100):
+        target = self._tp_target()
+        if target is not None and price >= target:
             await self._take_half(price, sell_fn)
             return
 
@@ -546,11 +561,11 @@ class CandleTradeEngine:
         half = self.shares // 2
         if not c.trailing:     # 트레일링 없이 익절가에서 전량 매도로 끝
             self._cancel_waiting()
-            await self._exit(sell_fn, f"익절 +{c.take_profit_pct:g}% (전량)")
+            await self._exit(sell_fn, f"익절 {self._tp_label()} (전량)")
             return
         if half <= 0:      # 1주뿐이면 절반이 없다 — 전량 익절
             self._cancel_waiting()
-            await self._exit(sell_fn, f"익절 +{c.take_profit_pct:g}% (1주라 전량)")
+            await self._exit(sell_fn, f"익절 {self._tp_label()} (1주라 전량)")
             return
         self.order_reason = "절반 익절"
         sold = await sell_fn(half)
@@ -561,7 +576,7 @@ class CandleTradeEngine:
         self._cancel_waiting()
         self.phase = CzPhase.TRAILING
         self.peak = price
-        self.log(f"절반 익절 +{c.take_profit_pct:g}%: {sold}주 매도, 남은 매수 계획 취소 → "
+        self.log(f"절반 익절 {self._tp_label()}: {sold}주 매도, 남은 매수 계획 취소 → "
                  f"나머지 {self.shares}주 트레일링(고점 −{c.trailing_pct:g}%)")
 
     async def _exit(self, sell_fn: SellFn, reason: str) -> None:

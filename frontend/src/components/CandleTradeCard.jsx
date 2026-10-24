@@ -7,7 +7,7 @@ import { useStore } from '../store'
 import Chart from './Chart'
 import PriceTicker from './PriceTicker'
 import { ROUTES, navigate } from '../router'
-import { addRuleText, roundToTick, secondLegCheck, zoneOf } from '../candleZone'
+import { addRuleText, projectedAverage, roundToTick, secondLegCheck, zoneOf } from '../candleZone'
 
 const fmt = (n) => Number(n || 0).toLocaleString('ko-KR')
 const fmtPrice = (n) => (n ? Math.round(n).toLocaleString('ko-KR') : '—')
@@ -38,6 +38,8 @@ function fromForm(f) {
     add_gap_pct: Number(f.add_gap_pct),
     add_min_drop_pct: Number(f.add_min_drop_pct),
     take_profit_pct: Number(f.take_profit_pct),
+    take_profit_mode: f.take_profit_mode || 'pct',
+    take_profit_line: Number(f.take_profit_line) || 0,
     trailing: f.trailing !== false,
     trailing_pct: Number(f.trailing_pct),
     stop_margin_pct: Number(f.stop_margin_pct),
@@ -55,7 +57,9 @@ function validate(c) {
   if (!(c.add_drop_pct > 0 && c.add_drop_pct < 100)) return '2차 매수 하락률은 0~100% 사이여야 합니다.'
   if (!(c.add_gap_pct > 0 && c.add_gap_pct <= 100)) return '2차 구간 폭 비율은 0 초과 100% 이하여야 합니다.'
   if (!(c.add_min_drop_pct >= 0 && c.add_min_drop_pct < 100)) return '2차 최소 하락률은 0~100% 사이여야 합니다.'
-  if (!(c.take_profit_pct > 0 && c.take_profit_pct <= 500)) return '익절 상승률은 0~500% 사이여야 합니다.'
+  if (c.take_profit_mode === 'line' ? !(c.take_profit_line > 0) : !(c.take_profit_pct > 0 && c.take_profit_pct <= 500)) {
+    return c.take_profit_mode === 'line' ? '익절 라인 가격을 정하세요(입력·차트에서 찍기).' : '익절 상승률은 0~500% 사이여야 합니다.'
+  }
   if (c.trailing && !(c.trailing_pct > 0 && c.trailing_pct < 100)) return '트레일링 하락률은 0~100% 사이여야 합니다.'
   if (!(c.stop_margin_pct >= 0 && c.stop_margin_pct < 50)) return '구간 이탈 손절 여유는 0~50% 사이여야 합니다.'
   if (!(c.entry_days >= 1 && c.entry_days <= 60)) return '1차 매수 기한은 1~60거래일이어야 합니다.'
@@ -110,8 +114,9 @@ export default function CandleTradeCard({ account, item }) {
       : !(zLow < zHigh) ? '하단은 상단보다 낮아야 합니다.' : ''
   const setZoneAt = (key, value) => { setZoneForm((z) => ({ ...z, [key]: value })); setZoneDirty(true) }
   // 상단·하단 선 끌기(마우스·터치). 놓으면 입력값이 바뀌고, [구간 저장]으로 확정한다.
-  const onLineDrag = (id, p) => setZoneAt(id, roundToTick(p))
-  const onPriceClick = pick && zoneEditable ? (p) => {
+  const onLineDrag = (id, p) => (id === 'tp' ? set('take_profit_line', roundToTick(p)) : setZoneAt(id, roundToTick(p)))
+  const onPriceClick = pick === 'tp' ? (p) => { set('take_profit_line', roundToTick(p)); setPick(null) }
+    : pick && zoneEditable ? (p) => {
     setZoneAt(pick, roundToTick(p))
     // 상단 다음엔 하단을 바로 찍을 수 있게(비어 있을 때만).
     setPick(pick === 'high' && !zoneForm.low ? 'low' : null)
@@ -203,6 +208,9 @@ export default function CandleTradeCard({ account, item }) {
   const pnlPct = item.shares > 0 && item.avg_cost > 0 && price ? (price - item.avg_cost) / item.avg_cost * 100 : null
   const inZone = zone && price ? price >= zone.low && price <= zone.high : null
 
+  // 익절 라인 방식이면 편집 중인 값을 차트에 그리고 끌 수 있게 한다(저장은 [설정 저장]).
+  const tpLine = form.take_profit_mode === 'line' && Number(form.take_profit_line) > 0 ? Number(form.take_profit_line) : 0
+  const tpTitle = form.trailing === false ? '익절(전량)' : '절반 익절'
   const lines = useMemo(() => {
     const out = []
     if (isZone) {
@@ -215,12 +223,13 @@ export default function CandleTradeCard({ account, item }) {
     }
     if (item.legs[1]?.trigger && item.legs[1].possible) out.push({ price: item.legs[1].trigger, color: '#6a1b9a', title: '2차 ≤', dashed: true })
     if (item.avg_cost > 0 && holding) out.push({ price: item.avg_cost, color: '#555', title: '평단', dashed: true })
-    if (item.take_profit_price) out.push({ price: item.take_profit_price, color: '#d32f2f', title: item.config.trailing === false ? '익절(전량)' : '절반 익절', dashed: true })
+    if (tpLine) out.push({ price: tpLine, color: '#d32f2f', title: `${tpTitle} 라인`, dashed: dirty, dragId: 'tp' })
+    else if (item.take_profit_price) out.push({ price: item.take_profit_price, color: '#d32f2f', title: item.config.trailing === false ? '익절(전량)' : '절반 익절', dashed: true })
     if (item.trailing_stop) out.push({ price: item.trailing_stop, color: '#e65100', title: '트레일링', dashed: true })
     // 손절선은 하단과 다를 때만(여유 0이면 구간 하단선이 곧 손절선).
     if (holding && item.stop_line && zone && item.stop_line < zone.low) out.push({ price: item.stop_line, color: '#1565c0', title: '손절선', dashed: true })
     return out
-  }, [zone?.low, zone?.high, isZone, zoneDirty, zLow, zHigh, item.legs, item.avg_cost, item.take_profit_price, item.trailing_stop, item.config.trailing, item.stop_line, holding])
+  }, [zone?.low, zone?.high, isZone, zoneDirty, zLow, zHigh, item.legs, item.avg_cost, item.take_profit_price, item.trailing_stop, item.config.trailing, item.stop_line, holding, tpLine, tpTitle, dirty])
 
   return (
     <div className={`stock-panel candle-card tone-${ph.tone}`}>
@@ -329,7 +338,7 @@ export default function CandleTradeCard({ account, item }) {
                 ? `${round.no}회차는 아직 체결이 없어 회차를 유지한 채 구간·금액만 바꿉니다. 보유 ${fmt(item.shares)}주(평단 ${fmtPrice(item.avg_cost)}) 그대로, 익절은 합산 평단, 손절은 새 하단 기준.`
                 : `대기 차수 ${fmt(item.pending_amount)}원은 취소, 보유 ${fmt(item.shares)}주(평단 ${fmtPrice(item.avg_cost)})는 이어 가고 ${round.no + 1}회차로 새 구간에서 새로 1차·2차 매수합니다. 익절은 합산 평단, 손절은 새 하단 기준.`)
                 : !item.zone_editable ? (item.rezone_allowed ? '1차 매수 후에는 [새 구간 설정]으로만 구간을 바꿀 수 있습니다(보유 이월).' : '1차 매수 후에는 구간을 바꿀 수 없습니다.')
-                : pick ? `차트에서 ${pick === 'high' ? '상단' : '하단'} 가격을 누르세요(호가 단위로 맞춤).`
+                : pick && pick !== 'tp' ? `차트에서 ${pick === 'high' ? '상단' : '하단'} 가격을 누르세요(호가 단위로 맞춤).`
                   : zone ? `폭 ${((1 - zone.low / zone.high) * 100).toFixed(1)}% — 차트의 구간 선을 끌어 옮길 수 있습니다.`
                     : '상단·하단 가격을 차트에서 찍거나 직접 입력하세요.')}
           </span>
@@ -337,8 +346,11 @@ export default function CandleTradeCard({ account, item }) {
       )}
       <Chart account={account.id} code={item.code} interval={interval} tick={tick} height={isZone ? 320 : 260}
         anchorDate={isZone ? null : item.base.date} priceLines={lines} onPriceClick={onPriceClick}
-        draggableLines={isZone && zoneEditable ? [{ id: 'high', price: zHigh }, { id: 'low', price: zLow }] : null}
-        onLineDrag={isZone && zoneEditable ? onLineDrag : null} />
+        draggableLines={[
+          ...(isZone && zoneEditable ? [{ id: 'high', price: zHigh }, { id: 'low', price: zLow }] : []),
+          ...(tpLine && editable ? [{ id: 'tp', price: tpLine }] : []),
+        ]}
+        onLineDrag={(isZone && zoneEditable) || (tpLine && editable) ? onLineDrag : null} />
 
       <div className="panels">
         <div className="ct-config">
@@ -423,10 +435,46 @@ export default function CandleTradeCard({ account, item }) {
             <label title={form.trailing !== false
               ? '도달하면 보유의 절반을 팔고, 아직 사지 않은 2차 계획은 취소합니다.'
               : '도달하면 보유 전량을 팔고 매매를 끝냅니다. 아직 사지 않은 2차 계획은 취소합니다.'}>
-              {form.trailing !== false ? '절반 익절' : '전량 익절'}: 평단 대비
-              <input type="number" min="0.1" max="500" step="any" value={form.take_profit_pct}
-                onChange={(e) => set('take_profit_pct', e.target.value)} />% 상승
+              {form.trailing !== false ? '절반 익절' : '전량 익절'}:
+              <select value={form.take_profit_mode || 'pct'} onChange={(e) => set('take_profit_mode', e.target.value)}
+                aria-label="익절 기준">
+                <option value="pct">평단 대비</option>
+                <option value="line">가격 라인</option>
+              </select>
+              {form.take_profit_mode === 'line' ? (
+                <>
+                  <input type="number" min="1" step="any" value={form.take_profit_line || ''}
+                    onChange={(e) => set('take_profit_line', e.target.value)} />원 이상
+                  <button type="button" className={pick === 'tp' ? 'on' : ''} aria-pressed={pick === 'tp'}
+                    onClick={() => setPick(pick === 'tp' ? null : 'tp')}>차트에서 찍기</button>
+                </>
+              ) : (
+                <><input type="number" min="0.1" max="500" step="any" value={form.take_profit_pct}
+                  onChange={(e) => set('take_profit_pct', e.target.value)} />% 상승</>
+              )}
             </label>
+            {form.take_profit_mode === 'line' && (
+              <div className={`ct-tp-hint ${tpLine && ((holding && item.avg_cost > 0 && tpLine <= item.avg_cost) || (price && tpLine <= price)) ? 'down' : 'muted'}`}>
+                {pick === 'tp' ? '차트에서 익절 라인 가격을 누르세요(호가 단위로 맞춤). 차트의 익절 라인은 끌어서 옮길 수 있습니다.'
+                  : !tpLine ? '익절 라인 가격을 입력하거나 차트에서 찍으세요.'
+                    : holding && item.avg_cost > 0 && tpLine <= item.avg_cost ? `⚠️ 라인이 평단 ${fmtPrice(item.avg_cost)} 이하 — 손실을 보고 익절할 수 있습니다.`
+                      : price && tpLine <= price ? `⚠️ 라인이 현재가 ${fmtPrice(price)} 이하 — 보유 중이면 저장 즉시 익절합니다.`
+                        : `지금 평단 대비 ${holding && item.avg_cost > 0 ? `+${((tpLine / item.avg_cost - 1) * 100).toFixed(1)}%` : '—'} · 차트의 익절 라인을 끌어 옮길 수 있습니다(저장은 [설정 저장]).`}
+                {tpLine > 0 && pick !== 'tp' && (() => {
+                  const p = projectedAverage({ shares: item.shares, avgCost: item.avg_cost, legs: item.legs, zone, cfg, price })
+                  if (!p) return null
+                  const parts = [p.first && `1차 ≈ ${fmtPrice(p.first)}`, p.second ? `2차 ≈ ${fmtPrice(p.second)}` : p.secondNone && '2차 없음 — 1차만 반영']
+                    .filter(Boolean).join(', ')
+                  const pct = (tpLine / p.avg - 1) * 100
+                  return (
+                    <div className={pct <= 0 ? 'down' : 'muted'}
+                      title="1차는 구간에 들어오는 가격(위에서 내려오면 상단), 2차는 2차 조건가로 어림했습니다. 실제 체결가와 다를 수 있습니다.">
+                      {round.no > 1 ? `${round.no}회차 ` : ''}계획대로 다 사면({parts}) 평단 ≈ {fmtPrice(p.avg)} → 라인은 {pct > 0 ? '+' : ''}{pct.toFixed(1)}%
+                    </div>
+                  )
+                })()}
+              </div>
+            )}
             <label title="켜면 절반 익절 뒤 나머지를 고점 대비 하락률로 따라가며 팝니다. 끄면 익절가에서 전량 매도합니다. 이미 트레일링 중이면 꺼도 끝까지 트레일링합니다.">
               <input type="checkbox" checked={form.trailing !== false}
                 onChange={(e) => set('trailing', e.target.checked)} />

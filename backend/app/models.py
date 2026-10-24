@@ -203,6 +203,9 @@ class CandleTradeConfig(BaseModel):
     add_min_drop_pct: float = Field(2.0, ge=0, lt=100,
                                     description="갭 기준 2차의 최소 하락률(%). 갭이 작아 이보다 얕으면 2차 없음")
     take_profit_pct: float = Field(20.0, gt=0, le=500, description="익절: 평단 대비 상승률(%)")
+    # 익절 기준. pct=평단 × (1 + take_profit_pct%)(기본), line=사람이 그은 가격 라인(take_profit_line) 이상.
+    take_profit_mode: Literal["pct", "line"] = Field("pct", description="익절 기준: 평단 대비 % / 가격 라인")
+    take_profit_line: float = Field(0.0, ge=0, description="익절 가격 라인(원). take_profit_mode=line 일 때만")
     # 익절 방식. True=절반 익절 후 나머지 트레일링(기본), False=익절가에서 전량 매도로 끝.
     trailing: bool = Field(True, description="절반 익절 후 나머지 트레일링 스톱. 끄면 익절가에서 전량 매도")
     trailing_pct: float = Field(5.0, gt=0, lt=100, description="나머지 트레일링 스톱: 고점 대비 하락률(%)")
@@ -219,6 +222,8 @@ class CandleTradeConfig(BaseModel):
     def _check(self) -> "CandleTradeConfig":
         if self.watch_minutes not in WATCH_MINUTES:
             raise ValueError(f"분 단위 감시는 {', '.join(map(str, WATCH_MINUTES))}분 중 하나여야 합니다.")
+        if self.take_profit_mode == "line" and self.take_profit_line <= 0:
+            raise ValueError("익절 라인 가격을 정하세요.")
         return self
 
 

@@ -650,7 +650,8 @@ class CandleTradeManager:
         eng = it.engine
         z = eng.zone()
         ctx = {"created": it.created_at, "zone": list(z) if z else None,
-               "take_profit_pct": eng.config.take_profit_pct, "trailing": eng.config.trailing,
+               "take_profit_pct": eng.config.take_profit_pct, "take_profit_mode": eng.config.take_profit_mode,
+               "take_profit_line": eng.config.take_profit_line, "trailing": eng.config.trailing,
                "stop_margin_pct": eng.config.stop_margin_pct, "stop_mode": eng.config.stop_mode,
                "round": eng.round_no,
                "entry_days": eng.config.entry_days}

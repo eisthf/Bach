@@ -705,6 +705,7 @@ input:focus { outline: none; border-color: var(--accent); }
 .ct-ratios input { width: 64px; }
 .ct-rule { font-size: 12px; margin: 8px 0 0; }
 .ct-round-total { font-size: 13px; margin: 2px 0 6px; line-height: 1.5; }
+.ct-tp-hint { font-size: 12px; margin: -2px 0 6px 12px; }
 .ct-maxdrop { font-size: 12px; margin-top: 2px; }
 .chart-canvas.picking, .chart-canvas.picking * { cursor: crosshair !important; }
 .chart-canvas.line-hover, .chart-canvas.line-hover *,
