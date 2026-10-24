@@ -313,6 +313,16 @@ async def rezone_candle_trade(account: str, code: str, payload: dict):
     return await _candle_acall(_candle(account).rezone, code, low, high, budget)
 
 
+@app.put("/api/{account}/candle-trades/{code}/round-budget")
+async def set_candle_trade_round_budget(account: str, code: str, payload: dict):
+    """새 구간 회차의 매수 금액 {budget}. 그 회차 1차 매수 전에만."""
+    try:
+        budget = int(payload.get("budget"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "budget 숫자 필요")
+    return await _candle_acall(_candle(account).set_round_budget, code, budget)
+
+
 @app.put("/api/{account}/candle-trades/{code}/config")
 def set_candle_trade_config(account: str, code: str, config: CandleTradeConfig):
     return _candle_call(_candle(account).set_config, code, config)

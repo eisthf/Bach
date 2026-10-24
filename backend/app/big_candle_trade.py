@@ -117,7 +117,7 @@ class CandleTradeManager:
             "stop_armed": eng.stop_armed, "stop_line": eng.stop_line(), "peak": eng.peak,
             "take_profit_price": eng.take_profit_price(), "trailing_stop": eng.trailing_stop(),
             "shares": eng.shares, "sold_qty": eng.sold_qty, "avg_cost": eng.avg_cost,
-            "round": {"no": eng.round_no, "carry_qty": eng.carry_qty,
+            "round": {"no": eng.round_no, "carry_qty": eng.carry_qty, "carry_cost": eng.carry_cost,
                       "carry_avg": eng.carry_cost / eng.carry_qty if eng.carry_qty else 0.0,
                       "budget": eng.round_budget},
             "pending_amount": eng.pending_amount,
@@ -382,6 +382,19 @@ class CandleTradeManager:
                 self._log(code, f"⚠️ {notice}")
             self.persist()
         await self._broadcast_with_position(code)
+        return self.payload(code)
+
+    async def set_round_budget(self, code: str, budget: int) -> dict:
+        """새 구간 회차의 매수 금액 변경(그 회차 1차 전). 예수금 가드는 새 구간 설정과 같다."""
+        it = self._get(code)
+        async with it.lock:
+            notice = await self._rezone_budget_check(it, int(budget))
+            it.engine.set_round_budget(budget)
+            it.notice = notice
+            if notice:
+                self._log(code, f"⚠️ {notice}")
+            self.persist()
+        self.broadcast(code)
         return self.payload(code)
 
     def _check_free(self, code: str) -> None:

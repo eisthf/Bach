@@ -620,6 +620,36 @@ async def test_rezone_roundtrip_and_reconfigure_keeps_round_budget():
     assert [leg.amount for leg in back.legs] == [240_000, 360_000]   # 회차 예산 기준
 
 
+async def test_rezone_again_before_any_fill_keeps_round_and_carry():
+    eng, br, logs = await zone_with_first_leg()
+    eng.rezone(9_000, 9_400, 500_000)
+    eng.rezone(8_800, 9_300, 700_000)          # 2회차에 아직 체결 없음 → 회차 유지, 구간·금액만
+    assert eng.round_no == 2 and eng.zone() == (8_800, 9_300)
+    assert (eng.carry_qty, eng.avg_cost) == (45, pytest.approx(11_000))
+    assert [leg.amount for leg in eng.legs] == [350_000, 350_000]
+    assert any("회차 유지" in m for m in logs)
+    day(eng, D2, 2, prev_close=9_500)
+    await tick(eng, br, 9_200, D2)             # 2회차 1차 체결
+    eng.rezone(8_000, 8_500, 500_000)          # 체결이 있었으니 이제 3회차, 보유 다시 이월
+    assert eng.round_no == 3 and eng.carry_qty == 45 + 38
+    assert eng.avg_cost == pytest.approx((45 * 11_000 + 38 * 9_200) / 83)
+
+
+async def test_round_budget_editable_only_before_new_first_leg():
+    eng, br, _ = await zone_with_first_leg()
+    with pytest.raises(ValueError, match="새 구간"):
+        eng.set_round_budget(800_000)          # 1회차는 총 투자액
+    eng.rezone(9_000, 9_400, 500_000)
+    eng.set_round_budget(800_000)
+    assert eng.round_budget == 800_000 and [leg.amount for leg in eng.legs] == [400_000, 400_000]
+    with pytest.raises(ValueError, match="1만원"):
+        eng.set_round_budget(5_000)
+    day(eng, D2, 2, prev_close=9_500)
+    await tick(eng, br, 9_200, D2)             # 새 1차 체결
+    with pytest.raises(ValueError, match="1차 매수 후"):
+        eng.set_round_budget(600_000)
+
+
 def test_zone_kind_roundtrip():
     eng, _, _ = make_zone()
     eng.watch_from = D1

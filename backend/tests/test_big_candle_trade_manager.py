@@ -357,6 +357,9 @@ async def test_rezone_via_manager_checks_cash_and_broadcasts(hub):
     assert item["round"]["no"] == 2 and item["round"]["carry_qty"] > 0
     assert item["zone"] == {"low": 9_000, "high": 9_400} and item["rezone_allowed"]
     assert [leg["amount"] for leg in item["legs"]] == [250_000, 250_000]
+    item = await hub.candle_trades.set_round_budget(CODE, 700_000)
+    assert item["round"]["budget"] == 700_000
+    assert [leg["amount"] for leg in item["legs"]] == [350_000, 350_000]
 
 
 async def test_cash_guard_counts_other_strategies(hub):

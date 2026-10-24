@@ -87,6 +87,16 @@ export default function CandleTradeCard({ account, item }) {
   const [rezoning, setRezoning] = useState(false)
   const [budget, setBudget] = useState('')
   const zoneEditable = item.zone_editable || (rezoning && item.rezone_allowed)
+  // 새 구간 회차(2회차~): 총 투자액 대신 '이월분 매입 + 이번 회차 매수 금액'을 보여 준다.
+  const round = item.round || { no: 1 }
+  const laterRound = round.no > 1
+  const [roundBudget, setRoundBudget] = useState(String(round.budget || ''))
+  const [roundDirty, setRoundDirty] = useState(false)
+  useEffect(() => { if (!roundDirty) setRoundBudget(String(round.budget || '')) }, [round.budget, roundDirty])
+  const roundBudgetNum = Math.round(Number(roundBudget) || 0)
+  const roundEditable = laterRound && item.legs.every((l) => l.status === 'waiting')
+  // 이번 회차에 체결이 없으면 [새 구간 시작]은 새 회차가 아니라 이번 회차의 구간·금액 변경이다(서버와 같은 규칙).
+  const sameRound = laterRound && !item.legs.some((l) => l.status === 'filled')
   useEffect(() => { if (!item.rezone_allowed) setRezoning(false) }, [item.rezone_allowed])
   useEffect(() => {
     if (!zoneDirty) setZoneForm({ low: item.zone?.low || '', high: item.zone?.high || '' })
@@ -136,10 +146,17 @@ export default function CandleTradeCard({ account, item }) {
   const saveRezone = async () => {
     const message = `${account.danger ? '⚠️ 실전 ' : ''}${account.label} 계좌 구간 매매 새 구간\n${item.name} ${item.code}\n`
       + `새 매입 구간 ${fmtPrice(zLow)} ~ ${fmtPrice(zHigh)}, 매수 ${fmt(budgetNum)}원(1차·2차)\n`
-      + `대기 중인 차수는 취소되고, 보유 ${fmt(item.shares)}주(평단 ${fmtPrice(item.avg_cost)})는 그대로 이어집니다.\n`
+      + (sameRound ? `${round.no}회차(체결 전)의 구간·금액을 바꿉니다(회차 유지). ` : `${round.no + 1}회차로 시작합니다. 대기 중인 차수는 취소되고, `)
+      + `보유 ${fmt(item.shares)}주(평단 ${fmtPrice(item.avg_cost)})는 그대로 이어집니다.\n`
       + `익절은 합산 평단, 손절은 새 구간 하단 기준입니다. 진행할까요?`
     const r = await run(() => actions.rezoneCandle(account.id, item.code, zLow, zHigh, budgetNum, message), '새 구간 시작됨')
     if (r) cancelRezone()
+    return r
+  }
+
+  const saveRoundBudget = async () => {
+    const r = await run(() => actions.setRoundBudget(account.id, item.code, roundBudgetNum), '회차 금액 저장됨')
+    if (r) setRoundDirty(false)
     return r
   }
 
@@ -291,7 +308,8 @@ export default function CandleTradeCard({ account, item }) {
           )}
           {rezoning && (
             <>
-              <button className="on" disabled={busy || !zoneDirty || !!zoneFormError} onClick={saveRezone}>새 구간 시작</button>
+              {/* 구간을 그대로 두고 금액만 바꿔 새로 시작해도 된다 — 구간 값이 올바르면 켠다. */}
+              <button className="on" disabled={busy || !(zLow > 0 && zLow < zHigh) || !!zoneFormError} onClick={saveRezone}>새 구간 시작</button>
               <button disabled={busy} onClick={cancelRezone}>취소</button>
             </>
           )}
@@ -307,7 +325,9 @@ export default function CandleTradeCard({ account, item }) {
           )}
           <span className={`ct-zone-hint ${zoneFormError ? 'down' : 'muted'}`}>
             {zoneFormError
-              || (rezoning ? `대기 차수 ${fmt(item.pending_amount)}원은 취소, 보유 ${fmt(item.shares)}주(평단 ${fmtPrice(item.avg_cost)})는 이어 가고 새 구간에서 새로 1차·2차 매수합니다. 익절은 합산 평단, 손절은 새 하단 기준.`
+              || (rezoning ? (sameRound
+                ? `${round.no}회차는 아직 체결이 없어 회차를 유지한 채 구간·금액만 바꿉니다. 보유 ${fmt(item.shares)}주(평단 ${fmtPrice(item.avg_cost)}) 그대로, 익절은 합산 평단, 손절은 새 하단 기준.`
+                : `대기 차수 ${fmt(item.pending_amount)}원은 취소, 보유 ${fmt(item.shares)}주(평단 ${fmtPrice(item.avg_cost)})는 이어 가고 ${round.no + 1}회차로 새 구간에서 새로 1차·2차 매수합니다. 익절은 합산 평단, 손절은 새 하단 기준.`)
                 : !item.zone_editable ? (item.rezone_allowed ? '1차 매수 후에는 [새 구간 설정]으로만 구간을 바꿀 수 있습니다(보유 이월).' : '1차 매수 후에는 구간을 바꿀 수 없습니다.')
                 : pick ? `차트에서 ${pick === 'high' ? '상단' : '하단'} 가격을 누르세요(호가 단위로 맞춤).`
                   : zone ? `폭 ${((1 - zone.low / zone.high) * 100).toFixed(1)}% — 차트의 구간 선을 끌어 옮길 수 있습니다.`
@@ -324,10 +344,29 @@ export default function CandleTradeCard({ account, item }) {
         <div className="ct-config">
           <div className="panel-title">매매 설정</div>
           <fieldset disabled={!editable || busy}>
-            <label>총 투자액
-              <input type="number" min="10000" step="10000" value={form.total_krw}
-                onChange={(e) => set('total_krw', e.target.value)} />원
-            </label>
+            {!laterRound ? (
+              <label>총 투자액
+                <input type="number" min="10000" step="10000" value={form.total_krw}
+                  onChange={(e) => set('total_krw', e.target.value)} />원
+              </label>
+            ) : (
+              <>
+                <div className="ct-round-total" title="이 종목에 들어갔거나 들어갈 돈: 앞 회차에서 이어 온 보유의 실제 매입액 + 이번 회차 매수 계획">
+                  투입 예정 총액 <strong>{fmt(Math.round(round.carry_cost + (roundDirty ? roundBudgetNum : round.budget)))}원</strong>
+                  <span className="muted"> = 이월분 매입 {fmt(Math.round(round.carry_cost))}원
+                    ({fmt(round.carry_qty)}주 @ {fmtPrice(round.carry_avg)}) + 이번 회차 {fmt(roundDirty ? roundBudgetNum : round.budget)}원</span>
+                </div>
+                <label title="새 구간에서 살 금액. 1차 비중대로 1차·2차로 나눕니다. 이번 회차 1차를 사기 전까지만 바꿀 수 있습니다.">
+                  {round.no}회차 매수 금액
+                  <input type="number" min="10000" step="10000" value={roundBudget} disabled={!roundEditable}
+                    onChange={(e) => { setRoundBudget(e.target.value); setRoundDirty(true) }} />원
+                  <span className="muted">(1차 {fmt(item.legs[0]?.amount)} · 2차 {fmt(item.legs[1]?.amount)})</span>
+                  {roundEditable && roundDirty && (
+                    <button type="button" disabled={busy || roundBudgetNum < 10_000} onClick={saveRoundBudget}>금액 저장</button>
+                  )}
+                </label>
+              </>
+            )}
             <label title="1차 매수에 쓰는 비중. 나머지가 2차 매수 금액입니다.">1차 매수 비중
               <input type="number" min="10" max="90" step="any" value={form.first_ratio_pct} disabled={bought}
                 onChange={(e) => set('first_ratio_pct', e.target.value)} />%
@@ -339,10 +378,10 @@ export default function CandleTradeCard({ account, item }) {
                   onChange={(e) => set('zone_margin_pct', e.target.value)} />% 안쪽
               </label>
             )}
-            <label title={`${isZone ? '감시를 시작한 거래일을 1일째로' : '기준일 다음 거래일부터'} 셉니다. 이 안에 구간 진입이 없으면 매매하지 않고 종료합니다.`}>1차 매수 기한: {isZone ? '감시 시작부터' : '기준일 이후'}
+            {!laterRound && <label title={`${isZone ? '감시를 시작한 거래일을 1일째로' : '기준일 다음 거래일부터'} 셉니다. 이 안에 구간 진입이 없으면 매매하지 않고 종료합니다.`}>1차 매수 기한: {isZone ? '감시 시작부터' : '기준일 이후'}
               <input type="number" min="1" max="60" step="1" value={form.entry_days} disabled={bought}
                 onChange={(e) => set('entry_days', e.target.value)} />거래일
-            </label>
+            </label>}
             <label title="1차 매수 다음 날부터, 가격이 매입 구간 안이면서 2차 매수가 이하로 내려오면 2차를 삽니다. 혼합: ①1차가 대비 최소 하락과 ②구간 상단에서 구간 폭의 일정 비율 아래 중 더 낮은 가격. 1차가가 하단에 너무 가까우면 2차를 하지 않습니다.">2차 매수 가격
               <select value={form.add_mode} onChange={(e) => set('add_mode', e.target.value)}>
                 <option value="mixed">혼합</option>

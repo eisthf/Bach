@@ -91,6 +91,8 @@ export const api = {
   setCandleZone: (a, code, low, high) =>
     req(`/api/${enc(a)}/candle-trades/${enc(code)}/zone`, { method: 'PUT', body: JSON.stringify({ low, high }) }),
   // 구간 매매 새 구간(재진입): 대기 차수 취소, 보유 이월, 새 구간에서 budget원으로 새 1차·2차.
+  setRoundBudget: (a, code, budget) =>
+    req(`/api/${enc(a)}/candle-trades/${enc(code)}/round-budget`, { method: 'PUT', body: JSON.stringify({ budget }) }),
   rezoneCandle: (a, code, low, high, budget) =>
     req(`/api/${enc(a)}/candle-trades/${enc(code)}/rezone`, { method: 'POST', body: JSON.stringify({ low, high, budget }) }),
   setCandleConfig: (a, code, config) =>

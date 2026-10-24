@@ -274,7 +274,10 @@ class CandleTradeEngine:
 
     def rezone(self, low: float, high: float, budget: int) -> None:
         """새 구간(재진입). 대기 차수를 취소하고 보유는 이월, 새 구간에서 ``budget``원으로
-        새 1차·2차 계획을 세운다. 손절선이 새 구간 기준으로 바뀌므로 오늘 손절 여부도 다시 판단."""
+        새 1차·2차 계획을 세운다. 손절선이 새 구간 기준으로 바뀌므로 오늘 손절 여부도 다시 판단.
+
+        이번 회차(2회차~)에 아직 체결이 없으면 새 회차를 만들지 않고 이번 회차의 구간·금액만
+        바꾼다 — 이월분도 그대로(사지 않았으니 다시 이월할 것이 없다)."""
         if self.kind != "zone":
             raise ValueError("새 구간 설정은 구간 매매에서만 할 수 있습니다.")
         if self.phase not in (CzPhase.ACCUMULATING, CzPhase.HOLDING) or self.shares <= 0:
@@ -286,17 +289,21 @@ class CandleTradeEngine:
             raise ValueError("새 구간 매수 금액은 1만원 이상이어야 합니다.")
         canceled = self.pending_amount
         qty, avg = self.shares, self.avg_cost
-        self.carry_qty, self.carry_cost = qty, avg * qty
-        self.sold_qty = 0
+        same_round = self.round_no > 1 and not any(leg.status == "filled" for leg in self.legs)
+        if not same_round:
+            self.carry_qty, self.carry_cost = qty, avg * qty
+            self.sold_qty = 0
+            self.round_no += 1
         self.zone_low, self.zone_high = low, high
-        self.round_no += 1
         self.round_budget = budget
         self.legs = self._new_legs(self.config)
         self.active_leg = None        # 앞 회차 주문의 늦은 체결이 새 차수에 붙지 않게
         self.phase = CzPhase.ACCUMULATING
         if self.day:
             self._arm_stop(self.day)
-        self.log(f"새 구간 {self.round_no}회차: {low:,.0f} ~ {high:,.0f}, 매수 {budget:,}원"
+        head = (f"{self.round_no}회차 구간·금액 변경(체결 전이라 회차 유지)" if same_round
+                else f"새 구간 {self.round_no}회차")
+        self.log(f"{head}: {low:,.0f} ~ {high:,.0f}, 매수 {budget:,}원"
                  f"(취소한 대기 차수 {canceled:,}원) — 보유 {qty}주 평단 {avg:,.0f} 이월, "
                  f"손절선 {self.stop_line():,.0f}" + (" · 오늘 손절 켜짐" if self.stop_armed else ""))
 
@@ -311,6 +318,20 @@ class CandleTradeEngine:
             raise ValueError("매입 구간은 0 < 하단 < 상단 이어야 합니다.")
         self.zone_low, self.zone_high = low, high
         self.log(f"매입 구간 지정 {low:,.0f} ~ {high:,.0f}")
+
+    def set_round_budget(self, budget: int) -> None:
+        """새 구간 회차의 매수 금액 변경 — 그 회차 1차를 사기 전에만(차수 계획을 다시 나눈다)."""
+        if self.round_no <= 1:
+            raise ValueError("회차 매수 금액은 새 구간을 설정한 뒤에만 바꿀 수 있습니다(1회차는 총 투자액).")
+        if not self.phase.active or any(leg.status != "waiting" for leg in self.legs):
+            raise ValueError("이번 회차 1차 매수 후에는 매수 금액을 바꿀 수 없습니다.")
+        budget = int(budget)
+        if budget < 10_000:
+            raise ValueError("회차 매수 금액은 1만원 이상이어야 합니다.")
+        before = self.round_budget
+        self.round_budget = budget
+        self.legs = self._new_legs(self.config)
+        self.log(f"{self.round_no}회차 매수 금액 {before:,}원 → {budget:,}원")
 
     def reconfigure(self, config: CandleTradeConfig) -> None:
         """설정 변경. 1차 매수 전엔 차수 계획을 다시 짜고, 그 뒤엔 1차 비중은 고정하고
