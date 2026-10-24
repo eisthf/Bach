@@ -223,7 +223,7 @@ function ManualTradeCard({ account, item }) {
         )}
       </div>
       <Chart account={account.id} code={item.code} interval={interval} tick={tick} height={300}
-        priceLines={lines} draggableLines={drag} onLineDrag={onLineDrag} measurable
+        priceLines={lines} draggableLines={drag} onLineDrag={onLineDrag}
         onPriceClick={exitDraft.pick ? exitDraft.drawAt : null} />
       <div className="panels manual-panels">
         <ManualTradePanel account={account.id} code={item.code} position={item.position}

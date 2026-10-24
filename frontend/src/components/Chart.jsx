@@ -33,9 +33,10 @@ const volumePoint = (bar) => ({
 // draggableLines: [{id, price}] 마우스·터치로 위아래로 끌 수 있는 선. 같은 선을 priceLines에
 //   dragId: id 로 넘기면, 끄는 동안엔 차트 안에서만 그 선을 옮긴다(부모 재렌더·레이아웃 이동 없음).
 // onLineDrag(id, price): 놓을 때 한 번, 마지막 가격으로 호출.
-// measurable: [측정] 단추를 보인다. 켜고 두 점을 누르면 두 점을 잇는 선과 변화율·봉 수를 보여준다
+// [측정] 단추(모든 차트): 켜고 두 점을 누르면 두 점을 잇는 선과 변화율·봉 수를 보여준다
 //   (화면 표시만, 저장 안 함). 세 번째 누르면 새로 잰다. 봉 단위를 바꾸면 지운다.
-export default function Chart({ account, code, interval, tick, height = 360, sessionOnly = false, includeToday = false, extended = false, anchorDate = null, priceLines = null, onPriceClick = null, draggableLines = null, onLineDrag = null, onSessionDate, measurable = false }) {
+//   측정 중엔 클릭이 측정으로 가고 onPriceClick(가격 찍기)은 쉰다.
+export default function Chart({ account, code, interval, tick, height = 360, sessionOnly = false, includeToday = false, extended = false, anchorDate = null, priceLines = null, onPriceClick = null, draggableLines = null, onLineDrag = null, onSessionDate }) {
   const anchor = interval === 1440 ? anchorDate : null
   const anchorRef = useRef(anchor)
   anchorRef.current = anchor
@@ -199,7 +200,10 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
     if (!chart) return undefined
     const onMove = (param) => {
       if (!measureOnRef.current || measurePtsRef.current.length !== 1) return
-      setHoverPt(pointAt(param))
+      // 미리보기 선을 다시 그리면(setData) 같은 위치로 crosshairMove가 또 온다 — 같으면 무시해야
+      // 렌더 → 그리기 → 이벤트가 무한히 돌지 않는다.
+      const pt = pointAt(param)
+      setHoverPt((prev) => (prev && pt && prev.x === pt.x && prev.y === pt.y && prev.time === pt.time) || prev === pt ? prev : pt)
     }
     chart.subscribeCrosshairMove(onMove)
     return () => chart.unsubscribeCrosshairMove(onMove)
@@ -533,21 +537,19 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
 
   return (
     <div className="chart-container">
-      {measurable && (
-        <div className="chart-measure">
-          <button type="button" className={`measure-btn${measureOn ? ' on' : ''}`} aria-pressed={measureOn}
-            onClick={() => { setMeasureOn((v) => !v); clearMeasure() }}
-            title="두 점을 눌러 변화율을 잽니다">
-            📏 측정{measureOn ? ' 끄기' : ''}
-          </button>
-          {measureOn && (
-            <span className={`measure-result${measurePts.length === 2 ? ' done' : ''}`} aria-live="polite">
-              {measureText}
-              {measurePts.length > 0 && <button type="button" className="link-btn" onClick={clearMeasure}>지우기</button>}
-            </span>
-          )}
-        </div>
-      )}
+      <div className="chart-measure">
+        <button type="button" className={`measure-btn${measureOn ? ' on' : ''}`} aria-pressed={measureOn}
+          onClick={() => { setMeasureOn((v) => !v); clearMeasure() }}
+          title="두 점을 눌러 변화율을 잽니다">
+          📏 측정{measureOn ? ' 끄기' : ''}
+        </button>
+        {measureOn && (
+          <span className={`measure-result${measurePts.length === 2 ? ' done' : ''}`} aria-live="polite">
+            {measureText}
+            {measurePts.length > 0 && <button type="button" className="link-btn" onClick={clearMeasure}>지우기</button>}
+          </span>
+        )}
+      </div>
       <div className="chart-trade-legend"><span className="up">▲ B 매수 체결</span> · <span className="down">▼ S 매도 체결</span> · 캔들 안 ✕ = 체결 건별 체결가 · 수량·평균 체결가 · 시각 미제공 건은 수신 시각 기준{interval === 1440 && <> · <span className="amount-stripe-legend">노란 띠</span> = 거래대금 150억원 이상</>}{anchor && <> · <span style={{ color: ANCHOR_COLOR }}>▼ 기준봉</span> = 조회일 {anchor}</>}</div>
       {tradeError && <div role="status">체결 표시를 갱신하지 못했습니다. 재연결 중…</div>}
       {loadState === 'loading' && <p role="status">차트 불러오는 중…</p>}
