@@ -9,7 +9,7 @@ import Chart from './Chart'
 // register: 있으면 헤더에 등록 버튼을 띄운다(차트 조회 계좌로 등록). 하나 또는 배열(첫 버튼이 주 버튼).
 //   { label, title(account) → 툴팁, run(account) → Promise }
 // dayPriceLines / dayNote: 일봉일 때만 그리는 수평선과 안내 문구(예: 조회일 정규장 고가).
-export default function ScreenerChart({ stock, source, includeToday = false, defaultInterval = 3, anchorDate = null, register, dayPriceLines = null, dayNote = '', onClose }) {
+export default function ScreenerChart({ stock, source, includeToday = false, defaultInterval = 1440, anchorDate = null, register, dayPriceLines = null, dayNote = '', onClose }) {
   const dialogRef = useRef(null)
   const [interval, setInterval] = useState(defaultInterval)
   const [account, setAccount] = useState(null)

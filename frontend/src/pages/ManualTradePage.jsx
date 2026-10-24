@@ -164,7 +164,7 @@ function ManualChipBar({ rows, isHidden, toggle, showAccount }) {
 
 function ManualTradeCard({ account, item }) {
   const { ticks, actions } = useStore()
-  const [interval, setInterval] = useState(3)
+  const [interval, setInterval] = useState(1440) // 기본 일봉
   const tick = (ticks[account.id] || {})[item.code]
   const verified = item.position_verified !== false
   const exitDraft = useExitDraft(item)

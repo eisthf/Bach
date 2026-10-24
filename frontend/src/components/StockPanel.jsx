@@ -12,7 +12,7 @@ import AutoConfigForm from './AutoConfigForm'
 // 컴팩트 모드: 자동매매설정을 숨기고 차트(좌)+보유(우)를 나란히 → 카드 높이 절약.
 export default function StockPanel({ account, stock }) {
   const { ticks, compact, actions } = useStore()
-  const [interval, setInterval] = useState(3) // 기본 3분봉
+  const [interval, setInterval] = useState(1440) // 기본 일봉
   const tick = (ticks[account] || {})[stock.code]
   const isCompact = (compact[account] || new Set()).has(stock.code)
 
