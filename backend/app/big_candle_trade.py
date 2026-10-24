@@ -595,7 +595,8 @@ class CandleTradeManager:
         eng = it.engine
         z = eng.zone()
         ctx = {"created": it.created_at, "zone": list(z) if z else None,
-               "take_profit_pct": eng.config.take_profit_pct, "entry_days": eng.config.entry_days}
+               "take_profit_pct": eng.config.take_profit_pct, "trailing": eng.config.trailing,
+               "entry_days": eng.config.entry_days}
         if eng.kind == "candle":
             ctx.update(base_date=eng.base_date, base_open=eng.base_open, base_close=eng.base_close)
         self.hub.tag_order(res, eng.kind, eng.order_reason, ctx)

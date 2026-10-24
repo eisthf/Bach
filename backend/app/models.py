@@ -202,7 +202,9 @@ class CandleTradeConfig(BaseModel):
     add_gap_pct: float = Field(80.0, gt=0, le=100, description="2차 매수: 구간 상단에서 구간 폭의 k% 아래(%) k")
     add_min_drop_pct: float = Field(2.0, ge=0, lt=100,
                                     description="갭 기준 2차의 최소 하락률(%). 갭이 작아 이보다 얕으면 2차 없음")
-    take_profit_pct: float = Field(20.0, gt=0, le=500, description="절반 익절: 평단 대비 상승률(%)")
+    take_profit_pct: float = Field(20.0, gt=0, le=500, description="익절: 평단 대비 상승률(%)")
+    # 익절 방식. True=절반 익절 후 나머지 트레일링(기본), False=익절가에서 전량 매도로 끝.
+    trailing: bool = Field(True, description="절반 익절 후 나머지 트레일링 스톱. 끄면 익절가에서 전량 매도")
     trailing_pct: float = Field(5.0, gt=0, lt=100, description="나머지 트레일링 스톱: 고점 대비 하락률(%)")
     entry_days: int = Field(5, ge=1, le=60, description="1차 매수 기한: 기준일 이후 거래일 수")
     watch_mode: Literal["tick", "minute"] = Field("tick", description="가격 감시 단위")

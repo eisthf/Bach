@@ -29,8 +29,11 @@
                     내려간 가격 (기본). 아니면 2차 없음. 구간이 넓을 때 −u% 고정은 너무 위에서
                     사게 되므로 하단 쪽에서 사되, 여유가 빠듯해도 최소 u%는 내려간 곳에서 산다
   ACCUMULATING / HOLDING:
-    - 절반 익절: 가격 ≥ 평단 × (1 + p%) → 보유의 절반 매도, 남은 매수 계획 취소 → TRAILING
+    - 익절: 가격 ≥ 평단 × (1 + p%) → 남은 매수 계획 취소 후
+        trailing=True(기본)  보유의 절반 매도 → TRAILING
+        trailing=False       전량 매도 → DONE
   TRAILING: 고점 × (1 − t%) 이하 → 나머지 전량 매도 → DONE
+            (이미 TRAILING이면 도중에 trailing을 꺼도 끝까지 트레일링한다 — 절반은 이미 팔았다)
   구간 이탈 손절 (ACCUMULATING / HOLDING / TRAILING, 1차 매수 다음 날부터):
     전일 종가 < 매입 구간 하단이면, 그날 가격이 하단 아래로 내려오는 순간 전량 매도 → DONE
   MANUAL: 사람이 수동매매로 인계받음(엔진 정지)
@@ -368,7 +371,7 @@ class CandleTradeEngine:
                     trigger, basis = self.add_plan()
                     add = (f"2차 매수: 다음 거래일부터 구간 안 & ≤ {trigger:,.0f}({_BASIS[basis]})"
                            if self.add_possible() else "2차 매수 없음(1차가에서 구간 하단까지 여유 부족)")
-                    self.log(f"{add}, 절반 익절: 평단 +{c.take_profit_pct:g}%")
+                    self.log(f"{add}, {'절반 익절' if c.trailing else '전량 익절'}: 평단 +{c.take_profit_pct:g}%")
                 else:
                     self.phase = CzPhase.DONE
                     self.exit_reason = "1차 매수 실패"
@@ -428,6 +431,10 @@ class CandleTradeEngine:
     async def _take_half(self, price: float, sell_fn: SellFn) -> None:
         c = self.config
         half = self.shares // 2
+        if not c.trailing:     # 트레일링 없이 익절가에서 전량 매도로 끝
+            self._cancel_waiting()
+            await self._exit(sell_fn, f"익절 +{c.take_profit_pct:g}% (전량)")
+            return
         if half <= 0:      # 1주뿐이면 절반이 없다 — 전량 익절
             self._cancel_waiting()
             await self._exit(sell_fn, f"익절 +{c.take_profit_pct:g}% (1주라 전량)")

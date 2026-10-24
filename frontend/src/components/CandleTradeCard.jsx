@@ -1,7 +1,7 @@
 // 대금 양봉 매매·구간 매매 카드(같은 엔진). item.kind 로 갈린다.
 //   candle: 매입 구간 = 기준 캔들 몸통 양 끝에서 몸통의 x%씩 안쪽(자동)
 //   zone:   매입 구간 상단·하단을 사람이 지정 — 차트를 눌러 수평선으로 찍거나 숫자로 입력
-// 2차 기준·절반 익절·트레일링·구간 이탈 손절은 둘 다 같다.
+// 2차 기준·익절(절반+트레일링 / 전량)·구간 이탈 손절은 둘 다 같다.
 import React, { useEffect, useMemo, useState } from 'react'
 import { useStore } from '../store'
 import Chart from './Chart'
@@ -38,6 +38,7 @@ function fromForm(f) {
     add_gap_pct: Number(f.add_gap_pct),
     add_min_drop_pct: Number(f.add_min_drop_pct),
     take_profit_pct: Number(f.take_profit_pct),
+    trailing: f.trailing !== false,
     trailing_pct: Number(f.trailing_pct),
     entry_days: Math.round(Number(f.entry_days) || 0),
     watch_mode: f.watch_mode,
@@ -52,8 +53,8 @@ function validate(c) {
   if (!(c.add_drop_pct > 0 && c.add_drop_pct < 100)) return '2차 매수 하락률은 0~100% 사이여야 합니다.'
   if (!(c.add_gap_pct > 0 && c.add_gap_pct <= 100)) return '2차 구간 폭 비율은 0 초과 100% 이하여야 합니다.'
   if (!(c.add_min_drop_pct >= 0 && c.add_min_drop_pct < 100)) return '2차 최소 하락률은 0~100% 사이여야 합니다.'
-  if (!(c.take_profit_pct > 0 && c.take_profit_pct <= 500)) return '절반 익절 상승률은 0~500% 사이여야 합니다.'
-  if (!(c.trailing_pct > 0 && c.trailing_pct < 100)) return '트레일링 하락률은 0~100% 사이여야 합니다.'
+  if (!(c.take_profit_pct > 0 && c.take_profit_pct <= 500)) return '익절 상승률은 0~500% 사이여야 합니다.'
+  if (c.trailing && !(c.trailing_pct > 0 && c.trailing_pct < 100)) return '트레일링 하락률은 0~100% 사이여야 합니다.'
   if (!(c.entry_days >= 1 && c.entry_days <= 60)) return '1차 매수 기한은 1~60거래일이어야 합니다.'
   return ''
 }
@@ -167,10 +168,10 @@ export default function CandleTradeCard({ account, item }) {
     }
     if (item.legs[1]?.trigger && item.legs[1].possible) out.push({ price: item.legs[1].trigger, color: '#6a1b9a', title: '2차 ≤', dashed: true })
     if (item.avg_cost > 0 && holding) out.push({ price: item.avg_cost, color: '#555', title: '평단', dashed: true })
-    if (item.take_profit_price) out.push({ price: item.take_profit_price, color: '#d32f2f', title: '절반 익절', dashed: true })
+    if (item.take_profit_price) out.push({ price: item.take_profit_price, color: '#d32f2f', title: item.config.trailing === false ? '익절(전량)' : '절반 익절', dashed: true })
     if (item.trailing_stop) out.push({ price: item.trailing_stop, color: '#e65100', title: '트레일링', dashed: true })
     return out
-  }, [zone?.low, zone?.high, isZone, zoneDirty, zLow, zHigh, item.legs, item.avg_cost, item.take_profit_price, item.trailing_stop, holding])
+  }, [zone?.low, zone?.high, isZone, zoneDirty, zLow, zHigh, item.legs, item.avg_cost, item.take_profit_price, item.trailing_stop, item.config.trailing, holding])
 
   return (
     <div className={`stock-panel candle-card tone-${ph.tone}`}>
@@ -326,13 +327,21 @@ export default function CandleTradeCard({ account, item }) {
                 </label>
               </>
             )}
-            <label title="도달하면 보유의 절반을 팔고, 아직 사지 않은 2차 계획은 취소합니다.">절반 익절: 평단 대비
+            <label title={form.trailing !== false
+              ? '도달하면 보유의 절반을 팔고, 아직 사지 않은 2차 계획은 취소합니다.'
+              : '도달하면 보유 전량을 팔고 매매를 끝냅니다. 아직 사지 않은 2차 계획은 취소합니다.'}>
+              {form.trailing !== false ? '절반 익절' : '전량 익절'}: 평단 대비
               <input type="number" min="0.1" max="500" step="any" value={form.take_profit_pct}
                 onChange={(e) => set('take_profit_pct', e.target.value)} />% 상승
             </label>
-            <label title="절반 익절 뒤 나머지는 고점에서 이만큼 내려오면 전량 매도합니다.">트레일링 스톱: 고점 대비
-              <input type="number" min="0.1" max="99" step="any" value={form.trailing_pct}
-                onChange={(e) => set('trailing_pct', e.target.value)} />% 하락
+            <label title="켜면 절반 익절 뒤 나머지를 고점 대비 하락률로 따라가며 팝니다. 끄면 익절가에서 전량 매도합니다. 이미 트레일링 중이면 꺼도 끝까지 트레일링합니다.">
+              <input type="checkbox" checked={form.trailing !== false}
+                onChange={(e) => set('trailing', e.target.checked)} />
+              트레일링 스톱{form.trailing !== false ? ': 고점 대비' : ' 안 함'}
+              {form.trailing !== false && (
+                <><input type="number" min="0.1" max="99" step="any" value={form.trailing_pct}
+                  onChange={(e) => set('trailing_pct', e.target.value)} />% 하락</>
+              )}
             </label>
             <label title="틱: 체결마다 판단. 분: 완성된 N분봉의 종가로 판단.">가격 감시
               <select value={form.watch_mode} onChange={(e) => set('watch_mode', e.target.value)}>

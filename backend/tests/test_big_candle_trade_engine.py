@@ -135,6 +135,36 @@ async def test_half_take_profit_cancels_second_leg_then_trails():
     assert br.sells == [22, 23] and eng.phase == CzPhase.DONE and "트레일링" in eng.exit_reason
 
 
+def test_trailing_is_on_by_default():
+    assert CandleTradeConfig().trailing is True
+    assert CandleTradeConfig.model_validate({"total_krw": 1_000_000}).trailing is True   # 예전 저장값
+
+
+async def test_without_trailing_sells_all_at_take_profit():
+    eng, br, logs = make(trailing=False)
+    day(eng, D1, 1)
+    await tick(eng, br, 11_000, D1)          # 45주 @ 11,000, 익절가 13,200
+    assert any("전량 익절" in m for m in logs)
+    await tick(eng, br, 13_199, D1)
+    assert br.sells == []
+    await tick(eng, br, 13_200, D1)
+    assert br.sells == [45] and eng.phase == CzPhase.DONE and eng.shares == 0
+    assert eng.legs[1].status == "canceled" and "전량" in eng.exit_reason
+    assert eng.trailing_stop() is None
+
+
+async def test_turning_trailing_off_while_trailing_keeps_trailing():
+    eng, br, _ = make()
+    day(eng, D1, 1)
+    await tick(eng, br, 11_000, D1)
+    await tick(eng, br, 13_200, D1)          # 절반 익절 → TRAILING
+    eng.reconfigure(CandleTradeConfig(total_krw=1_000_000, add_mode="fixed", trailing=False))
+    await tick(eng, br, 14_000, D1)
+    assert br.sells == [22] and eng.phase == CzPhase.TRAILING
+    await tick(eng, br, 13_300, D1)
+    assert br.sells == [22, 23] and eng.phase == CzPhase.DONE
+
+
 async def test_take_profit_after_both_legs_uses_average():
     eng, br, _ = make()
     day(eng, D1, 1)
