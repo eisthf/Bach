@@ -302,6 +302,17 @@ def set_candle_trade_zone(account: str, code: str, payload: dict):
     return _candle_call(_candle(account).set_zone, code, low, high)
 
 
+@app.post("/api/{account}/candle-trades/{code}/rezone")
+async def rezone_candle_trade(account: str, code: str, payload: dict):
+    """구간 매매 새 구간(재진입) {low, high, budget}. 보유 중·익절 전에만. 대기 차수는 취소, 보유는 이월."""
+    try:
+        low, high = float(payload.get("low")), float(payload.get("high"))
+        budget = int(payload.get("budget"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "low·high·budget 숫자 필요")
+    return await _candle_acall(_candle(account).rezone, code, low, high, budget)
+
+
 @app.put("/api/{account}/candle-trades/{code}/config")
 def set_candle_trade_config(account: str, code: str, config: CandleTradeConfig):
     return _candle_call(_candle(account).set_config, code, config)

@@ -114,9 +114,15 @@ class CandleTradeManager:
             and (eng.phase == CzPhase.DRAFT or eng.phase.active),
             "watch_from": eng.watch_from,
             "day": eng.day, "days_elapsed": eng.days_elapsed, "prev_close": eng.prev_close,
-            "stop_armed": eng.stop_armed, "peak": eng.peak,
+            "stop_armed": eng.stop_armed, "stop_line": eng.stop_line(), "peak": eng.peak,
             "take_profit_price": eng.take_profit_price(), "trailing_stop": eng.trailing_stop(),
             "shares": eng.shares, "sold_qty": eng.sold_qty, "avg_cost": eng.avg_cost,
+            "round": {"no": eng.round_no, "carry_qty": eng.carry_qty,
+                      "carry_avg": eng.carry_cost / eng.carry_qty if eng.carry_qty else 0.0,
+                      "budget": eng.round_budget},
+            "pending_amount": eng.pending_amount,
+            "rezone_allowed": eng.kind == "zone" and eng.shares > 0
+            and eng.phase in (CzPhase.ACCUMULATING, CzPhase.HOLDING),
             "exit_reason": eng.exit_reason,
             "verified": it.verified, "notice": it.notice, "created_at": it.created_at,
         }
@@ -265,6 +271,29 @@ class CandleTradeManager:
                     + " — 뒤 차수에서 잔고 부족으로 매수가 실패할 수 있습니다.")
         return ""
 
+    async def _rezone_budget_check(self, it: CandleItem, budget: int) -> str:
+        """새 구간 회차 예산의 예수금 가드 — [감시 시작]과 같은 규칙(1차 몫도 못 대면 막고,
+        회차 전체를 못 대면 경고)."""
+        try:
+            summary = await asyncio.to_thread(self.hub.broker.account_summary)
+        except Exception:  # noqa: BLE001
+            return ""
+        orderable = int((summary or {}).get("orderable") or 0)
+        if orderable <= 0:
+            return ""
+        committed = self.committed_krw(exclude=it.code)
+        first = int(budget * it.engine.config.first_ratio_pct / 100)
+        if orderable < committed + first:
+            raise ValueError(
+                f"주문가능금액이 부족합니다. 가능 {orderable:,}원, "
+                f"다른 전략 약정 {committed:,}원 + 새 구간 1차 {first:,}원 필요."
+            )
+        if orderable < committed + budget:
+            return (f"주문가능금액 {orderable:,}원 < 새 구간 매수 {budget:,}원"
+                    + (f" + 다른 전략 약정 {committed:,}원" if committed else "")
+                    + " — 2차에서 잔고 부족으로 매수가 실패할 수 있습니다.")
+        return ""
+
     def _ulc_first_orders_pending(self) -> bool:
         """[상한가 매매] 쪽에 아직 1차 주문을 내지 못한 자동매매 종목이 있는가."""
         from .models import TradeState
@@ -340,6 +369,19 @@ class CandleTradeManager:
         it.engine.set_zone(low, high)
         self.persist()
         self.broadcast(code)
+        return self.payload(code)
+
+    async def rezone(self, code: str, low: float, high: float, budget: int) -> dict:
+        """새 구간(재진입): 대기 차수 취소, 보유 이월, 새 구간에서 ``budget``원으로 새 1차·2차."""
+        it = self._get(code)
+        async with it.lock:
+            notice = await self._rezone_budget_check(it, int(budget))
+            it.engine.rezone(low, high, budget)
+            it.notice = notice
+            if notice:
+                self._log(code, f"⚠️ {notice}")
+            self.persist()
+        await self._broadcast_with_position(code)
         return self.payload(code)
 
     def _check_free(self, code: str) -> None:
@@ -486,7 +528,7 @@ class CandleTradeManager:
                     and self._should_yield_to_ulc(it)):
                 return
             await eng.on_tick(tick, today, self._buy_fn(it), self._sell_fn(it))
-            if eng.phase == CzPhase.DONE and before[0] != CzPhase.DONE and eng.bought_qty > 0:
+            if eng.phase == CzPhase.DONE and before[0] != CzPhase.DONE and eng.bought:
                 await self._after_exit(it)
             elif eng.phase == CzPhase.MANUAL and before[0] != CzPhase.MANUAL:
                 it.notice = eng.exit_reason
@@ -596,6 +638,7 @@ class CandleTradeManager:
         z = eng.zone()
         ctx = {"created": it.created_at, "zone": list(z) if z else None,
                "take_profit_pct": eng.config.take_profit_pct, "trailing": eng.config.trailing,
+               "stop_margin_pct": eng.config.stop_margin_pct, "round": eng.round_no,
                "entry_days": eng.config.entry_days}
         if eng.kind == "candle":
             ctx.update(base_date=eng.base_date, base_open=eng.base_open, base_close=eng.base_close)

@@ -206,6 +206,29 @@ async def test_zone_break_stop_after_close_below_low():
     assert br.sells == [45 + 49] and eng.phase == CzPhase.DONE and "구간 이탈" in eng.exit_reason
 
 
+async def test_zone_break_stop_with_margin_below_low():
+    eng, br, logs = make(stop_margin_pct=2)  # 하단 10,200 × 0.98 = 손절선 9,996
+    assert eng.stop_line() == pytest.approx(9_996)
+    day(eng, D1, 1)
+    await tick(eng, br, 11_000, D1)
+    day(eng, D2, 2, prev_close=10_100)       # 하단 아래지만 손절선 위 마감 → 손절 꺼짐
+    assert not eng.stop_armed
+    await tick(eng, br, 9_900, D2)
+    assert br.sells == []
+    day(eng, D3, 3, prev_close=9_990)        # 손절선 아래 마감 → 오늘 손절선 아래 틱에서 전량
+    assert eng.stop_armed and any("하단 −2%" in m for m in logs)
+    await tick(eng, br, 10_000, D3)          # 하단 아래라도 손절선 위면 팔지 않는다
+    assert br.sells == []
+    await tick(eng, br, 9_995, D3)
+    assert eng.phase == CzPhase.DONE and "하단 −2%" in eng.exit_reason
+
+
+def test_stop_margin_defaults_to_zero():
+    assert CandleTradeConfig().stop_margin_pct == 0
+    eng, _, _ = make()
+    assert eng.stop_line() == pytest.approx(10_200)
+
+
 async def test_zone_break_not_armed_on_first_buy_day():
     eng, br, _ = make()
     day(eng, D1, 1, prev_close=9_000)        # 1차 매수 당일의 전일 종가는 따지지 않는다
@@ -456,6 +479,109 @@ async def test_zone_kind_expiry_message():
     eng.start()
     day(eng, D3, 3)
     assert eng.phase == CzPhase.DONE and "감시 시작일부터" in eng.exit_reason
+
+
+# ---------------------------------------------------------------------------
+# 새 구간(재진입): 대기 차수 취소, 보유 이월, 새 구간에서 새 1차·2차
+# ---------------------------------------------------------------------------
+async def zone_with_first_leg():
+    """구간 10,200~11,800, 1차 50만원을 11,000에 45주. 2차 50만원 대기."""
+    eng, br, logs = make_zone(add_mode="mixed")
+    eng.start()
+    day(eng, D1, 1)
+    await tick(eng, br, 11_000, D1)
+    assert eng.shares == 45 and eng.pending_amount == 500_000
+    return eng, br, logs
+
+
+async def test_rezone_carries_position_and_plans_new_round():
+    eng, br, logs = await zone_with_first_leg()
+    eng.rezone(9_000, 9_400, eng.pending_amount)
+    assert eng.round_no == 2 and eng.phase == CzPhase.ACCUMULATING
+    assert eng.zone() == (9_000, 9_400) and eng.stop_line() == pytest.approx(9_000)
+    assert eng.shares == 45 and eng.avg_cost == pytest.approx(11_000)       # 이월
+    assert [leg.amount for leg in eng.legs] == [250_000, 250_000]           # 회차 예산 50만원
+    assert all(leg.status == "waiting" for leg in eng.legs)
+    assert any("2회차" in m and "45주" in m for m in logs)
+    day(eng, D2, 2, prev_close=9_500)
+    await tick(eng, br, 9_500, D2)            # 새 구간 위 — 매수 없음
+    assert len(br.buys) == 1
+    await tick(eng, br, 9_400, D2)            # 새 구간 진입 → 새 1차(그날 바로)
+    assert br.buys[1:] == [250_000] and eng.legs[0].qty == 26
+    assert eng.avg_cost == pytest.approx((45 * 11_000 + 26 * 9_400) / 71)
+    # 2차: 1차가 9,400 → 하단 9,000까지 4.3% ≤ 5% → 2차 없음(혼합)
+    assert not eng.add_possible()
+
+
+async def test_rezone_take_profit_uses_combined_average():
+    eng, br, _ = await zone_with_first_leg()
+    eng.rezone(9_000, 9_400, 500_000)
+    day(eng, D2, 2, prev_close=9_500)
+    await tick(eng, br, 9_200, D2)            # 새 1차 27주 @ 9,200
+    avg = eng.avg_cost
+    assert avg == pytest.approx((45 * 11_000 + 27 * 9_200) / 72)
+    assert eng.take_profit_price() == pytest.approx(avg * 1.2)
+    await tick(eng, br, avg * 1.2 - 1, D2)
+    assert br.sells == []
+    await tick(eng, br, avg * 1.2 + 1, D2)    # 합산 평단 +20% → 보유 전체의 절반
+    assert br.sells == [36] and eng.phase == CzPhase.TRAILING
+    assert eng.legs[1].status == "canceled"
+
+
+async def test_rezone_stop_uses_new_zone_and_arms_without_new_buy():
+    eng, br, _ = await zone_with_first_leg()
+    eng.rezone(9_000, 9_400, 500_000)
+    day(eng, D2, 2, prev_close=8_900)         # 이월분이 있으니 새 1차 전이라도 손절 판단
+    assert eng.stop_armed
+    await tick(eng, br, 9_100, D2)            # 새 구간 안이지만 손절이 먼저? → 손절선 위라 매수
+    assert len(br.buys) == 2
+    await tick(eng, br, 8_990, D2)
+    assert eng.phase == CzPhase.DONE and br.sells == [45 + 27] and "구간 이탈" in eng.exit_reason
+
+
+async def test_rezone_mid_session_rearms_stop_with_new_line():
+    eng, br, _ = await zone_with_first_leg()
+    day(eng, D2, 2, prev_close=10_100)        # 하단 10,200 아래 마감 → 오늘 손절 켜짐
+    assert eng.stop_armed
+    eng.rezone(9_000, 9_400, 500_000)         # 장중 새 구간: 전일 종가 10,100 ≥ 새 손절선 → 꺼짐
+    assert not eng.stop_armed
+    await tick(eng, br, 9_900, D2)
+    assert br.sells == [] and eng.phase == CzPhase.ACCUMULATING
+
+
+async def test_rezone_after_second_leg_and_budget_override():
+    eng, br, _ = await zone_with_first_leg()
+    day(eng, D2, 2)
+    eng.legs[1].status = "filled"              # 2차까지 산 상태로 만든다
+    eng.legs[1].est_price, eng.legs[1].est_qty = 10_450, 47
+    eng.phase = CzPhase.HOLDING
+    assert eng.pending_amount == 0
+    eng.rezone(9_000, 9_400, 800_000)          # 못 쓴 돈이 없으니 금액을 직접 준다
+    assert eng.shares == 92 and [leg.amount for leg in eng.legs] == [400_000, 400_000]
+
+
+async def test_rezone_rejected_when_not_holding_or_trailing():
+    eng, br, _ = make_zone()
+    eng.start()
+    with pytest.raises(ValueError, match="보유 중"):
+        eng.rezone(9_000, 9_400, 500_000)      # 1차 전
+    eng, br, _ = await zone_with_first_leg()
+    await tick(eng, br, 13_200, D1)            # 절반 익절 → TRAILING
+    with pytest.raises(ValueError, match="보유 중"):
+        eng.rezone(9_000, 9_400, 500_000)
+    eng2, _, _ = make()
+    with pytest.raises(ValueError, match="구간 매매"):
+        eng2.rezone(9_000, 9_400, 500_000)
+
+
+async def test_rezone_roundtrip_and_reconfigure_keeps_round_budget():
+    eng, br, _ = await zone_with_first_leg()
+    eng.rezone(9_000, 9_400, 600_000)
+    back = CandleTradeEngine.from_dict("000001", eng.config, eng.to_dict())
+    assert (back.round_no, back.round_budget, back.carry_qty) == (2, 600_000, 45)
+    assert back.avg_cost == pytest.approx(11_000) and back.shares == 45
+    back.reconfigure(CandleTradeConfig(total_krw=3_000_000, add_mode="mixed", first_ratio_pct=40))
+    assert [leg.amount for leg in back.legs] == [240_000, 360_000]   # 회차 예산 기준
 
 
 def test_zone_kind_roundtrip():

@@ -35,8 +35,16 @@
   TRAILING: 고점 × (1 − t%) 이하 → 나머지 전량 매도 → DONE
             (이미 TRAILING이면 도중에 trailing을 꺼도 끝까지 트레일링한다 — 절반은 이미 팔았다)
   구간 이탈 손절 (ACCUMULATING / HOLDING / TRAILING, 1차 매수 다음 날부터):
-    전일 종가 < 매입 구간 하단이면, 그날 가격이 하단 아래로 내려오는 순간 전량 매도 → DONE
+    손절선 = 매입 구간 하단 × (1 − m%) (m=stop_margin_pct, 기본 0 = 하단 그대로).
+    전일 종가 < 손절선이면, 그날 가격이 손절선 아래로 내려오는 순간 전량 매도 → DONE
   MANUAL: 사람이 수동매매로 인계받음(엔진 정지)
+
+새 구간(재진입, 구간 매매만 — ``rezone``): 보유 중이고 익절 전(ACCUMULATING/HOLDING)이면 매입 구간을
+다시 정해 새 '회차'를 시작할 수 있다(예: 손절선 근처로 내려왔지만 20일선 반등을 노릴 때).
+  - 대기 중이던 차수는 취소하고, 지금 보유(수량·평단)는 이월분(carry)으로 그대로 둔다.
+  - 새 구간에서 새 1차·2차 계획(금액 = 회차 예산, 기본은 취소된 차수 금액)을 세운다. 새 1차는
+    가격이 새 구간에 들어오면 바로(그날 포함), 기한 없이 — 이미 보유 중이라 끝낼 수 없다.
+  - 평단 = (이월 원가 + 새 체결) / 전체 수량. 익절은 이 평단 기준, 구간 이탈 손절은 새 구간 기준.
 
 '가격'은 감시 단위 설정에 따른다 — 틱(기본)이면 틱마다, 분이면 완성된 N분봉의
 종가(구간의 마지막 틱)로 평가한다.
@@ -163,6 +171,11 @@ class CandleTradeEngine:
     days_elapsed: int = 0            # 기준일(구간 매매는 감시 시작일 전날) 이후 경과 거래일(오늘 포함)
     prev_close: Optional[float] = None
     stop_armed: bool = False         # 오늘 구간 이탈 손절이 켜져 있는가
+    # 새 구간(재진입) 회차. 이월분 = 앞 회차들에서 넘어온 보유 수량과 그 원가 합계.
+    round_no: int = 1
+    round_budget: int = 0            # 이번 회차 예산(0 = 설정의 총 투자액 — 첫 회차)
+    carry_qty: int = 0
+    carry_cost: float = 0.0
     # 분 단위 감시 버퍼(영속화하지 않음)
     _bar_bucket: Optional[int] = field(default=None, repr=False)
     _bar_close: Optional[float] = field(default=None, repr=False)
@@ -178,13 +191,20 @@ class CandleTradeEngine:
 
     @property
     def shares(self) -> int:
-        return max(0, self.bought_qty - self.sold_qty)
+        return max(0, self.carry_qty + self.bought_qty - self.sold_qty)
 
     @property
     def avg_cost(self) -> float:
+        """평단 = (이월 원가 + 이번 회차 체결 원가) / 전체 매수 수량. 매도는 평단을 바꾸지 않는다."""
         filled = [leg for leg in self.legs if leg.status == "filled" and leg.qty > 0]
-        qty = sum(leg.qty for leg in filled)
-        return sum(leg.price * leg.qty for leg in filled) / qty if qty else 0.0
+        qty = self.carry_qty + sum(leg.qty for leg in filled)
+        cost = self.carry_cost + sum(leg.price * leg.qty for leg in filled)
+        return cost / qty if qty else 0.0
+
+    @property
+    def pending_amount(self) -> int:
+        """아직 안 산 차수 금액 합계(새 구간 회차 예산의 기본값)."""
+        return sum(leg.amount for leg in self.legs if leg.status == "waiting")
 
     @property
     def first_date(self) -> str:
@@ -219,6 +239,11 @@ class CandleTradeEngine:
         trigger, z = self.add_trigger(), self.zone()
         return trigger is not None and z is not None and trigger >= z[0]
 
+    def stop_line(self) -> Optional[float]:
+        """구간 이탈 손절선 = 구간 하단 × (1 − m%)."""
+        z = self.zone()
+        return z[0] * (1 - self.config.stop_margin_pct / 100) if z else None
+
     def take_profit_price(self) -> Optional[float]:
         if self.phase not in (CzPhase.ACCUMULATING, CzPhase.HOLDING):
             return None
@@ -237,7 +262,41 @@ class CandleTradeEngine:
 
     @property
     def bought(self) -> bool:
-        return any(leg.status == "filled" for leg in self.legs)
+        return self.carry_qty > 0 or any(leg.status == "filled" for leg in self.legs)
+
+    def _new_legs(self, config: CandleTradeConfig) -> List[CzLeg]:
+        if self.round_budget <= 0:
+            return build_legs(config)
+        first = config.first_ratio_pct
+        return [CzLeg(ratio=r, amount=int(self.round_budget * r / 100)) for r in (first, 100 - first)]
+
+    def rezone(self, low: float, high: float, budget: int) -> None:
+        """새 구간(재진입). 대기 차수를 취소하고 보유는 이월, 새 구간에서 ``budget``원으로
+        새 1차·2차 계획을 세운다. 손절선이 새 구간 기준으로 바뀌므로 오늘 손절 여부도 다시 판단."""
+        if self.kind != "zone":
+            raise ValueError("새 구간 설정은 구간 매매에서만 할 수 있습니다.")
+        if self.phase not in (CzPhase.ACCUMULATING, CzPhase.HOLDING) or self.shares <= 0:
+            raise ValueError("보유 중이고 익절 전(1차·2차 보유)일 때만 새 구간을 설정할 수 있습니다.")
+        low, high, budget = float(low), float(high), int(budget)
+        if not 0 < low < high:
+            raise ValueError("매입 구간은 0 < 하단 < 상단 이어야 합니다.")
+        if budget < 10_000:
+            raise ValueError("새 구간 매수 금액은 1만원 이상이어야 합니다.")
+        canceled = self.pending_amount
+        qty, avg = self.shares, self.avg_cost
+        self.carry_qty, self.carry_cost = qty, avg * qty
+        self.sold_qty = 0
+        self.zone_low, self.zone_high = low, high
+        self.round_no += 1
+        self.round_budget = budget
+        self.legs = self._new_legs(self.config)
+        self.active_leg = None        # 앞 회차 주문의 늦은 체결이 새 차수에 붙지 않게
+        self.phase = CzPhase.ACCUMULATING
+        if self.day:
+            self._arm_stop(self.day)
+        self.log(f"새 구간 {self.round_no}회차: {low:,.0f} ~ {high:,.0f}, 매수 {budget:,}원"
+                 f"(취소한 대기 차수 {canceled:,}원) — 보유 {qty}주 평단 {avg:,.0f} 이월, "
+                 f"손절선 {self.stop_line():,.0f}" + (" · 오늘 손절 켜짐" if self.stop_armed else ""))
 
     def set_zone(self, low: float, high: float) -> None:
         """구간 매매의 매입 구간 지정. 1차 매수 뒤엔 바꿀 수 없다(평단·손절 기준)."""
@@ -257,13 +316,13 @@ class CandleTradeEngine:
         (평단·손절 기준이 흔들린다)."""
         if not any(leg.status == "filled" for leg in self.legs):
             self.config = config
-            self.legs = build_legs(config)
+            self.legs = self._new_legs(config)
             return
         if abs(config.first_ratio_pct - self.config.first_ratio_pct) > 1e-9:
             raise ValueError("1차 매수 후에는 1차 비중을 바꿀 수 없습니다.")
         if self.kind == "candle" and abs(config.zone_margin_pct - self.config.zone_margin_pct) > 1e-9:
             raise ValueError("1차 매수 후에는 매입 구간을 바꿀 수 없습니다.")
-        if config.total_krw != self.config.total_krw:
+        if config.total_krw != self.config.total_krw and self.round_budget <= 0:
             for leg in self.legs:
                 if leg.status == "waiting":
                     leg.amount = int(config.total_krw * leg.ratio / 100)
@@ -325,12 +384,18 @@ class CandleTradeEngine:
             self.exit_reason = f"기한 만료: {since} {self.config.entry_days}거래일 안에 매입 구간 진입 없음"
             self.log(self.exit_reason)
             return
-        z = self.zone()
-        if (self.phase.holding and z and self.first_date and self.first_date < today
-                and prev_close is not None and prev_close < z[0]):
-            self.stop_armed = True
-            self.log(f"전일 종가 {prev_close:,.0f} < 구간 하단 {z[0]:,.0f} — "
-                     f"오늘 하단 아래 가격에서 전량 매도")
+        self._arm_stop(today)
+
+    def _arm_stop(self, today: str) -> None:
+        """오늘 구간 이탈 손절을 켤지. 이월분이 있으면(새 구간 회차) 이미 며칠 보유한 셈이라
+        '1차 다음 날부터' 조건 없이 전일 종가만 본다."""
+        line, prev_close = self.stop_line(), self.prev_close
+        held_before = self.carry_qty > 0 or (self.first_date and self.first_date < today)
+        self.stop_armed = bool(self.phase.holding and self.shares > 0 and line and held_before
+                               and prev_close is not None and prev_close < line)
+        if self.stop_armed:
+            self.log(f"전일 종가 {prev_close:,.0f} < {self._stop_label()} {line:,.0f} — "
+                     f"오늘 그 아래 가격에서 전량 매도")
 
     # -- 틱 평가 -------------------------------------------------------------
     async def on_tick(self, tick: Tick, today: str, buy_fn: BuyFn, sell_fn: SellFn) -> None:
@@ -381,8 +446,10 @@ class CandleTradeEngine:
         if self.shares <= 0:
             return
 
-        if self.stop_armed and price < lo:
-            await self._exit(sell_fn, f"구간 이탈 손절: 전일 종가 < 하단, 하단 {lo:,.0f} 아래 {price:,.0f}")
+        line = self.stop_line()
+        if self.stop_armed and line and price < line:
+            await self._exit(sell_fn, f"구간 이탈 손절: 전일 종가 < {self._stop_label()}, "
+                                      f"{line:,.0f} 아래 {price:,.0f}")
             return
 
         if self.phase == CzPhase.TRAILING:
@@ -395,6 +462,19 @@ class CandleTradeEngine:
         avg = self.avg_cost
         if avg > 0 and price >= avg * (1 + c.take_profit_pct / 100):
             await self._take_half(price, sell_fn)
+            return
+
+        if self.phase == CzPhase.ACCUMULATING and self.legs[0].status != "filled":
+            # 새 구간 회차의 1차: 새 구간에 들어오면 바로(기한 없음)
+            if self.legs[0].status == "waiting" and lo <= price <= hi:
+                if await self._buy(0, price, today, buy_fn):
+                    trigger, basis = self.add_plan()
+                    self.log(f"{self.round_no}회차 2차 매수: " + (
+                        f"다음 거래일부터 구간 안 & ≤ {trigger:,.0f}({_BASIS[basis]})" if self.add_possible()
+                        else "없음(1차가에서 구간 하단까지 여유 부족)"))
+                else:
+                    self.phase = CzPhase.HOLDING
+                    self.log(f"{self.round_no}회차 1차 매수 실패 — 추가매수 중단, 보유분 익절·손절 감시")
             return
 
         if self.phase == CzPhase.ACCUMULATING:
@@ -422,6 +502,10 @@ class CandleTradeEngine:
         leg.est_qty = int(leg.amount // est)
         self.log(f"{i + 1}차 매수 {leg.qty}주 @ {leg.price:,.0f} (감시가 {price:,.0f}, 평단 {self.avg_cost:,.0f})")
         return True
+
+    def _stop_label(self) -> str:
+        m = self.config.stop_margin_pct
+        return f"하단 −{m:g}%" if m > 0 else "하단"
 
     def _cancel_waiting(self) -> None:
         for leg in self.legs:
@@ -487,6 +571,8 @@ class CandleTradeEngine:
             "peak": self.peak,
             "exit_reason": self.exit_reason,
             "active_leg": self.active_leg,
+            "round": {"no": self.round_no, "budget": self.round_budget,
+                      "carry_qty": self.carry_qty, "carry_cost": self.carry_cost},
         }
 
     @classmethod
@@ -494,6 +580,7 @@ class CandleTradeEngine:
                   log: Callable[[str], None] = lambda _: None) -> "CandleTradeEngine":
         base = data.get("base") or {}
         zone = data.get("zone") or {}
+        rnd = data.get("round") or {}
         legs = [CzLeg(**leg) for leg in data.get("legs") or []] or build_legs(config)
         return cls(
             code=code, config=config, log=log,
@@ -509,4 +596,6 @@ class CandleTradeEngine:
             peak=float(data.get("peak") or 0),
             exit_reason=data.get("exit_reason", ""),
             active_leg=data.get("active_leg"),
+            round_no=int(rnd.get("no") or 1), round_budget=int(rnd.get("budget") or 0),
+            carry_qty=int(rnd.get("carry_qty") or 0), carry_cost=float(rnd.get("carry_cost") or 0),
         )

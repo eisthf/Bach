@@ -342,6 +342,23 @@ async def test_start_warns_when_cash_below_full_plan(hub):
     assert "실패할 수 있습니다" in item["notice"]
 
 
+async def test_rezone_via_manager_checks_cash_and_broadcasts(hub):
+    hub.candle_trades.add_zone(CODE, "테스트", {"low": 10_200, "high": 11_800})
+    await hub.candle_trades.start(CODE)
+    hub._bars = {d: (11_000, 11_000) for d in ["2026-09-18", "2026-09-21"]}
+    hub.clock.open()
+    await push_tick(hub, 11_000)
+    assert hub.candle_trades.items[CODE].engine.shares > 0
+    with_cash(hub, 100_000)                       # 새 1차 25만원 > 가능 10만원
+    with pytest.raises(ValueError, match="주문가능금액"):
+        await hub.candle_trades.rezone(CODE, 9_000, 9_400, 500_000)
+    with_cash(hub, 10_000_000)
+    item = await hub.candle_trades.rezone(CODE, 9_000, 9_400, 500_000)
+    assert item["round"]["no"] == 2 and item["round"]["carry_qty"] > 0
+    assert item["zone"] == {"low": 9_000, "high": 9_400} and item["rezone_allowed"]
+    assert [leg["amount"] for leg in item["legs"]] == [250_000, 250_000]
+
+
 async def test_cash_guard_counts_other_strategies(hub):
     stock = hub.add_stock("999990")               # [매매] 자동매매 예정 종목
     stock.machine.state = TradeState.MONITOR

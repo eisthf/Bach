@@ -234,6 +234,11 @@ export function StoreProvider({ children }) {
     setCandleConfig: (acc, code, config) => api.setCandleConfig(acc, code, config),
     setCandleZone: (acc, code, low, high) => api.setCandleZone(acc, code, low, high),
     addZoneTrade: (acc, code, name) => api.addZoneTrade(acc, code, name),
+    // 새 구간은 대기 차수를 되돌릴 수 없이 취소하므로 계좌 종류와 상관없이 확인을 받는다.
+    rezoneCandle: (acc, code, low, high, budget, message) => {
+      if (!window.confirm(message)) return Promise.resolve(null)
+      return api.rezoneCandle(acc, code, low, high, budget)
+    },
     startCandle: (acc, code, message) => {
       if (dangerRef.current[acc] && !window.confirm(message)) return Promise.resolve(null)
       return api.startCandle(acc, code)

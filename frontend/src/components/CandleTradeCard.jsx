@@ -40,6 +40,7 @@ function fromForm(f) {
     take_profit_pct: Number(f.take_profit_pct),
     trailing: f.trailing !== false,
     trailing_pct: Number(f.trailing_pct),
+    stop_margin_pct: Number(f.stop_margin_pct),
     entry_days: Math.round(Number(f.entry_days) || 0),
     watch_mode: f.watch_mode,
     watch_minutes: Number(f.watch_minutes),
@@ -55,6 +56,7 @@ function validate(c) {
   if (!(c.add_min_drop_pct >= 0 && c.add_min_drop_pct < 100)) return '2차 최소 하락률은 0~100% 사이여야 합니다.'
   if (!(c.take_profit_pct > 0 && c.take_profit_pct <= 500)) return '익절 상승률은 0~500% 사이여야 합니다.'
   if (c.trailing && !(c.trailing_pct > 0 && c.trailing_pct < 100)) return '트레일링 하락률은 0~100% 사이여야 합니다.'
+  if (!(c.stop_margin_pct >= 0 && c.stop_margin_pct < 50)) return '구간 이탈 손절 여유는 0~50% 사이여야 합니다.'
   if (!(c.entry_days >= 1 && c.entry_days <= 60)) return '1차 매수 기한은 1~60거래일이어야 합니다.'
   return ''
 }
@@ -80,18 +82,25 @@ export default function CandleTradeCard({ account, item }) {
   const [zoneForm, setZoneForm] = useState(() => ({ low: item.zone?.low || '', high: item.zone?.high || '' }))
   const [zoneDirty, setZoneDirty] = useState(false)
   const [pick, setPick] = useState(null)
+  // 새 구간(재진입) 편집 중. 보유 중·익절 전에만(rezone_allowed). budget = 새 회차 매수 금액.
+  const [rezoning, setRezoning] = useState(false)
+  const [budget, setBudget] = useState('')
+  const zoneEditable = item.zone_editable || (rezoning && item.rezone_allowed)
+  useEffect(() => { if (!item.rezone_allowed) setRezoning(false) }, [item.rezone_allowed])
   useEffect(() => {
     if (!zoneDirty) setZoneForm({ low: item.zone?.low || '', high: item.zone?.high || '' })
   }, [item.zone?.low, item.zone?.high, zoneDirty])
   const zLow = Number(zoneForm.low)
   const zHigh = Number(zoneForm.high)
-  const zoneFormError = !isZone || !zoneDirty ? ''
+  const budgetNum = Math.round(Number(budget) || 0)
+  const zoneFormError = rezoning && !(budgetNum >= 10_000) ? '새 구간 매수 금액은 1만원 이상이어야 합니다.'
+    : !isZone || !zoneDirty ? ''
     : !(zLow > 0 && zHigh > 0) ? '상단·하단을 모두 정하세요.'
       : !(zLow < zHigh) ? '하단은 상단보다 낮아야 합니다.' : ''
   const setZoneAt = (key, value) => { setZoneForm((z) => ({ ...z, [key]: value })); setZoneDirty(true) }
   // 상단·하단 선 끌기(마우스·터치). 놓으면 입력값이 바뀌고, [구간 저장]으로 확정한다.
   const onLineDrag = (id, p) => setZoneAt(id, roundToTick(p))
-  const onPriceClick = pick && item.zone_editable ? (p) => {
+  const onPriceClick = pick && zoneEditable ? (p) => {
     setZoneAt(pick, roundToTick(p))
     // 상단 다음엔 하단을 바로 찍을 수 있게(비어 있을 때만).
     setPick(pick === 'high' && !zoneForm.low ? 'low' : null)
@@ -112,6 +121,26 @@ export default function CandleTradeCard({ account, item }) {
   const leg2 = secondLegCheck(zone, cfg, bought ? item.legs[0].price : 0)
   const leg2Warn = leg2 && !leg2.possible && leg2Waiting && editable
   const body = item.base.close - item.base.open
+
+  const startRezone = () => {
+    setRezoning(true)
+    setBudget(item.pending_amount > 0 ? String(item.pending_amount) : '')
+    setPick('high')
+  }
+  const cancelRezone = () => {
+    setRezoning(false)
+    setZoneDirty(false)
+    setPick(null)
+  }
+  const saveRezone = async () => {
+    const message = `${account.danger ? '⚠️ 실전 ' : ''}${account.label} 계좌 구간 매매 새 구간\n${item.name} ${item.code}\n`
+      + `새 매입 구간 ${fmtPrice(zLow)} ~ ${fmtPrice(zHigh)}, 매수 ${fmt(budgetNum)}원(1차·2차)\n`
+      + `대기 중인 차수는 취소되고, 보유 ${fmt(item.shares)}주(평단 ${fmtPrice(item.avg_cost)})는 그대로 이어집니다.\n`
+      + `익절은 합산 평단, 손절은 새 구간 하단 기준입니다. 진행할까요?`
+    const r = await run(() => actions.rezoneCandle(account.id, item.code, zLow, zHigh, budgetNum, message), '새 구간 시작됨')
+    if (r) cancelRezone()
+    return r
+  }
 
   const saveZone = async () => {
     const r = await run(() => actions.setCandleZone(account.id, item.code, zLow, zHigh), '구간 저장됨')
@@ -170,8 +199,10 @@ export default function CandleTradeCard({ account, item }) {
     if (item.avg_cost > 0 && holding) out.push({ price: item.avg_cost, color: '#555', title: '평단', dashed: true })
     if (item.take_profit_price) out.push({ price: item.take_profit_price, color: '#d32f2f', title: item.config.trailing === false ? '익절(전량)' : '절반 익절', dashed: true })
     if (item.trailing_stop) out.push({ price: item.trailing_stop, color: '#e65100', title: '트레일링', dashed: true })
+    // 손절선은 하단과 다를 때만(여유 0이면 구간 하단선이 곧 손절선).
+    if (holding && item.stop_line && zone && item.stop_line < zone.low) out.push({ price: item.stop_line, color: '#1565c0', title: '손절선', dashed: true })
     return out
-  }, [zone?.low, zone?.high, isZone, zoneDirty, zLow, zHigh, item.legs, item.avg_cost, item.take_profit_price, item.trailing_stop, item.config.trailing, holding])
+  }, [zone?.low, zone?.high, isZone, zoneDirty, zLow, zHigh, item.legs, item.avg_cost, item.take_profit_price, item.trailing_stop, item.config.trailing, item.stop_line, holding])
 
   return (
     <div className={`stock-panel candle-card tone-${ph.tone}`}>
@@ -215,7 +246,7 @@ export default function CandleTradeCard({ account, item }) {
             {item.phase === 'WATCHING' && item.days_elapsed > 0 && ` / 기한 ${item.config.entry_days}거래일`}
           </span>
         )}
-        {item.stop_armed && <span className="down">전일 종가 {fmtPrice(item.prev_close)} &lt; 하단 — 오늘 하단 아래에서 전량 매도</span>}
+        {item.stop_armed && <span className="down">전일 종가 {fmtPrice(item.prev_close)} &lt; 손절선 {fmtPrice(item.stop_line)} — 오늘 그 아래에서 전량 매도</span>}
       </div>
       {(bought || item.shares > 0) && (
         <div className="ct-summary">
@@ -223,6 +254,11 @@ export default function CandleTradeCard({ account, item }) {
           <span>평단 <strong>{fmtPrice(item.avg_cost)}</strong></span>
           <span>평가 <strong className={pnlPct > 0 ? 'up' : pnlPct < 0 ? 'down' : ''}>
             {pnlPct === null ? '—' : `${pnlPct > 0 ? '+' : ''}${pnlPct.toFixed(2)}%`}</strong></span>
+          {item.round?.no > 1 && (
+            <span className="muted" title="새 구간 설정으로 앞 회차에서 이어 온 보유">
+              {item.round.no}회차 · 이월 {fmt(item.round.carry_qty)}주 @ {fmtPrice(item.round.carry_avg)}
+            </span>
+          )}
           {item.sold_qty > 0 && <span className="muted">매도 {fmt(item.sold_qty)}주</span>}
           {item.phase === 'TRAILING' && <span>고점 <strong>{fmtPrice(item.peak)}</strong> · 스톱 <strong>{fmtPrice(item.trailing_stop)}</strong></span>}
           {pos && <span className="muted">계좌 잔고 {fmt(pos.quantity)}주</span>}
@@ -237,15 +273,31 @@ export default function CandleTradeCard({ account, item }) {
       </div>
       {isZone && (
         <div className="ct-zone">
-          <strong>매입 구간</strong>
-          <label>상단 <input type="number" min="1" step="any" value={zoneForm.high} disabled={!item.zone_editable || busy}
+          <strong>{rezoning ? '새 매입 구간' : '매입 구간'}</strong>
+          <label>상단 <input type="number" min="1" step="any" value={zoneForm.high} disabled={!zoneEditable || busy}
             onChange={(e) => setZoneAt('high', e.target.value)} /></label>
-          <button className={pick === 'high' ? 'on' : ''} disabled={!item.zone_editable || busy}
+          <button className={pick === 'high' ? 'on' : ''} disabled={!zoneEditable || busy}
             aria-pressed={pick === 'high'} onClick={() => setPick(pick === 'high' ? null : 'high')}>차트에서 상단 찍기</button>
-          <label>하단 <input type="number" min="1" step="any" value={zoneForm.low} disabled={!item.zone_editable || busy}
+          <label>하단 <input type="number" min="1" step="any" value={zoneForm.low} disabled={!zoneEditable || busy}
             onChange={(e) => setZoneAt('low', e.target.value)} /></label>
-          <button className={pick === 'low' ? 'on' : ''} disabled={!item.zone_editable || busy}
+          <button className={pick === 'low' ? 'on' : ''} disabled={!zoneEditable || busy}
             aria-pressed={pick === 'low'} onClick={() => setPick(pick === 'low' ? null : 'low')}>차트에서 하단 찍기</button>
+          {rezoning && (
+            <label title="새 구간에서 살 금액(1차·2차를 매매 설정의 1차 비중대로 나눔). 기본값은 취소될 대기 차수 금액입니다.">
+              매수 금액 <input type="number" min="10000" step="10000" value={budget} disabled={busy}
+                onChange={(e) => setBudget(e.target.value)} />원
+            </label>
+          )}
+          {rezoning && (
+            <>
+              <button className="on" disabled={busy || !zoneDirty || !!zoneFormError} onClick={saveRezone}>새 구간 시작</button>
+              <button disabled={busy} onClick={cancelRezone}>취소</button>
+            </>
+          )}
+          {!rezoning && item.rezone_allowed && (
+            <button disabled={busy} onClick={startRezone}
+              title="대기 중인 차수를 취소하고, 지금 보유는 그대로 둔 채 새 구간에서 새로 1차·2차 매수합니다.">새 구간 설정</button>
+          )}
           {/* 항상 자리를 차지하게 둔다 — 선을 끄는 도중에 버튼이 나타나며 차트가 밀리면 끌기가 튄다. */}
           {item.zone_editable && (
             <button className={zoneDirty ? 'on' : ''} disabled={busy || !zoneDirty || !!zoneFormError} onClick={saveZone}>
@@ -254,7 +306,8 @@ export default function CandleTradeCard({ account, item }) {
           )}
           <span className={`ct-zone-hint ${zoneFormError ? 'down' : 'muted'}`}>
             {zoneFormError
-              || (!item.zone_editable ? '1차 매수 후에는 구간을 바꿀 수 없습니다.'
+              || (rezoning ? `대기 차수 ${fmt(item.pending_amount)}원은 취소, 보유 ${fmt(item.shares)}주(평단 ${fmtPrice(item.avg_cost)})는 이어 가고 새 구간에서 새로 1차·2차 매수합니다. 익절은 합산 평단, 손절은 새 하단 기준.`
+                : !item.zone_editable ? (item.rezone_allowed ? '1차 매수 후에는 [새 구간 설정]으로만 구간을 바꿀 수 있습니다(보유 이월).' : '1차 매수 후에는 구간을 바꿀 수 없습니다.')
                 : pick ? `차트에서 ${pick === 'high' ? '상단' : '하단'} 가격을 누르세요(호가 단위로 맞춤).`
                   : zone ? `폭 ${((1 - zone.low / zone.high) * 100).toFixed(1)}% — 차트의 구간 선을 끌어 옮길 수 있습니다.`
                     : '상단·하단 가격을 차트에서 찍거나 직접 입력하세요.')}
@@ -263,8 +316,8 @@ export default function CandleTradeCard({ account, item }) {
       )}
       <Chart account={account.id} code={item.code} interval={interval} tick={tick} height={isZone ? 320 : 260}
         anchorDate={isZone ? null : item.base.date} priceLines={lines} onPriceClick={onPriceClick}
-        draggableLines={isZone && item.zone_editable ? [{ id: 'high', price: zHigh }, { id: 'low', price: zLow }] : null}
-        onLineDrag={isZone && item.zone_editable ? onLineDrag : null} />
+        draggableLines={isZone && zoneEditable ? [{ id: 'high', price: zHigh }, { id: 'low', price: zLow }] : null}
+        onLineDrag={isZone && zoneEditable ? onLineDrag : null} />
 
       <div className="panels">
         <div className="ct-config">
@@ -343,6 +396,11 @@ export default function CandleTradeCard({ account, item }) {
                   onChange={(e) => set('trailing_pct', e.target.value)} />% 하락</>
               )}
             </label>
+            <label title="손절선 = 구간 하단 × (1 − 이 비율). 전일 종가가 손절선 아래면 그날 손절선 아래 가격에서 전량 매도합니다. 0이면 하단 그대로.">
+              구간 이탈 손절: 하단보다
+              <input type="number" min="0" max="49" step="any" value={form.stop_margin_pct ?? 0}
+                onChange={(e) => set('stop_margin_pct', e.target.value)} />% 아래
+            </label>
             <label title="틱: 체결마다 판단. 분: 완성된 N분봉의 종가로 판단.">가격 감시
               <select value={form.watch_mode} onChange={(e) => set('watch_mode', e.target.value)}>
                 <option value="tick">틱 단위</option>
@@ -356,7 +414,9 @@ export default function CandleTradeCard({ account, item }) {
               )}
             </label>
           </fieldset>
-          <p className="muted ct-rule">전일 종가가 매입 구간 하단 아래면, 그날 하단 아래 가격에서 보유 전량을 매도합니다(1차 매수 다음 날부터).</p>
+          <p className="muted ct-rule">{Number(form.stop_margin_pct) > 0
+            ? `전일 종가가 매입 구간 하단의 ${+Number(form.stop_margin_pct)}% 아래(손절선)보다 낮으면, 그날 손절선 아래 가격에서 보유 전량을 매도합니다(1차 매수 다음 날부터).`
+            : '전일 종가가 매입 구간 하단 아래면, 그날 하단 아래 가격에서 보유 전량을 매도합니다(1차 매수 다음 날부터).'}</p>
           {formError && editable && <div className="ct-error">{formError}</div>}
         </div>
 
