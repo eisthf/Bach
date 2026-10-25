@@ -181,8 +181,13 @@ async def test_skip_above_pct(bonus, monkeypatch):
 async def test_deadline_fails_job(bonus, monkeypatch):
     hub, mgr, clock, bt = bonus
     bt.settings = BonusSettings(enabled=True, order_mode="market")
-    bt._now = lambda: kst("2026-10-26 15:31")
+    clock_now = {"t": kst("2026-10-26 10:01")}
+    bt._now = lambda: clock_now["t"]
+    monkeypatch.setattr(hub.broker, "buy", lambda c, a: OrderResult(
+        ok=False, code=c, side="buy", filled_qty=0, price=0, message="매매거래정지 종목"))
     job = await bt.on_disclosure(disclosure(kst("2026-10-26 10:00")))
+    await asyncio.sleep(0.05)
+    clock_now["t"] = kst("2026-10-26 15:31")  # 계속 거부되다 장 마감
     await wait_status(job, "failed")
     assert "기한" in job.message
 
@@ -230,7 +235,7 @@ class _Mgr:
         self.msgs.append({"type": "log", "text": text})
 
 
-async def test_watcher_dispatches_new_and_skips_stale(tmp_path):
+async def test_watcher_dispatches_new_disclosures_once(tmp_path):
     got = []
 
     class Bt:
@@ -241,23 +246,59 @@ async def test_watcher_dispatches_new_and_skips_stale(tmp_path):
         account = "mock"
         bonus_trades = Bt()
 
-    rows = [row(t="2026-10-26 09:40", code5="11111", acpt="1"),   # 20분 전 — 오래됨
-            row(t="2026-10-26 09:58", code5="22222", acpt="2"),
-            row(title="[정정]무상증자결정", t="2026-10-26 09:59", code5="33333", acpt="3")]
-    w = BonusWatcher(_Mgr({"mock": H()}), fetch=lambda day: rows, path=tmp_path / "w.json")
-    now = kst("2026-10-26 10:00")
+    asked = []
+    rows = [row(t="2026-10-23 17:00", code5="11111", acpt="1"),   # 금요일 장후 — 월요일 아침에도 넘긴다
+            row(t="2026-10-26 07:58", code5="22222", acpt="2"),
+            row(title="[정정]무상증자결정", t="2026-10-26 07:59", code5="33333", acpt="3")]
+
+    def fetch(start, end):
+        asked.append((start.isoformat(), end.isoformat()))
+        return rows
+
+    w = BonusWatcher(_Mgr({"mock": H()}), fetch=fetch, path=tmp_path / "w.json")
+    now = kst("2026-10-26 08:00")  # 월요일
     await w.poll_once(now)
-    assert got == ["222220"]
-    assert {e["code"]: e["stale"] for e in w.events} == {"111110": True, "222220": False}
+    assert asked == [("2026-10-23", "2026-10-26")]  # 직전 평일(금)~오늘
+    assert got == ["111110", "222220"]
     await w.poll_once(now)  # 같은 접수번호는 다시 처리하지 않는다
-    assert got == ["222220"]
+    assert got == ["111110", "222220"]
     # 저장된 접수번호는 재시작 뒤에도 기억한다
-    w2 = BonusWatcher(_Mgr({}), fetch=lambda day: rows, path=tmp_path / "w.json")
+    w2 = BonusWatcher(_Mgr({}), fetch=fetch, path=tmp_path / "w.json")
     assert set(w2.seen) == {"1", "2"}
 
 
+def test_search_range():
+    from datetime import date
+    assert BonusWatcher.search_range(date(2026, 10, 27)) == (date(2026, 10, 26), date(2026, 10, 27))
+    assert BonusWatcher.search_range(date(2026, 10, 26)) == (date(2026, 10, 23), date(2026, 10, 26))
+
+
+async def test_skip_when_target_already_passed(bonus):
+    hub, mgr, clock, bt = bonus
+    bt.settings = BonusSettings(enabled=True, order_mode="market")
+    # 10:00 공시를 10:45에 처음 봤다(서버가 꺼져 있었음) — 10:40 재개가 이미 지났다
+    bt._now = lambda: kst("2026-10-26 10:45")
+    assert await bt.on_disclosure(disclosure(kst("2026-10-26 10:00"))) is None
+    job = bt.jobs["005930"]
+    assert job.status == "skipped" and "지남" in job.message
+    assert "005930" not in hub.manual_trades.items
+
+
+async def test_late_detection_before_target_still_buys(bonus):
+    hub, mgr, clock, bt = bonus
+    bt.settings = BonusSettings(enabled=True, order_mode="market")
+    # 10:00 공시를 10:25에 봤다 — 아직 정지 중이라 공시 직후 감지와 같은 매수
+    bt._now = lambda: kst("2026-10-26 10:25")
+    job = await bt.on_disclosure(disclosure(kst("2026-10-26 10:00")))
+    await wait_status(job, "sent")
+    # 금요일 장후 공시를 월요일 08:00에 봤다 — 목표는 월요일 09:00
+    bt._now = lambda: kst("2026-10-26 08:00")
+    job2 = await bt.on_disclosure(disclosure(kst("2026-10-23 17:00"), code="000660"))
+    assert job2 is not None and job2.target_at == kst("2026-10-26 09:00").isoformat()
+
+
 async def test_watcher_fetch_error_reported_once(tmp_path):
-    def boom(day):
+    def boom(start, end):
         raise RuntimeError("down")
 
     mgr = _Mgr({})
@@ -287,7 +328,7 @@ async def test_demo_clock_ignores_weekday_and_hours(mock_hub):
 
 # ---------------------------------------------------------------- 09:00 [상한가 매매] 보호
 def test_watcher_quiet_around_open(tmp_path):
-    w = BonusWatcher(_Mgr({}), fetch=lambda day: [], path=tmp_path / "w.json")
+    w = BonusWatcher(_Mgr({}), fetch=lambda start, end: [], path=tmp_path / "w.json")
     assert w.should_poll(kst("2026-10-26 08:59:29"))
     assert not w.should_poll(kst("2026-10-26 08:59:30"))
     assert not w.should_poll(kst("2026-10-26 09:01:29"))
@@ -299,7 +340,7 @@ async def test_watcher_broadcasts_only_on_change(tmp_path):
     rows = []
     fail = {"on": False}
 
-    def fetch(day):
+    def fetch(start, end):
         if fail["on"]:
             raise RuntimeError("down")
         return rows

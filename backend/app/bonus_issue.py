@@ -1,11 +1,12 @@
 """무상증자 공시 감시 → 자동 매수.
 
 감시(``BonusWatcher``, 전 계좌 공유)
-  KIND 공시검색('무상증자')을 ``POLL_SEC``마다 조회해 새 접수번호를 찾는다. 키움 REST에는
-  공시 API가 없다. 대상 = 제목에 '무상증자'·'결정'이 있고 정정·종속회사 공시가 아닌 유가·코스닥
-  최초 공시. 유무상증자(``paid_too``)는 따로 표시한다(지난 조사에서 권리락 전날까지 중앙 −39%).
-  처음 보는 공시라도 공시 시각이 ``MAX_AGE_MIN``분보다 오래됐으면(서버가 꺼져 있던 동안 등)
-  목록에만 남기고 사지 않는다.
+  KIND 공시검색('무상증자')을 ``POLL_SEC``(기본 60초, ``BONUS_POLL_SEC``)마다 조회해 새 접수번호를
+  찾는다. 키움 REST에는 공시 API가 없다. 대상 = 제목에 '무상증자'·'결정'이 있고 정정·종속회사 공시가
+  아닌 유가·코스닥 최초 공시. 유무상증자(``paid_too``)는 따로 표시한다(지난 조사에서 권리락 전날까지
+  중앙 −39%). 조회 범위는 직전 평일~오늘 — 장후·주말 공시를 다음 조회일 아침에도 잡는다.
+  자주 볼 필요가 없다: 장중 공시는 공시와 같은 분에 매매정지가 걸려 재개 단일가(약 40분 뒤)까지
+  체결이 없고, 목표 시각은 감지 시각이 아니라 공시 시각에서 계산한다.
 
 매수(``BonusTradeManager``, 계좌별)
   계좌별 스위치(기본 꺼짐)가 켜져 있으면 공시 종목을 **수동 매매 목록**(origin "bonus")에
@@ -15,6 +16,7 @@
   장중 공시는 보통 매매정지 30분 + 재개 단일가 10분 = 공시 후 약 40분(``resume_min``)에 첫
   체결이 난다. 장전 공시는 그날 09:00, 장후·휴일·재개가 15:20을 넘는 공시는 다음 평일 09:00
   단일가가 목표(``target_at``)다. 휴장일은 모른다 — 그날 못 사면 기한(목표일 15:30)에 끝난다.
+  감지했을 때 목표 시각이 이미 지났으면(서버가 꺼져 있던 동안 재개됨) 사지 않고 '건너뜀'으로 남긴다.
 
   주문 방식(``order_mode``):
     expected     (기본) 목표 시각 ``lead_sec``초 전 예상체결가로 수량(예산 ÷ 예상가)을 정해
@@ -123,15 +125,19 @@ def _strip(s: str) -> str:
     return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", s))).strip()
 
 
-def fetch_kind(day: date) -> List[dict]:
-    """(블로킹) KIND 공시검색 '무상증자' — 그날 공시 목록(최신순). 실패는 예외."""
+def fetch_kind(start: date, end: date) -> List[dict]:
+    """(블로킹) KIND 공시검색 '무상증자' — [start, end] 공시 목록(최신순, 한 쪽 100건). 실패는 예외.
+
+    '무상증자'로는 결정 공시 말고도 매매정지·추가상장·권리락 안내가 걸리지만 하루 몇 건이라
+    며칠 범위도 한 쪽이면 된다.
+    """
     import requests
 
     r = requests.post("https://kind.krx.co.kr/disclosure/details.do", timeout=15,
                       headers={"User-Agent": "Mozilla/5.0"}, data={
         **_KIND_EMPTY, "method": "searchDetailsSub", "currentPageSize": 100, "pageIndex": 1,
         "orderMode": 1, "orderStat": "D", "forward": "details_sub", "reportNm": "무상증자",
-        "reportNmTemp": "무상증자", "fromDate": day.isoformat(), "toDate": day.isoformat(),
+        "reportNmTemp": "무상증자", "fromDate": start.isoformat(), "toDate": end.isoformat(),
         "bfrDsclsType": "on"})
     r.raise_for_status()
     r.encoding = "utf-8"
@@ -154,14 +160,14 @@ def fetch_kind(day: date) -> List[dict]:
 class BonusWatcher:
     """전 계좌 공유 공시 감시. 새 무상증자 결정 공시를 각 계좌 ``bonus_trades``에 넘긴다."""
 
-    POLL_SEC = 10.0
+    POLL_SEC = float(os.getenv("BONUS_POLL_SEC") or 60)
     ACTIVE_FROM, ACTIVE_TO = time(7, 0), time(20, 0)
-    # 장 시작 직후는 [상한가 매매]의 시간이다. 이 사이 공시는 최대 2분 늦게 잡힌다(MAX_AGE_MIN 안).
+    # 장 시작 직후는 [상한가 매매]의 시간이다. 이 사이 공시는 조금 늦게 잡힌다(목표 시각엔 영향 없음).
     QUIET = (time(8, 59, 30), time(9, 1, 30))
-    MAX_AGE_MIN = 10
     KEEP_EVENTS = 100
 
-    def __init__(self, manager: "AccountManager", fetch: Callable[[date], List[dict]] = fetch_kind,
+    def __init__(self, manager: "AccountManager",
+                 fetch: Callable[[date, date], List[dict]] = fetch_kind,
                  path: Optional[Path] = None) -> None:
         self.manager = manager
         self.fetch = fetch
@@ -177,7 +183,7 @@ class BonusWatcher:
         self.seen: Dict[str, str] = {}        # 접수번호 → 공시일(YYYY-MM-DD)
         self.events: List[dict] = []          # 최근 공시(새것이 뒤)
         self.status = {"source": "KIND", "enabled": os.getenv("BONUS_WATCH", "1") != "0",
-                       "last_poll": None, "ok": None, "error": ""}
+                       "poll_sec": self.POLL_SEC, "last_poll": None, "ok": None, "error": ""}
         self._task: Optional[asyncio.Task] = None
         self._load()
 
@@ -194,7 +200,7 @@ class BonusWatcher:
         self.events = list(raw.get("events") or [])[-self.KEEP_EVENTS:]
 
     def _persist(self) -> None:
-        # 이레 넘은 접수번호는 잊는다(KIND는 그날 목록만 조회한다).
+        # 이레 넘은 접수번호는 잊는다(조회 범위는 직전 평일~오늘).
         cutoff = (now_kst().date() - timedelta(days=7)).isoformat()
         self.seen = {k: v for k, v in self.seen.items() if v >= cutoff}
         try:
@@ -213,6 +219,14 @@ class BonusWatcher:
     def _broadcast_status(self) -> None:
         # 공시 목록 없이 상태만(정상↔오류가 바뀔 때).
         self.manager.broadcast({"type": "bonus_watch_status", "status": self.status})
+
+    @staticmethod
+    def search_range(today: date) -> tuple:
+        """직전 평일~오늘. 월요일이면 금요일부터라 주말 공시도 들어간다."""
+        start = today - timedelta(days=1)
+        while start.weekday() >= 5:
+            start -= timedelta(days=1)
+        return start, today
 
     def should_poll(self, now: datetime) -> bool:
         t = now.time()
@@ -247,7 +261,7 @@ class BonusWatcher:
         """한 번 조회해 새 공시를 처리한다. 매수 대상으로 넘긴 공시 목록을 돌려준다."""
         now = now or now_kst()
         try:
-            rows = await asyncio.to_thread(self.fetch, now.date())
+            rows = await asyncio.to_thread(self.fetch, *self.search_range(now.date()))
         except Exception as e:  # noqa: BLE001
             first = self.status["ok"] is not False
             self.status.update(last_poll=now.isoformat(timespec="seconds"), ok=False,
@@ -265,13 +279,11 @@ class BonusWatcher:
         dispatched = []
         for d in sorted(found, key=lambda x: x.disclosed_at):
             self.seen[d.acptno] = d.at.date().isoformat()
-            stale = now - d.at > timedelta(minutes=self.MAX_AGE_MIN)
-            ev = {**asdict(d), "detected_at": now.isoformat(timespec="seconds"), "stale": stale}
-            self.events.append(ev)
+            self.events.append({**asdict(d), "detected_at": now.isoformat(timespec="seconds")})
             tag = "유무상" if d.paid_too else "무상"
-            note = (" — 대상 아님: " + d.why) if not d.eligible else (" — 오래된 공시라 매수 안 함" if stale else "")
-            self.manager._log(f"📰 {tag}증자 공시: {d.corp}({d.code or '—'}) {d.at:%H:%M} {d.title}{note}")
-            if d.eligible and not stale:
+            note = (" — 대상 아님: " + d.why) if not d.eligible else ""
+            self.manager._log(f"📰 {tag}증자 공시: {d.corp}({d.code or '—'}) {d.at:%m-%d %H:%M} {d.title}{note}")
+            if d.eligible:
                 dispatched.append(d)
         if found:
             self.events = self.events[-self.KEEP_EVENTS:]
@@ -298,7 +310,7 @@ class BonusWatcher:
         if d is None:
             raise ValueError("제목에 '무상증자'·'결정'이 있어야 합니다.")
         d.code = code
-        orig, self.fetch = self.fetch, (lambda _day: [row])
+        orig, self.fetch = self.fetch, (lambda _start, _end: [row])
         try:
             await self.poll_once()
         finally:
@@ -501,6 +513,21 @@ class BonusTradeManager:
         if d.code in hub.manual_trades.items:
             hub._log(f"{label}: 이미 수동 매매 목록에 있어 건너뜀")
             return None
+        now = self._now()
+        target = self._target(d.at)
+        if now >= target:
+            # 서버가 꺼져 있던 동안 이미 재개돼 가격이 움직였다 — 공시 직후 감지와 같은 매수가 아니다.
+            job = BuyJob(code=d.code, name=d.corp, acptno=d.acptno, disclosed_at=d.disclosed_at,
+                         title=d.title, mode=s.order_mode, budget=s.budget,
+                         target_at=target.isoformat(timespec="seconds"), status="skipped",
+                         message=f"감지({now:%m-%d %H:%M}) 때 첫 체결 예상 시각이 이미 지남",
+                         created_at=now.isoformat(timespec="seconds"),
+                         updated_at=now.isoformat(timespec="seconds"))
+            self.jobs[d.code] = job
+            self.persist()
+            self._log(job, f"매수 안 함 — {job.message}")
+            self.broadcast()
+            return None
         exits = (ExitRule(enabled=True, mode="pct", pct=s.stop_pct),
                  ExitRule(enabled=True, mode="pct", pct=s.take_profit_pct))
         name = d.corp  # KIND 회사명 — 키움 종목명 조회(REST)를 아낀다
@@ -510,10 +537,9 @@ class BonusTradeManager:
         except ValueError as e:
             hub._log(f"{label}: 건너뜀 — {e}")
             return None
-        now = self._now()
         job = BuyJob(code=d.code, name=name or d.corp, acptno=d.acptno, disclosed_at=d.disclosed_at,
                      title=d.title, mode=s.order_mode, budget=s.budget,
-                     target_at=self._target(d.at).isoformat(timespec="seconds"),
+                     target_at=target.isoformat(timespec="seconds"),
                      created_at=now.isoformat(timespec="seconds"),
                      updated_at=now.isoformat(timespec="seconds"))
         self.jobs[d.code] = job

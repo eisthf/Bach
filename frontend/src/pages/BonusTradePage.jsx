@@ -108,7 +108,7 @@ function WatchStatus({ demo }) {
         <b>공시 감시</b>
         <span className="muted">
           {!st ? '불러오는 중' : !st.enabled ? '꺼짐(BONUS_WATCH=0)'
-            : `${st.source} · 평일 07~20시 10초마다(08:59:30~09:01:30 쉼) · 마지막 확인 ${st.last_poll ? hhmm(st.last_poll) + st.last_poll.slice(16, 19) : '—'}`}
+            : `${st.source} · 평일 07~20시 ${st.poll_sec >= 60 ? `${st.poll_sec / 60}분` : `${st.poll_sec}초`}마다(08:59:30~09:01:30 쉼) · 마지막 확인 ${st.last_poll ? hhmm(st.last_poll) + st.last_poll.slice(16, 19) : '—'}`}
         </span>
         {st?.error && <span className="input-err">{st.error}</span>}
         <button className="link-btn" onClick={() => setOpen((v) => !v)}>
@@ -127,8 +127,7 @@ function WatchStatus({ demo }) {
                     <td>{mmdd(e.disclosed_at)} {hhmm(e.disclosed_at)}</td>
                     <td>{e.corp} <span className="muted">{e.code}</span></td>
                     <td>{e.title}</td>
-                    <td>{!e.eligible ? `대상 아님(${e.why})` : e.stale ? '오래된 공시 — 매수 안 함'
-                      : e.paid_too ? '유무상' : '계좌별 처리'}</td>
+                    <td>{!e.eligible ? `대상 아님(${e.why})` : e.paid_too ? '유무상' : '계좌별 처리(아래 매수 작업)'}</td>
                   </tr>
                 ))}
               </tbody>

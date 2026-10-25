@@ -64,7 +64,7 @@ cd backend && uv run python backtest.py 079650:20260903 --state real     --varia
 | `strategy/big_candle_trade.py` | 대금 양봉·구간 매매 엔진. 매입 구간(기준 캔들 몸통에서 자동 / `kind="zone"`이면 수동 지정)에서 여러 거래일에 걸친 2분할 매수·절반 익절+트레일링(또는 전량 익절)·구간 이탈 손절. 틱/분 감시. 상태 직렬화 |
 | `big_candle_trade.py` | 계좌별 대금 양봉·구간 매매 관리자(한 목록, `kind`로 구분). [상한가 매매] 목록과 분리된 목록·틱 루프·세션별 일봉 맥락(전일 종가·경과 거래일·기준 캔들 확정)·영속화(`state.{계좌}.candle.json`)·재시작 잔고 대조·수동 인계 |
 | `manual_trade.py` | 계좌별 수동 매매 관리자. 어느 자동매매에서든 [수동 전환]한 종목 + 직접 추가한 종목. 엔진 없음(보유·평단=계좌 잔고), 틱 루프·자동 손절·익절(`ExitRule`: 평단 대비 % 또는 가격 라인 — 손절 라인은 '미만', 나머지는 경계 포함, 발동 시 전량 시장가 1회 후 둘 다 해제)·영속화(`state.{계좌}.manual.json`) |
-| `bonus_issue.py` | 무상증자 매매. `BonusWatcher`(전역, KIND 공시검색 10초 폴링 → 새 무상증자 결정 공시)·`BonusTradeManager`(계좌별 자동 매수 설정·매수 작업 `BuyJob`, `state.{계좌}.bonus.json`). 산 종목은 수동 매매 목록(origin `bonus`)에 손절·익절을 정해 올린다 |
+| `bonus_issue.py` | 무상증자 매매. `BonusWatcher`(전역, KIND 공시검색 60초 폴링·직전 평일~오늘 → 새 무상증자 결정 공시)·`BonusTradeManager`(계좌별 자동 매수 설정·매수 작업 `BuyJob`, `state.{계좌}.bonus.json`). 산 종목은 수동 매매 목록(origin `bonus`)에 손절·익절을 정해 올린다 |
 | `backtest.py` | ULC 백테스트. 1분봉 → 합성 틱으로 운영 엔진을 재생(CLI는 `backend/backtest.py`) |
 | `providers/base.py` | `DataProvider` / `Broker` ABC. `VALID_INTERVALS=(3,5,10,30,60,1440)`, `DAY_INTERVAL=1440` |
 | `providers/mock.py` | 자격증명 없는 합성 시뮬레이터(시드 기반 랜덤워크 봉 + 틱 + 즉시체결 브로커) |
@@ -179,9 +179,10 @@ cd backend && uv run python backtest.py 079650:20260903 --state real     --varia
   같은 목록·엔드포인트(등록 시 `kind: "zone"`)라 한 종목
   한 방식 규칙·예수금 가드·재시작 복원을 그대로 공유한다. ('수동매매'는 [상한가 매매]의 MANUAL_TRADING이라
   이름을 피했다.)
-- **무상증자 매매**(`#/bonus-trade`, `bonus_issue.py`): 키움에 공시 API가 없어 KIND 공시검색을 평일 07~20시
-  10초마다 본다(`BONUS_WATCH=0`이면 끔). 대상 = 유가·코스닥 '무상증자…결정' 최초 공시(정정·종속회사 제외), 유무상은
-  설정으로만. 공시 시각이 10분 넘게 지났으면 기록만 하고 안 산다. 계좌별 **자동 매수 스위치(기본 꺼짐)**,
+- **무상증자 매매**(`#/bonus-trade`, `bonus_issue.py`): 키움에 공시 API가 없어 KIND 공시검색(직전 평일~오늘)을
+  평일 07~20시 60초마다 본다(`BONUS_POLL_SEC`, `BONUS_WATCH=0`이면 끔). 공시와 같은 분에 매매정지가 걸려 재개 단일가까지
+  체결이 없으니 자주 볼 필요가 없다. 대상 = 유가·코스닥 '무상증자…결정' 최초 공시(정정·종속회사 제외), 유무상은
+  설정으로만. 감지 때 첫 체결 예상 시각(목표)이 이미 지났으면 사지 않고 매수 작업에 '건너뜀'으로 남긴다. 계좌별 **자동 매수 스위치(기본 꺼짐)**,
   금액(기본 100만), 익절 +25%·손절 −10%(평단 대비, 산 뒤엔 종목별로 % 또는 선으로 변경 — 수동 매매 `ExitRule`).
   장중 공시는 매매정지 → 약 40분 뒤 재개 단일가가 첫 체결(`resume_min`). 주문 방식: 예상 체결가(기본, 단일가 마감
   `lead_sec`초 전 ka10001 `exp_cntr_pric`로 수량 → 상한가 지정가) / 상한가 지정가 / 시장가 / 재개 후 첫 체결가.
