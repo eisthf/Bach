@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>무상증자 공시 차트</title>
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #6b7385; --line: #e3e6ec;
+  --accent: #2f6fd1; --up: #d6453d; --down: #2f6fd1; --sel: #eaf1fc;
+  --ann: #e08a00; --exn: #7b52c7; --ex: #7b52c7; --lst: #0d8f6f; --resume: #d6453d;
+  --badge-intra: #fdecd9; --badge-intra-t: #a05a00; --badge-after: #e6ecf7; --badge-after-t: #2c4f8a;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12151b; --panel: #1a1e26; --text: #e6e9ef; --muted: #98a0b0; --line: #2a303b;
+    --accent: #6ea0ec; --up: #f0625a; --down: #5b93ea; --sel: #213048;
+    --ann: #f0a630; --exn: #a585e8; --ex: #a585e8; --lst: #35b993; --resume: #f0625a;
+    --badge-intra: #3a2a12; --badge-intra-t: #f3b766; --badge-after: #1f2a40; --badge-after-t: #9dbbf0;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.45 -apple-system, "Segoe UI", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; }
+header { padding: 14px 20px 10px; border-bottom: 1px solid var(--line); background: var(--panel); }
+header h1 { font-size: 17px; margin: 0 0 4px; }
+header p { margin: 0; color: var(--muted); font-size: 12.5px; }
+.layout { display: grid; grid-template-columns: 270px 1fr; height: calc(100vh - 62px); }
+aside { border-right: 1px solid var(--line); background: var(--panel); overflow: auto; }
+.filters { display: flex; gap: 6px; padding: 10px; position: sticky; top: 0; background: var(--panel);
+  border-bottom: 1px solid var(--line); z-index: 1; }
+.filters button { flex: 1; border: 1px solid var(--line); background: var(--panel); color: var(--text);
+  border-radius: 6px; padding: 5px 0; font-size: 12.5px; cursor: pointer; }
+.filters button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.item { padding: 8px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.item:hover { background: var(--sel); }
+.item.on { background: var(--sel); box-shadow: inset 3px 0 0 var(--accent); }
+.item .n { font-weight: 600; }
+.item .m { color: var(--muted); font-size: 12px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.badge { font-size: 11px; padding: 1px 6px; border-radius: 10px; font-weight: 600; }
+.b-장중 { background: var(--badge-intra); color: var(--badge-intra-t); }
+.b-장후, .b-장전, .b-휴장일 { background: var(--badge-after); color: var(--badge-after-t); }
+.pos { color: var(--up); } .neg { color: var(--down); }
+main { overflow: auto; padding: 16px 20px 40px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; }
+.title { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.title h2 { margin: 0; font-size: 20px; }
+.facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 6px 18px; margin-top: 10px; font-size: 13px; }
+.facts div span { color: var(--muted); margin-right: 6px; }
+.stats { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.stat { border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; font-size: 12.5px; }
+.stat b { font-variant-numeric: tabular-nums; margin-left: 4px; }
+.chart-h { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+.chart-h h3 { margin: 0; font-size: 14.5px; }
+.legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+.chart { height: 420px; }
+#m3 { height: 380px; }
+.note { color: var(--muted); font-size: 12px; margin-top: 6px; }
+select.mobile { display: none; }
+.mbtn { border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 6px;
+  padding: 3px 10px; font-size: 12.5px; cursor: pointer; }
+.mbtn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.chart-wrap { position: relative; }
+.chart-wrap.measuring { cursor: crosshair; }
+svg.measure { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; z-index: 3; }
+.mlabel { position: absolute; z-index: 4; pointer-events: none; background: var(--panel); border: 1px solid currentColor;
+  border-radius: 6px; padding: 2px 7px; font-size: 12px; font-weight: 600; white-space: nowrap;
+  font-variant-numeric: tabular-nums; display: none; }
+.mhint { color: var(--muted); font-size: 12px; min-height: 18px; }
+@media (max-width: 760px) {
+  .layout { grid-template-columns: 1fr; height: auto; }
+  aside { display: none; }
+  select.mobile { display: block; width: 100%; margin-bottom: 12px; padding: 8px; font-size: 14px;
+    background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; }
+  main { padding: 12px 16px 32px; }
+  .chart { height: 320px; } #m3 { height: 300px; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="htitle"></h1>
+  <p>일봉은 키움 수정주가(공시 반응일 20거래일 전 ~ 권리락일 20거래일 후). 3분봉은 원시 가격(공시일 전·당일·다음 거래일).
+     공시 시각은 KIND. <span id="hmeta"></span> ↑↓ 키로 종목 이동.</p>
+</header>
+<div class="layout">
+  <aside>
+    <div class="filters">
+      <button data-f="all" class="on">전체</button><button data-f="장중">장중</button><button data-f="장후">장후·장전</button>
+    </div>
+    <div id="list"></div>
+  </aside>
+  <main>
+    <select class="mobile" id="msel"></select>
+    <div class="card" id="info"></div>
+    <div class="card">
+      <div class="chart-h"><h3>일봉 (수정주가) <button class="mbtn" id="dmeasure">변화율 측정</button></h3>
+        <div class="legend"><span><i style="background:var(--ann)"></i>무상증자 공시</span>
+          <span><i style="background:var(--exn)"></i>권리락 안내 공시</span>
+          <span><i style="background:var(--ex);opacity:.45"></i>권리락일</span>
+          <span><i style="background:var(--lst)"></i>신주 상장</span>
+          <span>점선: 공시 전 종가</span><span>드래그: 이동 · 축 드래그: 확대</span></div></div>
+      <div class="mhint" id="dhint"></div>
+      <div class="chart-wrap"><div id="daily" class="chart"></div></div>
+      <div class="note" id="dnote"></div>
+    </div>
+    <div class="card">
+      <div class="chart-h"><h3>3분봉 — 공시 전후 거래일 <button class="mbtn" id="mmeasure">변화율 측정</button></h3>
+        <div class="legend"><span><i style="background:var(--ann)"></i>공시 시각</span>
+          <span><i style="background:var(--resume)"></i>매매 재개</span>
+          <span><i style="background:var(--muted);opacity:.5"></i>정규장 밖(NXT)</span></div></div>
+      <div class="mhint" id="mhint"></div>
+      <div class="chart-wrap"><div id="m3"></div></div>
+      <div class="note" id="mnote"></div>
+    </div>
+  </main>
+</div>
+<script>
+const DATA = /*__DATA__*/null;
+const META = /*__META__*/null;
+document.getElementById('htitle').textContent =
+  `무상증자 공시 ${META.start} ~ ${META.end} — ${META.paid ? '무상·유무상' : '순수 무상'} ${META.n}건`;
+document.getElementById('hmeta').textContent = `조회일 ${META.asof}, 데이터 최종일 ${META.last}.`;
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const pct = x => x == null ? '—' : (x >= 0 ? '+' : '') + (x * 100).toFixed(1) + '%';
+const cls = x => x == null ? '' : (x >= 0 ? 'pos' : 'neg');
+const ymd = s => s ? `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}` : '—';
+const fmtN = n => Math.round(n).toLocaleString('ko-KR');
+let filter = 'all', cur = 0, charts = [];
+
+function visible() {
+  return DATA.map((e, i) => ({ e, i })).filter(({ e }) =>
+    filter === 'all' || (filter === '장중' ? e.session === '장중' : e.session !== '장중'));
+}
+
+function renderList() {
+  const el = document.getElementById('list');
+  el.innerHTML = visible().map(({ e, i }) => `
+    <div class="item ${i === cur ? 'on' : ''}" data-i="${i}">
+      <div class="n">${e.corp} <span style="color:var(--muted);font-weight:400;font-size:12px">${e.code}</span></div>
+      <div class="m">${e.time} <span class="badge b-${e.session}">${e.session}</span>
+        1:${e.ratio} · <span class="${cls(e.stats.cum_close)}">권리락 전 ${pct(e.stats.cum_close)}</span></div>
+    </div>`).join('');
+  el.querySelectorAll('.item').forEach(n => n.onclick = () => select(+n.dataset.i));
+  const ms = document.getElementById('msel');
+  ms.innerHTML = visible().map(({ e, i }) =>
+    `<option value="${i}" ${i === cur ? 'selected' : ''}>${e.time.slice(0, 10)} ${e.corp} (${e.session})</option>`).join('');
+  ms.onchange = () => select(+ms.value);
+}
+
+function select(i) {
+  cur = i;
+  renderList();
+  document.querySelector('.item.on')?.scrollIntoView({ block: 'nearest' });
+  render(DATA[i]);
+}
+
+function baseOptions(el, timeVisible) {
+  return {
+    width: el.clientWidth, height: el.clientHeight,
+    layout: { background: { color: css('--panel') }, textColor: css('--text'), fontSize: 11 },
+    grid: { vertLines: { color: css('--line') }, horzLines: { color: css('--line') } },
+    rightPriceScale: { borderColor: css('--line') },
+    timeScale: { borderColor: css('--line'), timeVisible, secondsVisible: false },
+    crosshair: { mode: 0 },
+    // 휠은 페이지 스크롤에 양보하고, 확대는 Ctrl+휠·드래그로 한다.
+    handleScroll: { mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
+    handleScale: { mouseWheel: false, pinch: true, axisPressedMouseMove: true },
+    localization: { locale: 'ko-KR', priceFormatter: p => fmtN(p) },
+  };
+}
+
+function addCandles(ch) {
+  return ch.addCandlestickSeries({
+    upColor: css('--up'), downColor: css('--down'), borderVisible: false,
+    wickUpColor: css('--up'), wickDownColor: css('--down'),
+    priceFormat: { type: 'custom', formatter: p => fmtN(p), minMove: 1 },
+  });
+}
+
+function addVolume(ch) {
+  const v = ch.addHistogramSeries({ priceScaleId: 'vol', priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false });
+  ch.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+  return v;
+}
+
+// 세로 띠: 숨은 가격축에 꽉 찬 히스토그램 막대
+function addBands(ch, bands) {
+  const s = ch.addHistogramSeries({ priceScaleId: 'band', lastValueVisible: false, priceLineVisible: false, base: 0 });
+  ch.priceScale('band').applyOptions({ scaleMargins: { top: 0, bottom: 0 }, visible: false });
+  s.setData(bands);
+  return s;
+}
+
+function withAlpha(hex, a) {
+  const h = hex.replace('#', '');
+  const n = parseInt(h.length === 3 ? h.split('').map(c => c + c).join('') : h, 16);
+  return `rgba(${n >> 16 & 255},${n >> 8 & 255},${n & 255},${a})`;
+}
+
+// 두 지점 변화율 측정: [변화율 측정]을 켜고 두 곳을 클릭한다. 오른쪽 지점의 왼쪽 지점 대비 %.
+// 클릭 위치가 그 봉의 시가·고가·저가·종가에서 8px 안이면 그 가격에 붙는다. Esc로 지운다.
+const NS = 'http://www.w3.org/2000/svg';
+const measures = [];
+function attachMeasure(ch, series, el, btnId, hintId, unit) {
+  const wrap = el.parentElement;
+  wrap.querySelectorAll('svg.measure, .mlabel').forEach(n => n.remove());
+  const svg = document.createElementNS(NS, 'svg'); svg.classList.add('measure');
+  const label = document.createElement('div'); label.className = 'mlabel';
+  wrap.append(svg, label);
+  const btn = document.getElementById(btnId), hint = document.getElementById(hintId);
+  const st = { on: btn.classList.contains('on'), pts: [], hover: null };
+  const setHint = () => hint.textContent = !st.on ? '' : st.pts.length === 1
+    ? '두 번째 지점을 클릭하세요 (Esc: 취소)' : st.pts.length === 2
+    ? '다시 클릭하면 새로 측정 · Esc: 지우기' : '첫 지점을 클릭하세요 (봉의 시·고·저·종가 근처면 그 가격에 붙음)';
+  wrap.classList.toggle('measuring', st.on);
+  btn.onclick = () => {
+    st.on = !st.on; btn.classList.toggle('on', st.on); wrap.classList.toggle('measuring', st.on);
+    if (!st.on) { st.pts = []; st.hover = null; }
+    setHint(); draw();
+  };
+  const snap = param => {
+    if (!param.point || param.logical == null) return null;
+    let price = series.coordinateToPrice(param.point.y);
+    const bar = param.seriesData && param.seriesData.get(series);
+    if (bar) {
+      let best = null;
+      for (const k of ['open', 'high', 'low', 'close']) {
+        const d = Math.abs(series.priceToCoordinate(bar[k]) - param.point.y);
+        if (d < 8 && (!best || d < best.d)) best = { d, p: bar[k] };
+      }
+      if (best) price = best.p;
+    }
+    return price == null ? null : { lg: Math.round(param.logical), price };
+  };
+  const xy = p => {
+    const x = ch.timeScale().logicalToCoordinate(p.lg), y = series.priceToCoordinate(p.price);
+    return x == null || y == null ? null : [x, y];
+  };
+  function draw() {
+    svg.innerHTML = ''; label.style.display = 'none';
+    const a = st.pts[0], b = st.pts[1] || st.hover;
+    if (!a) return;
+    const pa = xy(a);
+    const dot = (p, col) => { const c = document.createElementNS(NS, 'circle');
+      c.setAttribute('cx', p[0]); c.setAttribute('cy', p[1]); c.setAttribute('r', 4); c.setAttribute('fill', col); svg.append(c); };
+    if (!b) { if (pa) dot(pa, css('--text')); return; }
+    const [L, R] = b.lg >= a.lg ? [a, b] : [b, a];
+    const chg = R.price / L.price - 1, col = chg >= 0 ? css('--up') : css('--down');
+    const pl = xy(L), pr = xy(R);
+    if (!pl || !pr) return;
+    const line = document.createElementNS(NS, 'line');
+    Object.entries({ x1: pl[0], y1: pl[1], x2: pr[0], y2: pr[1], stroke: col, 'stroke-width': 2,
+      'stroke-dasharray': st.pts[1] ? '' : '5 4' }).forEach(([k, v]) => line.setAttribute(k, v));
+    svg.append(line); dot(pl, col); dot(pr, col);
+    label.style.color = col;
+    label.textContent = `${pct(chg)}  ${fmtN(L.price)} → ${fmtN(R.price)} · ${R.lg - L.lg}${unit}`;
+    label.style.display = 'block';
+    const w = label.offsetWidth, h = label.offsetHeight;
+    let x = pr[0] + 10, y = pr[1] - h - 6;
+    if (x + w > wrap.clientWidth - 60) x = pr[0] - w - 10;
+    label.style.left = Math.max(0, x) + 'px'; label.style.top = Math.max(0, y) + 'px';
+  }
+  ch.subscribeClick(param => {
+    if (!st.on) return;
+    const p = snap(param); if (!p) return;
+    if (st.pts.length >= 2) st.pts = [];
+    st.pts.push(p); st.hover = null; setHint(); draw();
+  });
+  ch.subscribeCrosshairMove(param => {
+    if (!st.on || st.pts.length !== 1) return;
+    st.hover = snap(param); draw();
+  });
+  ch.timeScale().subscribeVisibleLogicalRangeChange(() => requestAnimationFrame(draw));
+  measures.push({ clear: () => { st.pts = []; st.hover = null; setHint(); draw(); } });
+  setHint();
+}
+
+function render(e) {
+  charts.forEach(c => c.remove()); charts = []; measures.length = 0;
+  const s = e.stats;
+  const exn = e.ex_notice;
+  document.getElementById('info').innerHTML = `
+    <div class="title"><h2>${e.corp}${e.paid_too ? ' (유무상)' : ''}</h2><span style="color:var(--muted)">${e.code} · ${e.market}</span>
+      <span class="badge b-${e.session}">${e.session} 공시 ${e.time.slice(11)}</span></div>
+    <div class="facts">
+      <div><span>무상증자 공시</span>${e.time}</div>
+      <div><span>1주당 배정</span>${e.ratio}주</div>
+      <div><span>반응일(D0)</span>${ymd(e.d0)}</div>
+      <div><span>공시 전 종가</span>${fmtN(e.base)}원</div>
+      <div><span>매매 재개</span>${e.resume ? `${e.resume.slice(0, 2)}:${e.resume.slice(2, 4)} (${e.halt_min}분 정지)` : (e.session === '장중' ? '당일 재개 없음' : '—')}</div>
+      <div><span>권리락 안내</span>${exn ? `${exn.time} · ${exn.title}` : '아직 없음'}</div>
+      <div><span>권리락일</span>${e.ex_date ? ymd(e.ex_date) : '데이터 이후'}</div>
+      <div><span>신주배정기준일</span>${ymd(e.record_date)}</div>
+      <div><span>신주 상장예정</span>${ymd(e.listing_date)}</div>
+    </div>
+    <div class="stats">
+      ${s.resume_vs_base != null ? `<div class="stat">재개가<b class="${cls(s.resume_vs_base)}">${pct(s.resume_vs_base)}</b></div>` : ''}
+      <div class="stat">D0 종가<b class="${cls(s.d0)}">${pct(s.d0)}</b></div>
+      <div class="stat">5일<b class="${cls(s.d5)}">${pct(s.d5)}</b></div>
+      <div class="stat">20일<b class="${cls(s.d20)}">${pct(s.d20)}</b></div>
+      <div class="stat">권리락 전날<b class="${cls(s.cum_close)}">${pct(s.cum_close)}</b></div>
+      <div class="stat">권리락일<b class="${cls(s.ex_day)}">${pct(s.ex_day)}</b></div>
+      <div class="stat">권리락 후 20일<b class="${cls(s.ex_to_ex20)}">${pct(s.ex_to_ex20)}</b></div>
+      <div class="stat">상장일<b class="${cls(s.listing_day)}">${pct(s.listing_day)}</b></div>
+    </div>
+    <div class="note">수익률은 공시 전 종가 기준(권리락·상장일은 전날 종가 기준), 수정주가.</div>`;
+  renderDaily(e);
+  renderM3(e);
+}
+
+function renderDaily(e) {
+  const el = document.getElementById('daily');
+  const ch = LightweightCharts.createChart(el, baseOptions(el, false));
+  charts.push(ch);
+  const dates = e.daily.map(b => b[0]);
+  const t = d => ymd(d);
+  const annDay = e.time.slice(0, 10).replace(/-/g, '');
+  const onOrAfter = d => dates.find(x => x >= d);
+  const bands = [];
+  const annBar = onOrAfter(annDay);
+  if (annBar) bands.push({ time: t(annBar), value: 1, color: withAlpha(css('--ann'), 0.18) });
+  if (e.ex_date && dates.includes(e.ex_date)) bands.push({ time: t(e.ex_date), value: 1, color: withAlpha(css('--ex'), 0.18) });
+  addBands(ch, bands.sort((a, b) => a.time < b.time ? -1 : 1));
+  const c = addCandles(ch);
+  c.setData(e.daily.map(b => ({ time: t(b[0]), open: b[1], high: b[2], low: b[3], close: b[4] })));
+  addVolume(ch).setData(e.daily.map(b => ({ time: t(b[0]), value: b[5],
+    color: withAlpha(b[4] >= b[1] ? css('--up') : css('--down'), 0.45) })));
+  c.createPriceLine({ price: e.base, color: css('--muted'), lineStyle: 2, lineWidth: 1, axisLabelVisible: true, title: '공시 전 종가' });
+  const mk = [];
+  if (annBar) mk.push({ time: t(annBar), position: 'aboveBar', color: css('--ann'), shape: 'arrowDown',
+    text: `공시 ${e.time.slice(11)} ${e.session}${annBar !== annDay ? '(휴장일)' : ''}` });
+  if (e.ex_notice) {
+    const nd = onOrAfter(e.ex_notice.time.slice(0, 10).replace(/-/g, ''));
+    if (nd) mk.push({ time: t(nd), position: 'aboveBar', color: css('--exn'), shape: 'square',
+      text: '권리락 안내' });
+  }
+  if (e.ex_date && dates.includes(e.ex_date)) mk.push({ time: t(e.ex_date), position: 'belowBar', color: css('--ex'), shape: 'arrowUp', text: '권리락일' });
+  const ld = e.listing_date && onOrAfter(e.listing_date);
+  if (ld && ld <= dates[dates.length - 1]) mk.push({ time: t(ld), position: 'belowBar', color: css('--lst'), shape: 'circle', text: '상장' });
+  mk.sort((a, b) => a.time < b.time ? -1 : a.time > b.time ? 1 : 0);
+  c.setMarkers(mk);
+  ch.timeScale().fitContent();
+  attachMeasure(ch, c, el, 'dmeasure', 'dhint', '거래일');
+  document.getElementById('dnote').textContent =
+    `${ymd(dates[0])} ~ ${ymd(dates[dates.length - 1])} · ${dates.length}거래일` +
+    (e.daily_truncated ? ` · 권리락 후 20거래일이 아직 다 지나지 않아 ${META.last}까지만 표시` : '');
+}
+
+function renderM3(e) {
+  const el = document.getElementById('m3');
+  const ch = LightweightCharts.createChart(el, baseOptions(el, true));
+  charts.push(ch);
+  const hm = ts => { const d = new Date(ts * 1000); return d.getUTCHours() * 100 + d.getUTCMinutes(); };
+  const dayOf = ts => new Date(ts * 1000).toISOString().slice(0, 10).replace(/-/g, '');
+  const regular = ts => { const h = hm(ts); return h >= 900 && h < 1530; };
+  const up = css('--up'), dn = css('--down'), off = css('--muted');
+  const annDay = e.time.slice(0, 10).replace(/-/g, '');
+  const annHm = +e.time.slice(11, 16).replace(':', '');
+  // 공시 시각이 속한 3분봉(그 시각을 포함하는 봉)
+  const annBar = e.m3.find(b => dayOf(b[0]) === annDay && hm(b[0]) + 3 > annHm && hm(b[0]) <= annHm)
+    || e.m3.find(b => dayOf(b[0]) === annDay && hm(b[0]) >= annHm)
+    || [...e.m3].reverse().find(b => dayOf(b[0]) === annDay);
+  const bands = [];
+  if (annBar) bands.push({ time: annBar[0], value: 1, color: withAlpha(css('--ann'), 0.22) });
+  let resumeBar = null;
+  if (e.resume) {
+    const r = +e.resume;
+    resumeBar = e.m3.find(b => dayOf(b[0]) === annDay && hm(b[0]) <= r && hm(b[0]) + 3 > r)
+      || e.m3.find(b => dayOf(b[0]) === annDay && hm(b[0]) >= r);
+    if (resumeBar) bands.push({ time: resumeBar[0], value: 1, color: withAlpha(css('--resume'), 0.18) });
+  }
+  addBands(ch, bands.sort((a, b) => a.time - b.time));
+  const c = addCandles(ch);
+  c.setData(e.m3.map(b => {
+    const col = regular(b[0]) ? (b[4] >= b[1] ? up : dn) : withAlpha(off, 0.55);
+    return { time: b[0], open: b[1], high: b[2], low: b[3], close: b[4], color: col, wickColor: col };
+  }));
+  addVolume(ch).setData(e.m3.map(b => ({ time: b[0], value: b[5],
+    color: withAlpha(regular(b[0]) ? (b[4] >= b[1] ? up : dn) : off, 0.4) })));
+  const mk = [];
+  if (annBar) {
+    const outside = dayOf(annBar[0]) === annDay && hm(annBar[0]) < annHm - 3;
+    mk.push({ time: annBar[0], position: 'aboveBar', color: css('--ann'), shape: 'arrowDown',
+      text: `공시 ${e.time.slice(11)}${outside ? ' (이 봉 이후)' : ''}` });
+  }
+  if (resumeBar) mk.push({ time: resumeBar[0], position: 'belowBar', color: css('--resume'), shape: 'arrowUp',
+    text: `재개 ${e.resume.slice(0, 2)}:${e.resume.slice(2, 4)} (${e.halt_min}분 정지)` });
+  mk.sort((a, b) => a.time - b.time);
+  c.setMarkers(mk);
+  ch.timeScale().fitContent();
+  attachMeasure(ch, c, el, 'mmeasure', 'mhint', '봉');
+  const days = e.days3.map(ymd).join(', ');
+  document.getElementById('mnote').textContent =
+    `${days} · ${e.m3.length}봉 · 원시 가격(이후 권리락 미반영)이라 일봉 수정주가와 숫자가 다를 수 있음` +
+    (e.session === '장중' && !e.resume ? ' · 정지가 장 마감을 넘겨 당일 재개 없음' : '');
+}
+
+document.querySelectorAll('.filters button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.filters button').forEach(x => x.classList.toggle('on', x === b));
+  filter = b.dataset.f;
+  const v = visible();
+  if (!v.some(x => x.i === cur) && v.length) select(v[0].i); else renderList();
+});
+document.addEventListener('keydown', ev => {
+  if (ev.key === 'Escape') { measures.forEach(m => m.clear()); return; }
+  if (ev.key !== 'ArrowDown' && ev.key !== 'ArrowUp') return;
+  const v = visible(), k = v.findIndex(x => x.i === cur);
+  const n = v[k + (ev.key === 'ArrowDown' ? 1 : -1)];
+  if (n) { ev.preventDefault(); select(n.i); }
+});
+let rt;
+window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => render(DATA[cur]), 150); });
+if (DATA.length) select(0);
+else document.getElementById("info").textContent = "이 기간에 조건에 맞는 공시가 없습니다.";
+</script>
+</body>
+</html>
