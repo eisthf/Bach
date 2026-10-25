@@ -183,6 +183,19 @@ export function StoreProvider({ children }) {
     },
     toggleVisible: (acc, code) =>
       toggleSet(setHidden, (a) => `bach.hidden.${a}`, acc, code),
+    // 길게 누르기: codes(칩바의 종목) 중 code만 보이고 나머지는 숨긴다. 이미 그 종목만
+    // 보이는 중이면 전부 다시 보인다.
+    soloVisible: (acc, code, codes) =>
+      setIn(setHidden, acc, (s) => {
+        const prev = s || new Set()
+        const others = codes.filter((c) => c !== code)
+        const already = !prev.has(code) && others.every((c) => prev.has(c))
+        const n = new Set(prev)
+        if (already) others.forEach((c) => n.delete(c))
+        else { n.delete(code); others.forEach((c) => n.add(c)) }
+        localStorage.setItem(`bach.hidden.${acc}`, JSON.stringify([...n]))
+        return n
+      }),
     toggleCompact: (acc, code) =>
       toggleSet(setCompact, (a) => `bach.compact.${a}`, acc, code),
     setCompactFor: (acc, codes, value) =>

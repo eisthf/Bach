@@ -14,6 +14,7 @@ import ManualTradePanel from '../components/ManualTradePanel'
 import ManualExits, { useExitDraft, useExitLines } from '../components/ManualExits'
 import { roundToTick } from '../candleZone'
 import { useHiddenCards } from '../components/TradeChipBar'
+import { longPress } from '../longPress'
 import AccountViewFilter, { useAccountView } from '../components/AccountViewFilter'
 
 const ORIGINS = {
@@ -38,7 +39,7 @@ export default function ManualTradePage() {
     return out.sort((x, y) => Number(held(y.item)) - Number(held(x.item))
       || String(y.item.created_at).localeCompare(String(x.item.created_at)))
   }, [accounts, manualTrades])
-  const { isHidden, toggle } = useHiddenCards('bach.hidden.manualTrade')
+  const { isHidden, toggle, solo } = useHiddenCards('bach.hidden.manualTrade')
   const { view, choose, visible } = useAccountView('bach.accountView.manualTrade', accounts)
   const inView = rows.filter(({ account }) => visible(account))
   const shown = inView.filter(({ account, item }) => !isHidden(account, item))
@@ -55,7 +56,7 @@ export default function ManualTradePage() {
         <ManualAddForm accounts={accounts} />
       </div>
       <AccountViewFilter accounts={accounts} rows={rows} view={view} choose={choose} />
-      <ManualChipBar rows={inView} isHidden={isHidden} toggle={toggle} showAccount={accounts.length > 1} />
+      <ManualChipBar rows={inView} isHidden={isHidden} toggle={toggle} solo={solo} showAccount={accounts.length > 1} />
       {rows.length === 0 && (
         <div className="screener-empty">수동 매매 중인 종목이 없습니다.</div>
       )}
@@ -133,7 +134,7 @@ function ManualAddForm({ accounts }) {
   )
 }
 
-function ManualChipBar({ rows, isHidden, toggle, showAccount }) {
+function ManualChipBar({ rows, isHidden, toggle, solo, showAccount }) {
   if (rows.length === 0) return null
   return (
     <div className="chip-bar trade-chip-bar">
@@ -144,10 +145,10 @@ function ManualChipBar({ rows, isHidden, toggle, showAccount }) {
           <button
             key={`${account.id}:${item.code}`}
             className={`stock-chip ${off ? 'off' : 'on'}`}
-            onClick={() => toggle(account, item)}
+            {...longPress(() => solo(rows, account, item), () => toggle(account, item))}
             aria-pressed={!off}
             title={`${showAccount ? `${account.label} · ` : ''}${ORIGINS[item.origin] || item.origin} · `
-              + `${off ? '클릭하면 카드 표시' : '클릭하면 카드 숨김'}` + (item.notice ? `
+              + `${off ? '클릭하면 카드 표시' : '클릭하면 카드 숨김'} · 길게 누르면 이 종목만` + (item.notice ? `
 ⚠️ ${item.notice}` : '')}
           >
             {item.notice && <span className="chip-warn" aria-label="알림 있음">⚠</span>}

@@ -13,6 +13,7 @@ import CandleTradePage from './pages/CandleTradePage'
 import ZoneTradePage from './pages/ZoneTradePage'
 import ManualTradePage from './pages/ManualTradePage'
 import BrokerConnection from './components/BrokerConnection'
+import { longPress } from './longPress'
 
 // 종목 칩의 매매 상태 표시(색은 StateButton과 같은 체계: 대기=파랑, 모니터=주황, 자동=초록).
 const STATE_SHORT = { IDLE: '대기', MONITOR: '감시', AUTO_TRADING: '자동' }
@@ -59,8 +60,9 @@ function AccountColumn({ account }) {
               <button
                 key={c}
                 className={`stock-chip ${off ? 'off' : 'on'}`}
-                onClick={() => actions.toggleVisible(acc, c)}
+                {...longPress(() => actions.soloVisible(acc, c, visibleCodes), () => actions.toggleVisible(acc, c))}
                 title={`${STATE_LABEL[s.state] || ''} · ${off ? '클릭하면 차트 표시' : '클릭하면 차트 숨김'}`
+                  + ' · 길게 누르면 이 종목만'
                   + (s.recovery_notice ? `
 ⚠️ ${s.recovery_notice}` : '')}
               >

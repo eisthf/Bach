@@ -145,6 +145,8 @@ input:focus { outline: none; border-color: var(--accent); }
   display: inline-flex; align-items: center; gap: 6px;
   border-radius: 999px; padding: 5px 12px; font-size: 13px; font-weight: 600;
   cursor: pointer; border: 1px solid var(--accent); transition: opacity .15s;
+  /* 길게 누르기(이 종목만 보기) 중 모바일의 글자 선택·꾹 누름 메뉴를 막는다. */
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
 }
 .stock-chip.on { background: var(--accent); color: #fff; }
 .stock-chip.off { background: #f0f0f0; color: var(--muted, #999); border-color: var(--border); }

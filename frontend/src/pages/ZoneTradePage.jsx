@@ -23,7 +23,7 @@ export default function ZoneTradePage() {
     return out.sort((x, y) => rank(x.item.phase) - rank(y.item.phase)
       || String(y.item.created_at).localeCompare(String(x.item.created_at)))
   }, [accounts, candleTrades])
-  const { isHidden, toggle } = useHiddenCards('bach.hidden.zoneTrade')
+  const { isHidden, toggle, solo } = useHiddenCards('bach.hidden.zoneTrade')
   // 계좌 보기 필터(페이지별). 칩바·카드 모두 고른 계좌만.
   const { view, choose, visible } = useAccountView('bach.accountView.zoneTrade', accounts)
   const inView = rows.filter(({ account }) => visible(account))
@@ -40,7 +40,7 @@ export default function ZoneTradePage() {
         <ZoneAddForm accounts={accounts} />
       </div>
       <AccountViewFilter accounts={accounts} rows={rows} view={view} choose={choose} />
-      <TradeChipBar rows={inView} isHidden={isHidden} toggle={toggle} showAccount={accounts.length > 1} />
+      <TradeChipBar rows={inView} isHidden={isHidden} toggle={toggle} solo={solo} showAccount={accounts.length > 1} />
       {rows.length === 0 && (
         <div className="screener-empty">등록된 구간 매매 종목이 없습니다.</div>
       )}

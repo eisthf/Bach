@@ -2,6 +2,7 @@
 // 숨겼다 한다(모바일에서 긴 카드 사이를 스크롤하지 않도록). 숨김 상태는 이 브라우저에만
 // 저장한다(localStorage) — 서버 상태가 아니라 보기 설정이다.
 import React, { useCallback, useState } from 'react'
+import { longPress } from '../longPress'
 
 const PHASE_SHORT = {
   DRAFT: '설정', WATCHING: '대기', ACCUMULATING: '1차', HOLDING: '보유',
@@ -28,12 +29,26 @@ export function useHiddenCards(storageKey) {
       return next
     })
   }, [storageKey])
+  // 길게 누르기: rows(칩바에 보이는 종목) 중 이 종목만 보이고 나머지는 숨긴다. 이미 이 종목만
+  // 보이는 중이면 rows 전부를 다시 보인다. rows 밖(다른 계좌 보기)의 숨김은 건드리지 않는다.
+  const solo = useCallback((rows, account, item) => {
+    setHidden((prev) => {
+      const me = keyOf(account, item)
+      const others = rows.map((r) => keyOf(r.account, r.item)).filter((k) => k !== me)
+      const already = !prev.has(me) && others.every((k) => prev.has(k))
+      const next = new Set(prev)
+      if (already) others.forEach((k) => next.delete(k))
+      else { next.delete(me); others.forEach((k) => next.add(k)) }
+      try { localStorage.setItem(storageKey, JSON.stringify([...next])) } catch { /* 저장 불가(사생활 모드 등) */ }
+      return next
+    })
+  }, [storageKey])
   const isHidden = useCallback((account, item) => hidden.has(keyOf(account, item)), [hidden])
-  return { isHidden, toggle }
+  return { isHidden, toggle, solo }
 }
 
 // rows: [{account, item}], showAccount: 계좌가 여럿이면 칩에 계좌 이름을 붙인다.
-export default function TradeChipBar({ rows, isHidden, toggle, showAccount }) {
+export default function TradeChipBar({ rows, isHidden, toggle, solo, showAccount }) {
   if (rows.length === 0) return null
   return (
     <div className="chip-bar trade-chip-bar">
@@ -43,9 +58,10 @@ export default function TradeChipBar({ rows, isHidden, toggle, showAccount }) {
           <button
             key={keyOf(account, item)}
             className={`stock-chip ${off ? 'off' : 'on'}`}
-            onClick={() => toggle(account, item)}
+            {...longPress(() => solo(rows, account, item), () => toggle(account, item))}
             aria-pressed={!off}
             title={`${showAccount ? `${account.label} · ` : ''}${off ? '클릭하면 카드 표시' : '클릭하면 카드 숨김'}`
+              + ' · 길게 누르면 이 종목만'
               + (item.notice ? `
 ⚠️ ${item.notice}` : '')}
           >
