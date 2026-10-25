@@ -754,3 +754,44 @@ input:focus { outline: none; border-color: var(--accent); }
   .candle-trade { padding: 10px 8px 28px; }
   .candle-trade-intro button { margin-left: 0; }
 }
+
+/* 무상증자 매매 */
+.bonus-watch { border: 1px solid var(--border); border-radius: 8px; background: var(--card); padding: 10px 12px; margin-bottom: 10px; }
+.bonus-watch-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
+.bonus-watch .link-btn, .bonus-jobs .link-btn { border: none; background: none; color: var(--accent); cursor: pointer; font-size: 12px; padding: 0; }
+.bonus-dot { width: 9px; height: 9px; border-radius: 50%; background: #bbb; display: inline-block; }
+.bonus-dot.ok { background: var(--green); }
+.bonus-dot.err { background: #d32f2f; }
+.bonus-empty { font-size: 12px; padding: 6px 0; }
+.bonus-sim { margin-top: 8px; }
+.bonus-events { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+.bonus-events th, .bonus-events td { border-bottom: 1px solid var(--border); padding: 5px 6px; text-align: left; vertical-align: top; }
+.bonus-events th { color: var(--muted); font-weight: 600; }
+.bonus-jobs { background: var(--card); border: 1px solid var(--border); border-radius: 8px; margin: 0 0 10px; }
+.bonus-jobs .job-skipped td, .bonus-jobs .job-cancelled td { color: var(--muted); }
+.bonus-jobs .job-failed b { color: #d32f2f; }
+.bonus-jobs .job-sent b { color: var(--green); }
+.bonus-settings-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 10px; margin-bottom: 10px; }
+.bonus-settings { border: 1px solid var(--border); border-radius: 8px; background: var(--card); padding: 10px 12px; }
+.bonus-settings.danger { border-color: #f3b6b2; background: #fffafa; }
+.bonus-settings-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.bonus-switch { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: 13px; color: var(--muted);
+  border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; cursor: pointer; }
+.bonus-switch.on { color: #fff; background: var(--green); border-color: var(--green); }
+.bonus-fields { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: flex-end; font-size: 12px; }
+.bonus-fields > label:not(.checkfield), .bonus-adv label { display: flex; flex-direction: column; gap: 3px; color: var(--muted); }
+.bonus-fields input[type=number] { width: 110px; }
+.bonus-adv { width: 100%; font-size: 12px; color: var(--muted); }
+.bonus-adv[open] { display: flex; flex-wrap: wrap; gap: 8px 12px; }
+.bonus-adv summary { width: 100%; cursor: pointer; }
+.bonus-mode-help { font-size: 12px; color: var(--muted); margin: 8px 0 4px; line-height: 1.5; }
+.bonus-card-info { display: flex; flex-direction: column; gap: 2px; font-size: 12px; margin: 4px 0 8px; }
+.bonus-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.bonus-chart-label { font-size: 12px; font-weight: 700; color: var(--muted); margin-bottom: 2px; }
+.origin-badge.job-sent { color: var(--green); }
+.origin-badge.job-failed { color: #d32f2f; }
+@media (max-width: 900px) {
+  .bonus-charts { grid-template-columns: 1fr; }
+  .bonus-settings-row { grid-template-columns: 1fr; }
+  .bonus-jobs { display: block; overflow-x: auto; }
+}

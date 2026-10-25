@@ -44,6 +44,7 @@ ORIGINS = {
     "zone": "구간 매매",
     "restore": "재시작 잔고",
     "import": "보유 종목 가져오기",
+    "bonus": "무상증자 매매",
 }
 
 
@@ -228,8 +229,12 @@ class ManualTradeManager:
 
     # -- 등록·제거 -----------------------------------------------------------
     def add(self, code: str, name: str = "", origin: str = "added", notice: str = "",
-            stop_enabled: bool = False, stop_pct: float = 5.0) -> dict:
-        """목록에 올린다. 이미 있으면 그대로(알림만 갱신). 다른 목록이 쓰는 종목은 거부."""
+            stop_enabled: bool = False, stop_pct: float = 5.0,
+            exits: Optional[tuple] = None) -> dict:
+        """목록에 올린다. 이미 있으면 그대로(알림만 갱신). 다른 목록이 쓰는 종목은 거부.
+
+        ``exits`` = (손절 ExitRule, 익절 ExitRule) — 처음부터 손절·익절을 정해 올릴 때(무상증자 매매).
+        """
         existing = self.items.get(code)
         if existing is not None:
             if notice:
@@ -245,6 +250,8 @@ class ManualTradeManager:
                         created_at=now_kst().isoformat(timespec="seconds"),
                         stop=ExitRule(enabled=stop_enabled, mode="pct",
                                       pct=stop_pct if 0 < stop_pct < 100 else 5.0))
+        if exits is not None:
+            it.stop, it.take_profit = exits
         self.items[code] = it
         self._start_loop(it)
         self.persist()

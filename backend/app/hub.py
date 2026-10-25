@@ -98,6 +98,9 @@ class Hub:
         # 수동 매매: 어떤 자동매매에서든 사람이 넘겨받은 종목 + 직접 사고파는 종목.
         from .manual_trade import ManualTradeManager
         self.manual_trades = ManualTradeManager(self)
+        # 무상증자 매매: 공시 감지 → 매수 작업. 매수한 종목은 수동 매매 목록(origin "bonus")에 둔다.
+        from .bonus_issue import BonusTradeManager
+        self.bonus_trades = BonusTradeManager(self)
         self.data.trade_history = self.trade_history
         self.recovery_notice = ""
         # 주문체결(00) 이벤트 → 포지션 즉시 갱신(폴링 대신 이벤트 기반).
@@ -113,6 +116,21 @@ class Hub:
         # 로그는 계좌 라벨을 접두로 달아 한 패널에서 구분 가능하게.
         record_event(text, account=self.account, **fields)
         self.manager.broadcast({"type": "log", "text": text, "account": self.account})
+
+    def ulc_first_orders_pending(self) -> bool:
+        """[상한가 매매]에 아직 1차 주문을 내지 못한 자동매매 종목이 있는가.
+
+        09:00 직후 다른 전략(대금 양봉 1차·무상증자 매수)이 REST 게이트를 먼저 잡지 않게 양보할 때 본다.
+        """
+        for stock in self.stocks.values():
+            if stock.machine.state != TradeState.AUTO_TRADING:
+                continue
+            eng = stock.engine
+            if eng is None:                       # 셋업(기준가 확인) 진행 중
+                return True
+            if not any(leg.filled for leg in getattr(eng, "legs", [])):
+                return True
+        return False
 
     def tag_order(self, result, strategy: str, reason: str = "", ctx: dict | None = None) -> None:
         """보낸 주문의 주문번호에 전략·사유를 붙여 체결 기록(trades.json)에 남긴다.
@@ -257,6 +275,7 @@ class Hub:
         # 대금 양봉·수동 매매를 먼저 복원한다 — 그 종목의 잔고를 다른 목록으로 끌어오지 않도록.
         await self.candle_trades.restore(None if position_error else positions)
         self.manual_trades.restore(self.manual_trades.load_saved())
+        self.bonus_trades.restore()
         occupied = self.candle_trades.occupied() | self.manual_trades.occupied()
         self._restoring = True
         to_manual: List[tuple] = []
@@ -1143,6 +1162,7 @@ class Hub:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         await self.candle_trades.close()
+        await self.bonus_trades.close()
         await self.manual_trades.close()
         await self.data.close()
         await asyncio.to_thread(self.trade_history.close)
@@ -1161,6 +1181,8 @@ class AccountManager:
         self.hubs: Dict[str, Hub] = {}
         for cfg in self.configs:
             self.hubs[cfg.id] = Hub(cfg, self.clock, self)
+        from .bonus_issue import BonusWatcher
+        self.bonus_watcher = BonusWatcher(self)
         logger.info("계좌 활성화: %s", ", ".join(f"{c.id}({c.label})" for c in self.configs))
 
     # -- WebSocket pub/sub -------------------------------------------------
@@ -1217,6 +1239,7 @@ class AccountManager:
         for hub in self.hubs.values():
             hub.start()
         self.start_clock()
+        self.bonus_watcher.start()
 
     # -- 장 이벤트 (공유 시계) ---------------------------------------------
     async def market_open(self) -> None:

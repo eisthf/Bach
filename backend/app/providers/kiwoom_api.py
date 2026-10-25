@@ -287,6 +287,30 @@ def fetch_price_limits(token: str, code: str, mock: bool = False) -> Optional[di
     return {"base": base, "upper": upper, "lower": parse_price(data.get("lst_pric"))}
 
 
+def fetch_auction_quote(token: str, code: str, mock: bool = False) -> Optional[dict]:
+    """ka10001 기준가·상한가·현재가 + 예상체결가. 실패하면 None.
+
+    예상체결가(``exp_cntr_pric``)는 단일가 접수 중(장 시작 전·매매정지 후 재개 단일가)에만
+    의미가 있고 그 밖에는 0이거나 직전 값이다 — 쓰는 쪽이 시점을 가린다. 캐시하지 않는다.
+    """
+    url = f"{rest_host(mock)}/api/dostk/stkinfo"
+    headers = {"Content-Type": "application/json;charset=UTF-8",
+               "authorization": f"Bearer {token}", "api-id": "ka10001"}
+    resp = _post(url, headers, {"stk_cd": code}, timeout=10, retries=1)
+    if resp is None or resp.status_code != 200:
+        return None
+    try:
+        data = resp.json()
+    except Exception:  # noqa: BLE001
+        return None
+    if data.get("return_code") != 0:
+        return None
+    return {"base": parse_price(data.get("base_pric")), "upper": parse_price(data.get("upl_pric")),
+            "price": parse_price(data.get("cur_prc")),
+            "expected": parse_price(data.get("exp_cntr_pric")),
+            "expected_qty": parse_int(data.get("exp_cntr_qty"))}
+
+
 def fetch_ask3(token: str, code: str, mock: bool = False) -> float:
     """ka10004 KRX 매도 3호가. 유효한 가격이 없으면 0."""
     url = f"{rest_host(mock)}/api/dostk/mrkcond"

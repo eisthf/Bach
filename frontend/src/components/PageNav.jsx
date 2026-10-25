@@ -18,6 +18,7 @@ const GROUPS = [
       { path: ROUTES.TRADING, label: '상한가 매매' },
       { path: ROUTES.CANDLE_TRADE, label: '대금 양봉 매매' },
       { path: ROUTES.ZONE_TRADE, label: '구간 매매' },
+      { path: ROUTES.BONUS_TRADE, label: '무상증자 매매' },
       { path: ROUTES.MANUAL_TRADE, label: '수동 매매' },
     ],
   },

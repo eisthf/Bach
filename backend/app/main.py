@@ -241,6 +241,55 @@ async def remove_manual_trade(account: str, code: str):
 
 
 # ---------------------------------------------------------------------------
+# 무상증자 매매 — 공시 감시는 전역(/api/bonus/*), 자동 매수 설정·매수 작업은 계좌 스코프.
+# 매수한 종목은 수동 매매 목록(origin "bonus")에 있어 손절·익절은 위 /manual-trades 를 쓴다.
+# ---------------------------------------------------------------------------
+@app.get("/api/bonus/watch")
+def bonus_watch():
+    return manager.bonus_watcher.payload()
+
+
+@app.post("/api/bonus/simulate")
+async def bonus_simulate(payload: dict):
+    """(데모) 가짜 무상증자 공시. 실전(키움) 계좌가 있으면 막는다 — 실주문이 나간다."""
+    if manager.live:
+        raise HTTPException(409, "키움 계좌가 있으면 가짜 공시를 쓸 수 없습니다(실주문 방지).")
+    code = (payload.get("code") or "").strip()
+    if not code:
+        raise HTTPException(400, "code 필요")
+    try:
+        d = await manager.bonus_watcher.simulate(
+            code, (payload.get("name") or "").strip(), (payload.get("title") or "").strip(),
+            bool(payload.get("paid_too")), float(payload.get("minutes_ago") or 0))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True, "acptno": d.acptno}
+
+
+@app.get("/api/{account}/bonus")
+def bonus_state(account: str):
+    return _hub(account).bonus_trades.payload()
+
+
+@app.put("/api/{account}/bonus/settings")
+def bonus_settings(account: str, payload: dict):
+    try:
+        return _hub(account).bonus_trades.set_settings(payload)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/{account}/bonus/jobs/{code}/cancel")
+def bonus_cancel(account: str, code: str):
+    try:
+        return _hub(account).bonus_trades.cancel(code)
+    except KeyError:
+        raise HTTPException(404, "매수 작업이 없습니다.")
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
+# ---------------------------------------------------------------------------
 # 대금 양봉 매매·구간 매매 (계좌 스코프) — 매입 구간에서 여러 거래일에 걸친 2분할
 # 매수·절반 익절·트레일링. [상한가 매매] 목록과 분리. 구간 매매(kind="zone")는 구간을
 # 사람이 정하는 같은 전략이라 같은 목록·엔드포인트를 쓴다(등록·구간 지정만 다름).
@@ -812,6 +861,7 @@ async def _on_shutdown():
     if collector is not None:
         collector.cancel()
         await asyncio.gather(collector, return_exceptions=True)
+    await manager.bonus_watcher.close()
     if manager._clock_task is not None:
         manager._clock_task.cancel()
         await asyncio.gather(manager._clock_task, return_exceptions=True)

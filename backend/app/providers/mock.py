@@ -21,7 +21,7 @@ from typing import AsyncIterator, Dict, List
 from ..market_clock import (
     chart_epoch, now_kst, prev_session_close_epoch, session_open_epoch)
 from ..models import Bar, OrderResult, Position, Tick
-from ..pricing import tick_size
+from ..pricing import tick_size, upper_limit
 from .base import Broker, DAY_INTERVAL, DataProvider
 
 def round_to_tick(price: float) -> float:
@@ -237,6 +237,16 @@ class MockDataProvider(DataProvider):
         self._ensure_base(code)
         return self._open_price.get(code)
 
+    def auction_quote(self, code: str) -> dict | None:
+        # 호가장이 없으므로 예상체결가 = 현재가로 경로만 시연한다. (price_limits 는 일부러
+        # 두지 않는다 — ULC mock 경로는 전일 종가 근사를 쓴다.)
+        self._ensure_base(code)
+        base = self._prev_close[code]
+        tick = self._last_tick.get(code)
+        price = tick.price if tick else self._open_price[code]
+        return {"base": base, "upper": upper_limit(base), "price": price,
+                "expected": price, "expected_qty": 0}
+
     # -- 틱 시뮬 -----------------------------------------------------------
     def last_tick(self, code: str) -> Tick | None:
         return self._last_tick.get(code)
@@ -321,6 +331,24 @@ class MockBroker(Broker):
         return OrderResult(ok=True, code=code, side="buy", filled_qty=qty, price=price,
                            order_no=order_no,
                            message=f"{qty}주 매수 체결 @ {price:,.0f}")
+
+    def buy_limit(self, code: str, qty: int, price: float) -> OrderResult:
+        # 지정가 이하의 현재가로 즉시 체결(그보다 비싸면 미체결 대신 거부로 단순화).
+        cur = self._price(code)
+        if qty <= 0 or price <= 0 or cur <= 0:
+            return OrderResult(ok=False, code=code, side="buy", filled_qty=0,
+                               price=price, message="수량·가격 또는 현재가 없음")
+        if cur > price:
+            return OrderResult(ok=False, code=code, side="buy", filled_qty=0,
+                               price=price, message=f"현재가 {cur:,.0f}원이 지정가보다 높음")
+        pos = self.position(code)
+        new_qty = pos.quantity + qty
+        pos.avg_price = (pos.avg_price * pos.quantity + cur * qty) / new_qty
+        pos.quantity = new_qty
+        order_no = self._next_order_no()
+        self._data.record_trade(code, "buy", qty, cur, time_source="execution", order_no=order_no)
+        return OrderResult(ok=True, code=code, side="buy", filled_qty=qty, price=cur,
+                           order_no=order_no, message=f"{qty}주 지정가 매수 체결 @ {cur:,.0f}")
 
     def buy_ask3(self, code: str, amount_krw: int) -> OrderResult:
         # 모의 데이터에는 호가장이 없으므로 현재가 체결로 주문 경로만 시연한다.

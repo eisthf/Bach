@@ -24,6 +24,7 @@ const ORIGINS = {
   zone: '구간 매매에서',
   restore: '재시작 잔고',
   import: '보유 가져오기',
+  bonus: '무상증자 매매',
 }
 const fmt = (n) => Number(n || 0).toLocaleString('ko-KR')
 const held = (it) => (it.position?.quantity || 0) > 0
@@ -33,7 +34,9 @@ export default function ManualTradePage() {
   const rows = useMemo(() => {
     const out = []
     accounts.forEach((a) => {
-      Object.values(manualTrades[a.id] || {}).forEach((it) => out.push({ account: a, item: it }))
+      // 무상증자 매매로 산 종목은 [무상증자 매매] 화면에서 다룬다(같은 수동 매매 목록).
+      Object.values(manualTrades[a.id] || {}).filter((it) => it.origin !== 'bonus')
+        .forEach((it) => out.push({ account: a, item: it }))
     })
     // 보유 중 → 보유 없음 순, 같은 그룹은 옮겨 온 최신순.
     return out.sort((x, y) => Number(held(y.item)) - Number(held(x.item))
@@ -134,7 +137,7 @@ function ManualAddForm({ accounts }) {
   )
 }
 
-function ManualChipBar({ rows, isHidden, toggle, solo, showAccount }) {
+export function ManualChipBar({ rows, isHidden, toggle, solo, showAccount, tag = '수동' }) {
   if (rows.length === 0) return null
   return (
     <div className="chip-bar trade-chip-bar">
@@ -152,7 +155,7 @@ function ManualChipBar({ rows, isHidden, toggle, solo, showAccount }) {
 ⚠️ ${item.notice}` : '')}
           >
             {item.notice && <span className="chip-warn" aria-label="알림 있음">⚠</span>}
-            <span className="chip-state chip-state-manual">수동</span>
+            <span className="chip-state chip-state-manual">{tag}</span>
             {showAccount && <span className="chip-acc">{account.label}</span>}
             {item.name || item.code}
             {qty > 0 && <span className="chip-qty" title="계좌 보유 수량">{fmt(qty)}주</span>}

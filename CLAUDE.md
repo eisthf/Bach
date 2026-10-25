@@ -64,6 +64,7 @@ cd backend && uv run python backtest.py 079650:20260903 --state real     --varia
 | `strategy/big_candle_trade.py` | 대금 양봉·구간 매매 엔진. 매입 구간(기준 캔들 몸통에서 자동 / `kind="zone"`이면 수동 지정)에서 여러 거래일에 걸친 2분할 매수·절반 익절+트레일링(또는 전량 익절)·구간 이탈 손절. 틱/분 감시. 상태 직렬화 |
 | `big_candle_trade.py` | 계좌별 대금 양봉·구간 매매 관리자(한 목록, `kind`로 구분). [상한가 매매] 목록과 분리된 목록·틱 루프·세션별 일봉 맥락(전일 종가·경과 거래일·기준 캔들 확정)·영속화(`state.{계좌}.candle.json`)·재시작 잔고 대조·수동 인계 |
 | `manual_trade.py` | 계좌별 수동 매매 관리자. 어느 자동매매에서든 [수동 전환]한 종목 + 직접 추가한 종목. 엔진 없음(보유·평단=계좌 잔고), 틱 루프·자동 손절·익절(`ExitRule`: 평단 대비 % 또는 가격 라인 — 손절 라인은 '미만', 나머지는 경계 포함, 발동 시 전량 시장가 1회 후 둘 다 해제)·영속화(`state.{계좌}.manual.json`) |
+| `bonus_issue.py` | 무상증자 매매. `BonusWatcher`(전역, KIND 공시검색 10초 폴링 → 새 무상증자 결정 공시)·`BonusTradeManager`(계좌별 자동 매수 설정·매수 작업 `BuyJob`, `state.{계좌}.bonus.json`). 산 종목은 수동 매매 목록(origin `bonus`)에 손절·익절을 정해 올린다 |
 | `backtest.py` | ULC 백테스트. 1분봉 → 합성 틱으로 운영 엔진을 재생(CLI는 `backend/backtest.py`) |
 | `providers/base.py` | `DataProvider` / `Broker` ABC. `VALID_INTERVALS=(3,5,10,30,60,1440)`, `DAY_INTERVAL=1440` |
 | `providers/mock.py` | 자격증명 없는 합성 시뮬레이터(시드 기반 랜덤워크 봉 + 틱 + 즉시체결 브로커) |
@@ -78,11 +79,11 @@ cd backend && uv run python backtest.py 079650:20260903 --state real     --varia
 | `store.jsx` | 전역 상태(Context) + WebSocket. 메시지의 `account` 필드로 계좌별 슬라이스에 라우팅 |
 | `api.js` | REST 래퍼. 계좌 스코프는 `/api/{account}/...`, 전역은 `/api/market*`·`/api/screener/*` |
 | `indicators.js` | SMA 계산(전체 재계산 `sma`, 틱 갱신용 O(period) `lastSma`) |
-| `router.js` | 최소 해시 라우터(`#/`, `#/upper-limit`, `#/big-candle`, `#/candle-trade`, `#/zone-trade`, `#/manual-trade`). react-router 의존 없음 |
+| `router.js` | 최소 해시 라우터(`#/`, `#/upper-limit`, `#/big-candle`, `#/candle-trade`, `#/zone-trade`, `#/bonus-trade`, `#/manual-trade`). react-router 의존 없음 |
 | `App.jsx` | 라우팅 + 공통 헤더, 계좌 컬럼 레이아웃, 계좌 필터 세그먼트 |
 | `components/ManualExits.jsx` | 수동 매매 자동 손절·익절 폼 + 차트 선(평단·손절·익절). 카드가 초안을 들고, 선을 끌면 가격 라인 방식으로 바뀜(저장은 폼). 두 점 변화율 [측정]·높이 [기본/1.5배]는 Chart 자체 기능(모든 차트) |
 | `components/PageNav.jsx` | 페이지 탭을 두 묶음으로 — 조회(상한가 종목·대금 양봉) / 매매(상한가 매매·대금 양봉 매매·구간 매매·수동 매매) |
-| `pages/` | UpperLimitPage — 상한가 종목 조회/표, BigCandlePage — 거래대금 상위 양봉 조회/표, CandleTradePage — 대금 양봉 매매, ZoneTradePage — 구간 매매(둘 다 `components/CandleTradeCard`), ManualTradePage — 수동 매매 |
+| `pages/` | UpperLimitPage — 상한가 종목 조회/표, BigCandlePage — 거래대금 상위 양봉 조회/표, CandleTradePage — 대금 양봉 매매, ZoneTradePage — 구간 매매(둘 다 `components/CandleTradeCard`), BonusTradePage — 무상증자 매매(일봉+1시간봉), ManualTradePage — 수동 매매(origin `bonus` 제외) |
 | `components/` | Chart, PriceTicker, StateButton, ManualTradePanel, AutoConfigForm, IntervalSelector, StockInput, StockPanel, MarketControls, AccountSummary, LogPanel, PageNav |
 
 ## 핵심 개념
@@ -178,6 +179,17 @@ cd backend && uv run python backtest.py 079650:20260903 --state real     --varia
   같은 목록·엔드포인트(등록 시 `kind: "zone"`)라 한 종목
   한 방식 규칙·예수금 가드·재시작 복원을 그대로 공유한다. ('수동매매'는 [상한가 매매]의 MANUAL_TRADING이라
   이름을 피했다.)
+- **무상증자 매매**(`#/bonus-trade`, `bonus_issue.py`): 키움에 공시 API가 없어 KIND 공시검색을 평일 07~20시
+  10초마다 본다(`BONUS_WATCH=0`이면 끔). 대상 = 유가·코스닥 '무상증자…결정' 최초 공시(정정·종속회사 제외), 유무상은
+  설정으로만. 공시 시각이 10분 넘게 지났으면 기록만 하고 안 산다. 계좌별 **자동 매수 스위치(기본 꺼짐)**,
+  금액(기본 100만), 익절 +25%·손절 −10%(평단 대비, 산 뒤엔 종목별로 % 또는 선으로 변경 — 수동 매매 `ExitRule`).
+  장중 공시는 매매정지 → 약 40분 뒤 재개 단일가가 첫 체결(`resume_min`). 주문 방식: 예상 체결가(기본, 단일가 마감
+  `lead_sec`초 전 ka10001 `exp_cntr_pric`로 수량 → 상한가 지정가) / 상한가 지정가 / 시장가 / 재개 후 첫 체결가.
+  거부(정지 중)면 15초마다 재시도, 재시도 전 계좌 보유·미체결 확인(중복 매수 방지), 기한 = 목표일 15:30.
+  데모(수동 장 시계)는 요일·장 시간을 무시하고 `/api/bonus/simulate`로 가짜 공시를 넣는다(키움 계좌가 있으면 409).
+  09:00 보호: 어느 계좌든 [상한가 매매] 1차 주문이 남아 있으면(`Hub.ulc_first_orders_pending`, 대금 양봉과 공용)
+  무상증자 매매의 키움 호출(조회·주문)은 최대 90초 기다린다 — REST 게이트가 프로세스 전역이라서. KIND 조회는
+  08:59:30~09:01:30에 쉬고, WS 방송은 새 공시·감시 상태 변화 때만(`bonus_watch` / `bonus_watch_status`).
 - **상한가 매매와의 병행**: 서로 다른 종목이면 두 전략이 동시에 돈다. 공유 자원은 계좌 현금과
   REST 게이트뿐이라 두 가지를 보완했다 — (1) **예수금 가드**: [감시 시작] 전에 주문가능금액
   (kt00001)을 조회해 `다른 전략 약정(다른 대금 양봉 매매 남은 차수 + MONITOR/AUTO 종목의

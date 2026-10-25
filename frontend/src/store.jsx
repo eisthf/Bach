@@ -24,6 +24,8 @@ export function StoreProvider({ children }) {
   const [candleTrades, setCandleTrades] = useState({}) // acc -> {code: 대금 양봉 매매 항목}
   const [candlePositions, setCandlePositions] = useState({}) // acc -> {code: 계좌 포지션}
   const [manualTrades, setManualTrades] = useState({}) // acc -> {code: 수동 매매 항목(포지션 포함)}
+  const [bonus, setBonus] = useState({})             // acc -> {settings, jobs} 무상증자 매매
+  const [bonusWatch, setBonusWatch] = useState(null) // 공시 감시 {status, events}(전역)
   const [hidden, setHidden] = useState({})         // acc -> Set(codes)
   const [compact, setCompact] = useState({})       // acc -> Set(codes)
   const [phase, setPhase] = useState('PRE_OPEN')
@@ -63,6 +65,7 @@ export function StoreProvider({ children }) {
           rows.forEach((it) => (map[it.code] = it))
           setIn(setManualTrades, a.id, () => map)
         }).catch(() => {})
+        api.bonus(a.id).then((b) => setIn(setBonus, a.id, () => b)).catch(() => {})
         api.candleTrades(a.id).then((rows) => {
           const map = {}
           rows.forEach((it) => (map[it.code] = it))
@@ -76,6 +79,7 @@ export function StoreProvider({ children }) {
         })
       })
     })
+    api.bonusWatch().then(setBonusWatch).catch(() => {})
     api.market().then((m) => {
       setPhase(m.phase)
       setMarketAuto(!!m.auto)
@@ -128,6 +132,12 @@ export function StoreProvider({ children }) {
             delete n[msg.code]
             return n
           })
+        } else if (msg.type === 'bonus') {
+          setIn(setBonus, acc, () => ({ settings: msg.settings, jobs: msg.jobs || [] }))
+        } else if (msg.type === 'bonus_watch') {
+          setBonusWatch({ status: msg.status, events: msg.events || [] })
+        } else if (msg.type === 'bonus_watch_status') {
+          setBonusWatch((prev) => ({ events: [], ...(prev || {}), status: msg.status }))
         } else if (msg.type === 'candle_trade') {
           const it = msg.item
           setIn(setCandleTrades, acc, (m) => ({ ...(m || {}), [it.code]: it }))
@@ -226,6 +236,16 @@ export function StoreProvider({ children }) {
     removeManual: (acc, code) => api.removeManualTrade(acc, code),
     setManualExits: (acc, code, stop, takeProfit) => api.setManualExits(acc, code, stop, takeProfit),
     clearManualNotice: (acc, code) => api.clearManualNotice(acc, code),
+    setBonusSettings: (acc, settings) => {
+      if (settings.enabled && dangerRef.current[acc] &&
+          !window.confirm('⚠️ 실전 계좌의 무상증자 자동 매수를 켭니다.\n공시가 감지되면 사람 확인 없이 실제 매수 주문이 나갑니다. 계속할까요?')) {
+        return Promise.resolve(null)
+      }
+      return api.setBonusSettings(acc, settings)
+    },
+    cancelBonusJob: (acc, code) => api.cancelBonusJob(acc, code),
+    simulateBonus: (body) => api.bonusSimulate(body),
+    refreshBonusWatch: () => api.bonusWatch().then(setBonusWatch).catch(() => {}),
     buy: (acc, code, amount) => {
       if (dangerRef.current[acc] &&
           !window.confirm(`⚠️ 실전 계좌 매수\n${code} ${Number(amount).toLocaleString()}원\n실제 주문이 나갑니다. 진행할까요?`)) {
@@ -277,6 +297,7 @@ export function StoreProvider({ children }) {
 
   const value = {
     accounts, stocks, order, ticks, orders, hidden, compact, candleTrades, candlePositions, manualTrades,
+    bonus, bonusWatch,
     phase, marketAuto, logs, connected, accountView: viewAcc, actions,
   }
   return <StoreCtx.Provider value={value}>{children}</StoreCtx.Provider>

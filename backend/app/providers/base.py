@@ -83,6 +83,14 @@ class DataProvider(ABC):
         """
         return None
 
+    def auction_quote(self, code: str) -> dict | None:
+        """단일가 매수 판단용 ``{"base", "upper", "price", "expected", "expected_qty"}``.
+
+        expected = 예상체결가(단일가 접수 중에만 의미, 없으면 0). 캐시 없이 조회한다.
+        제공 못 하면 None.
+        """
+        return None
+
     def integrated_code(self, code: str) -> str:
         """KRX+NXT 통합 시세(프리·애프터마켓 포함) 조회용 종목코드. 없으면 그대로."""
         return code
@@ -117,6 +125,11 @@ class Broker(ABC):
     @abstractmethod
     def buy(self, code: str, amount_krw: int) -> OrderResult:
         """금액 기준 매수(현재가로 수량 환산)."""
+
+    def buy_limit(self, code: str, qty: int, price: float) -> OrderResult:
+        """수량·가격 지정가 매수. 미지원 브로커는 주문하지 않는다."""
+        return OrderResult(ok=False, code=code, side="buy", filled_qty=0,
+                           price=price, message="지정가 주문 미지원")
 
     def buy_ask3(self, code: str, amount_krw: int) -> OrderResult:
         """매도 3호가 지정가 매수. 미지원 브로커는 주문하지 않는다."""

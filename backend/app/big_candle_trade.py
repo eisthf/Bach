@@ -295,18 +295,7 @@ class CandleTradeManager:
         return ""
 
     def _ulc_first_orders_pending(self) -> bool:
-        """[상한가 매매] 쪽에 아직 1차 주문을 내지 못한 자동매매 종목이 있는가."""
-        from .models import TradeState
-
-        for stock in self.hub.stocks.values():
-            if stock.machine.state != TradeState.AUTO_TRADING:
-                continue
-            eng = stock.engine
-            if eng is None:                       # 셋업(기준가 확인) 진행 중
-                return True
-            if not any(leg.filled for leg in getattr(eng, "legs", [])):
-                return True
-        return False
+        return self.hub.ulc_first_orders_pending()
 
     def _should_yield_to_ulc(self, it: CandleItem) -> bool:
         """1차 매수(WATCHING)를 ULC 1차 주문 뒤로 미룰지."""

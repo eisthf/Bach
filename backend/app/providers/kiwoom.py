@@ -415,6 +415,9 @@ class KiwoomDataProvider(DataProvider):
             self._limits[code] = (today, limits)
         return limits
 
+    def auction_quote(self, code: str) -> Optional[dict]:
+        return self._call(kw.fetch_auction_quote, code, mock=self._mock)
+
     def last_price(self, code: str) -> Optional[float]:
         """현재가(ka10007) — 시간외 체결까지 반영된 마지막 거래 가격."""
         quote = self._call(kw.fetch_quote, code, mock=self._mock)
@@ -744,6 +747,23 @@ class KiwoomBroker(Broker):
         return OrderResult(ok=ok, code=code, side="buy", filled_qty=qty if ok else 0,
                            price=price, order_no=order_no,
                            message=f"{qty}주 시장가 매수 전송" if ok else "주문 실패")
+
+    def buy_limit(self, code: str, qty: int, price: float) -> OrderResult:
+        if qty <= 0 or price <= 0:
+            return OrderResult(ok=False, code=code, side="buy", filled_qty=0,
+                               price=price, message="수량 또는 가격 없음")
+        try:
+            order_no = self._data._call(kw.place_order, code, qty, "buy",
+                mock=self._mock, order_type="0", price=str(int(price)), retry_auth=False)
+        except (kw.KiwoomRequestError, kw.KiwoomAuthError):
+            return OrderResult(ok=False, code=code, side="buy", filled_qty=0,
+                               price=price, message="지정가 주문 요청 실패 — 접수 내역 확인 필요")
+        ok = order_no is not None
+        if ok:
+            self._pos_ts = 0.0
+        return OrderResult(ok=ok, code=code, side="buy", filled_qty=qty if ok else 0,
+                           price=price, order_no=order_no,
+                           message=f"{qty}주 지정가 {price:,.0f}원 매수 전송" if ok else "주문 실패")
 
     def buy_ask3(self, code: str, amount_krw: int) -> OrderResult:
         try:

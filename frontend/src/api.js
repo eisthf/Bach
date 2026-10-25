@@ -63,6 +63,14 @@ export const api = {
   clearManualNotice: (a, code) => req(`/api/${enc(a)}/manual-trades/${enc(code)}/notice`, { method: 'DELETE' }),
   importHeld: (a) => req(`/api/${enc(a)}/manual-trades/import-held`, { method: 'POST' }),
 
+  // 무상증자 매매: 공시 감시(전역) + 계좌별 자동 매수 설정·매수 작업.
+  bonusWatch: () => req('/api/bonus/watch'),
+  bonusSimulate: (body) => req('/api/bonus/simulate', { method: 'POST', body: JSON.stringify(body) }),
+  bonus: (a) => req(`/api/${enc(a)}/bonus`),
+  setBonusSettings: (a, settings) =>
+    req(`/api/${enc(a)}/bonus/settings`, { method: 'PUT', body: JSON.stringify(settings) }),
+  cancelBonusJob: (a, code) => req(`/api/${enc(a)}/bonus/jobs/${enc(code)}/cancel`, { method: 'POST' }),
+
   // 일봉은 최근 60일 전체에 MA60을 그릴 수 있도록 59일의 계산 여유분을 더 받는다.
   // anchor: 일봉에서 이 날짜(YYYY-MM-DD) 앞 20거래일부터 60거래일(스크리너 조회일).
   getBars: (a, code, interval, lookbackExtra = interval === 1440 ? 119 : 60, sessionOnly = false, includeToday = false, extended = false, anchor = null) =>
