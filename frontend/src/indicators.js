@@ -26,6 +26,20 @@ export function lastSma(bars, period) {
   return { time: bars[bars.length - 1].time, value: sum / period }
 }
 
+// 엔벨로프: 중심선 = SMA(period), 상·하단 = 중심선 × (1 ± pct%).
+// 기간은 차트 봉 단위 기준(일봉이면 20일선 = MA20과 같은 선).
+export const ENVELOPE = { period: 20, pct: 10, color: '#8D6E63' } // 갈색
+
+// 반환: {upper: [{time, value}], lower: [{time, value}]}
+export function envelope(bars, period = ENVELOPE.period, pct = ENVELOPE.pct) {
+  const mid = sma(bars, period)
+  const k = pct / 100
+  return {
+    upper: mid.map((p) => ({ time: p.time, value: p.value * (1 + k) })),
+    lower: mid.map((p) => ({ time: p.time, value: p.value * (1 - k) })),
+  }
+}
+
 // 이평선 정의 (요구사항 색상)
 export const MA_LINES = [
   { period: 5, color: '#2962FF', title: 'MA5' },   // 파랑

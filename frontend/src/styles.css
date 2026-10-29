@@ -295,6 +295,7 @@ input:focus { outline: none; border-color: var(--accent); }
 .chart-measure { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 2px 0 6px; font-size: 12px; }
 .measure-btn { border: 1px solid var(--border); background: var(--card); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
 .measure-btn.on { border-color: #7b1fa2; color: #7b1fa2; font-weight: 700; }
+.env-btn.on { border-color: #8D6E63; color: #8D6E63; }
 .measure-result { color: var(--muted); display: inline-flex; gap: 8px; align-items: center; }
 .measure-result.done { color: #7b1fa2; font-weight: 700; }
 .chart-canvas-wrap { position: relative; }

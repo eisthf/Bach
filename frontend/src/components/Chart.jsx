@@ -1,13 +1,14 @@
 // lightweight-charts 캔들 차트.
 // - 캔들: 내부 투명, 테두리만. 상승(close>=open) 적색 / 하락 청색.
 // - SMA 5/10/20/60 겹쳐 그림 (파랑/분홍/주황/초록).
+// - 엔벨로프(중심 SMA20, ±10%) 상·하단선: [엔벨로프] 단추로 켜고 끔(브라우저에 기억).
 // - 거래량: 하단 막대. 상승봉 적색 / 하락봉 청색.
 // - 크로스헤어: 내장. 마우스 가격 수평선 + 가격 라벨(손절선 가늠용).
 // - 실시간 틱으로 마지막 봉 갱신. 봉 경계를 넘으면 서버에서 재조회(아래 참고).
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { createChart, CrosshairMode } from 'lightweight-charts'
 import { api } from '../api'
-import { sma, lastSma, MA_LINES } from '../indicators'
+import { sma, lastSma, MA_LINES, ENVELOPE, envelope } from '../indicators'
 import { ANCHOR_COLOR, anchorMarker, tradeMarkers, tradePoints } from '../tradeMarkers'
 import { TradeCrossPrimitive } from '../tradeCrossPrimitive'
 import { AmountStripePrimitive, amountStripeTimes } from '../amountStripePrimitive'
@@ -20,6 +21,10 @@ const TALL_SCALE = 1.5
 const TALL_KEY = 'bach.chartTall'
 const readTall = () => { try { return localStorage.getItem(TALL_KEY) === '1' } catch { return false } }
 const writeTall = (v) => { try { localStorage.setItem(TALL_KEY, v ? '1' : '0') } catch { /* 저장 불가면 이번 화면만 */ } }
+// 엔벨로프 표시 여부도 마찬가지로 기억한다(모든 차트 공통).
+const ENV_KEY = 'bach.chartEnvelope'
+const readEnv = () => { try { return localStorage.getItem(ENV_KEY) === '1' } catch { return false } }
+const writeEnv = (v) => { try { localStorage.setItem(ENV_KEY, v ? '1' : '0') } catch { /* 저장 불가면 이번 화면만 */ } }
 
 const volumePoint = (bar) => ({
   time: bar.time,
@@ -45,6 +50,7 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
   const candleRef = useRef(null)
   const volumeRef = useRef(null)
   const maRefs = useRef([])
+  const envRefs = useRef([])   // [상단, 하단]
   const barsRef = useRef([])
   const dayStartRef = useRef(0)
   const refreshingRef = useRef(false)
@@ -89,6 +95,21 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
   const [displayVolume, setDisplayVolume] = useState(null)
   const [tall, setTall] = useState(readTall)
   const chooseTall = (v) => { setTall(v); writeTall(v) }
+  const [envOn, setEnvOn] = useState(readEnv)
+  const envOnRef = useRef(envOn)
+  envOnRef.current = envOn
+  const toggleEnv = () => {
+    const v = !envOn
+    setEnvOn(v)
+    writeEnv(v)
+    envRefs.current.forEach((series) => series.applyOptions({ visible: v }))
+  }
+  // 엔벨로프 데이터는 켜고 끔과 무관하게 늘 채워 둔다(숨긴 시리즈는 그리지도, 축 범위에 넣지도 않는다).
+  const drawEnvelope = (bars) => {
+    const { upper, lower } = envelope(bars)
+    envRefs.current[0]?.setData(upper)
+    envRefs.current[1]?.setData(lower)
+  }
 
   // 차트 생성 (1회)
   useEffect(() => {
@@ -132,6 +153,12 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
     const maSeries = MA_LINES.map((m) =>
       chart.addLineSeries({ color: m.color, lineWidth: 1, priceLineVisible: false, title: m.title }),
     )
+    const envSeries = [`+${ENVELOPE.pct}%`, `-${ENVELOPE.pct}%`].map((label) =>
+      chart.addLineSeries({
+        color: ENVELOPE.color, lineWidth: 1, priceLineVisible: false, crosshairMarkerVisible: false,
+        title: `Env${ENVELOPE.period} ${label}`, visible: envOnRef.current,
+      }),
+    )
     const volume = chart.addHistogramSeries({
       priceFormat: { type: 'volume' },
       priceScaleId: 'left',
@@ -152,6 +179,7 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
     stripeRef.current = stripe
     volumeRef.current = volume
     maRefs.current = maSeries
+    envRefs.current = envSeries
 
     return () => {
       chart.unsubscribeCrosshairMove(showVolumeAtCrosshair)
@@ -162,6 +190,7 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
       stripeRef.current = null
       volumeRef.current = null
       maRefs.current = []
+      envRefs.current = []
     }
   }, [])
 
@@ -382,6 +411,7 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
     candleRef.current?.setData([])
     volumeRef.current?.setData([])
     maRefs.current.forEach((series) => series.setData([]))
+    envRefs.current.forEach((series) => series.setData([]))
     chartRef.current?.timeScale().applyOptions({
       timeVisible: interval !== 1440,
       secondsVisible: false,
@@ -401,6 +431,7 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
       MA_LINES.forEach((m, i) => {
         maRefs.current[i].setData(sma(bars, m.period))
       })
+      drawEnvelope(bars)
       // 시야 이동은 컨테이너가 실제 너비를 가진 뒤에 적용한다.
       // autoSize의 ResizeObserver는 비동기라, 카드가 막 추가돼 너비가 0인
       // 상태에서 setVisibleRange를 호출하면 빈 범위가 '고정'되어 캔들이
@@ -455,6 +486,7 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
       drawStripes(data.bars)
       volumeRef.current?.setData(data.bars.map(volumePoint))
       MA_LINES.forEach((m, i) => maRefs.current[i].setData(sma(data.bars, m.period)))
+      drawEnvelope(data.bars)
       // 시야(setVisibleRange)는 건드리지 않는다 — 사용자의 확대/이동 유지.
     } catch {
       // 실패해도 다음 경계에서 재시도. 그 사이 마지막 봉은 틱으로 계속 갱신됨.
@@ -504,6 +536,12 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
       const point = lastSma(bars, m.period)
       if (point) maRefs.current[i].update(point)
     })
+    const mid = lastSma(bars, ENVELOPE.period)
+    if (mid) {
+      const k = ENVELOPE.pct / 100
+      envRefs.current[0]?.update({ time: mid.time, value: mid.value * (1 + k) })
+      envRefs.current[1]?.update({ time: mid.time, value: mid.value * (1 - k) })
+    }
   }, [tick, interval, refreshBars])
 
   const timeLabel = (t) => {
@@ -538,6 +576,11 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
   return (
     <div className="chart-container">
       <div className="chart-measure">
+        <button type="button" className={`measure-btn env-btn${envOn ? ' on' : ''}`} aria-pressed={envOn}
+          onClick={toggleEnv}
+          title={`엔벨로프: 중심 ${ENVELOPE.period}봉 이동평균, 폭 ±${ENVELOPE.pct}%`}>
+          엔벨로프{envOn ? ' 끄기' : ''}
+        </button>
         <button type="button" className={`measure-btn${measureOn ? ' on' : ''}`} aria-pressed={measureOn}
           onClick={() => { setMeasureOn((v) => !v); clearMeasure() }}
           title="두 점을 눌러 변화율을 잽니다">
