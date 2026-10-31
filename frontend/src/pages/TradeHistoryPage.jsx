@@ -2,6 +2,7 @@
 // 기간(기본: 오늘 기준 지난 두 달) 동안 체결이 있었던 종목 목록을 계좌별로 보이고, 종목을 누르면
 // 일봉 차트(최근 60거래일)에 그 종목의 매수·매도 체결 지점(B/S 화살표·✕)을 함께 그린다.
 // 근거는 계좌별 체결 기록(state.{계좌}.trades.json) — 주문은 나가지 않는다.
+// 지금 진행 중인 매매(보유 중·감시 중)는 상태 배지를 붙여 맨 위에 둔다(기간 안 체결이 없어도).
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useStore } from '../store'
 import { api } from '../api'
@@ -63,6 +64,7 @@ export default function TradeHistoryPage() {
   }
 
   const stocks = data && data.account === acc?.id ? data.stocks : []
+  const liveCount = stocks.filter((s) => s.status && s.status.kind !== 'setup').length
   const rangeError = range.start && range.end && range.start > range.end ? '시작일이 종료일보다 늦습니다.' : ''
 
   return (
@@ -95,7 +97,10 @@ export default function TradeHistoryPage() {
             <strong>{data.start}</strong> ~ <strong>{data.end}</strong> 체결 기준
             {accounts.length > 1 && <><span className="sum-sep">·</span>{acc.label}</>}
           </span>
-          <span className="sum-count">{stocks.length}종목</span>
+          <span className="sum-count">
+            {stocks.length}종목
+            {liveCount > 0 && <span className="muted"> (진행 중 {liveCount})</span>}
+          </span>
         </div>
       )}
 
@@ -126,6 +131,7 @@ export default function TradeHistoryPage() {
             <thead>
               <tr>
                 <th>종목</th>
+                <th>상태</th>
                 <th>전략</th>
                 <th className="col-num">매수</th>
                 <th className="col-num">매도</th>
@@ -142,6 +148,9 @@ export default function TradeHistoryPage() {
                       aria-label={`${s.name || s.code} 차트 보기`}>{s.name || s.code}</button>
                     <div className="muted mono">{s.code}</div>
                   </td>
+                  <td>{s.status
+                    ? <span className={`th-status ${s.status.kind}`}>{s.status.label}</span>
+                    : <span className="muted">끝남</span>}</td>
                   <td>{s.strategies.length ? s.strategies.map((k) => STRATEGIES[k] || k).join(' · ') : <span className="muted">—</span>}</td>
                   <td className="col-num">
                     {s.buy_count > 0
@@ -153,8 +162,8 @@ export default function TradeHistoryPage() {
                       ? <><span className="down">{fmt(s.sell_qty)}주</span><div className="muted">{s.sell_count}건 · {fmt(s.sell_amount)}원</div></>
                       : <span className="muted">—</span>}
                   </td>
-                  <td>{s.first_day}</td>
-                  <td>{s.last_day}</td>
+                  <td>{s.first_day || <span className="muted">—</span>}</td>
+                  <td>{s.last_day || <span className="muted">—</span>}</td>
                 </tr>
               ))}
             </tbody>

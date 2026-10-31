@@ -533,10 +533,56 @@ async def traded_stocks(account: str, start: Optional[str] = None, end: Optional
     if start_d > end_d:
         raise HTTPException(400, "시작일이 종료일보다 늦습니다")
     stocks = hub.trade_history.summary(start_d.strftime("%Y%m%d"), end_d.strftime("%Y%m%d"))
+    # 지금 진행 중인 매매(보유 중·감시 중)는 상태를 붙이고, 기간 안 체결이 없어도 목록에 넣는다.
+    status = await asyncio.to_thread(_live_trade_status, hub)
+    listed = {s["code"] for s in stocks}
+    for code, st in status.items():
+        if code not in listed and st["kind"] in ("holding", "watching"):
+            stocks.append({"code": code, "buy_count": 0, "sell_count": 0, "buy_qty": 0, "sell_qty": 0,
+                           "buy_amount": 0, "sell_amount": 0, "first_day": None, "last_day": None,
+                           "strategies": [st["strategy"]]})
+    for s in stocks:
+        s["status"] = status.get(s["code"])
+    order = {"holding": 0, "watching": 1}
+    stocks.sort(key=lambda s: s["last_day"] or "", reverse=True)
+    stocks.sort(key=lambda s: order.get((s["status"] or {}).get("kind"), 2))
     names = await _stock_names(hub, [s["code"] for s in stocks])
     for s in stocks:
         s["name"] = names.get(s["code"]) or ""
     return {"start": start_d.isoformat(), "end": end_d.isoformat(), "stocks": stocks}
+
+
+def _live_trade_status(hub) -> dict:
+    """종목별 지금의 매매 상태 {strategy, kind, label}. kind: holding(보유 중)·watching(감시 중)·setup(설정 중).
+    끝났거나 대기(IDLE)인 매매, 보유 0인 수동 매매 종목은 넣지 않는다."""
+    from .models import TradeState
+    from .strategy.big_candle_trade import CzPhase
+
+    out = {}
+    for code, it in hub.candle_trades.items.items():
+        eng = it.engine
+        name = "구간 매매" if eng.kind == "zone" else "대금 양봉 매매"
+        if eng.phase.holding:
+            out[code] = {"strategy": eng.kind, "kind": "holding", "label": f"{name} · 보유 {eng.shares:,}주"}
+        elif eng.phase == CzPhase.WATCHING:
+            out[code] = {"strategy": eng.kind, "kind": "watching", "label": f"{name} · 매입 구간 대기"}
+        elif eng.phase == CzPhase.DRAFT:
+            out[code] = {"strategy": eng.kind, "kind": "setup", "label": f"{name} · 설정 중"}
+    for code, stock in hub.stocks.items():
+        if stock.machine.state == TradeState.AUTO_TRADING:
+            out[code] = {"strategy": "ulc", "kind": "holding", "label": "상한가 매매 · 자동매매 중"}
+        elif stock.machine.state == TradeState.MONITOR:
+            out[code] = {"strategy": "ulc", "kind": "watching", "label": "상한가 매매 · 장 시작 대기"}
+    for code, it in hub.manual_trades.items.items():
+        try:
+            qty = int(hub.broker.position(code).quantity or 0)
+        except Exception:  # noqa: BLE001
+            qty = 0
+        if qty > 0:
+            name = "무상증자 매매" if it.origin == "bonus" else "수동 매매"
+            out[code] = {"strategy": "bonus" if it.origin == "bonus" else "manual", "kind": "holding",
+                         "label": f"{name} · 보유 {qty:,}주"}
+    return out
 
 
 def _months_before(d: date, months: int) -> date:

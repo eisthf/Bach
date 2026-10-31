@@ -64,3 +64,28 @@ async def test_traded_stocks_endpoint_names_and_default_period(mock_hub, monkeyp
     assert res["start"] == "2026-09-01" and [s["name"] for s in res["stocks"]] == ["테스트전자"]
     res = await main.traded_stocks("mock", start="2026-10-21", end="2026-10-31")
     assert res["stocks"] == []
+
+
+async def test_live_trades_get_status_and_show_without_fills(mock_hub, monkeypatch):
+    """진행 중인 매매는 상태를 붙이고, 기간 안 체결이 없어도(감시 중) 목록 맨 위에 넣는다."""
+    from app import main
+
+    hub, _mgr, _clock = mock_hub
+    monkeypatch.setattr(main, "_hub", lambda account: hub)
+    monkeypatch.setattr(hub.data, "stock_name", lambda code: "")
+    hub.trade_history.record(_fill("005930", "buy", 1, 70_000, "2026-10-20", "x"))
+    hub.trade_history.flush()
+    hub.candle_trades.add_zone("123450", "구간종목", {"low": 10_200, "high": 11_800})
+    hub.candle_trades.add_zone("999990", "설정만", {"low": 1_000, "high": 1_100})
+    await hub.candle_trades.start("123450")
+    try:
+        res = await main.traded_stocks("mock", start="2026-09-01", end="2026-10-31")
+    finally:
+        for it in hub.candle_trades.items.values():
+            if it.task:
+                it.task.cancel()
+    rows = {s["code"]: s for s in res["stocks"]}
+    assert [s["code"] for s in res["stocks"]] == ["123450", "005930"]      # 설정 중은 체결 없으면 제외
+    assert rows["123450"]["status"] == {"strategy": "zone", "kind": "watching", "label": "구간 매매 · 매입 구간 대기"}
+    assert rows["123450"]["name"] == "구간종목" and rows["123450"]["last_day"] is None
+    assert rows["005930"]["status"] is None
