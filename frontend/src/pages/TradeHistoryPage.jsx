@@ -3,7 +3,7 @@
 // 일봉 차트(최근 60거래일)에 그 종목의 매수·매도 체결 지점(B/S 화살표·✕)을 함께 그린다.
 // 근거는 계좌별 체결 기록(state.{계좌}.trades.json) — 주문은 나가지 않는다.
 // 지금 진행 중인 매매(보유 중·감시 중)는 상태 배지를 붙여 맨 위에 둔다(기간 안 체결이 없어도).
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useStore } from '../store'
 import { api } from '../api'
 import Chart from '../components/Chart'
@@ -58,10 +58,25 @@ export default function TradeHistoryPage() {
     setRange(r)
     load(acc?.id, r)
   }
+  // 종목을 누르면 애니메이션 없이 바로 차트로 가고, 차트를 닫으면 처음 누르기 전 스크롤 위치로 돌아간다.
+  // 그리기 전에(useLayoutEffect) 옮겨 화면이 한 번 튀는 것도 막는다.
+  const returnYRef = useRef(null)
+  const jumpRef = useRef(false)
   const choose = (s) => {
+    if (!selected) returnYRef.current = window.scrollY
+    jumpRef.current = true
     setSelected(s)
-    requestAnimationFrame(() => chartRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
   }
+  const closeChart = () => setSelected(null)
+  useLayoutEffect(() => {
+    if (selected && jumpRef.current) {
+      jumpRef.current = false
+      chartRef.current?.scrollIntoView({ behavior: 'instant', block: 'start' })
+    } else if (!selected && returnYRef.current !== null) {
+      window.scrollTo({ top: returnYRef.current, behavior: 'instant' })
+      returnYRef.current = null
+    }
+  }, [selected])
 
   const stocks = data && data.account === acc?.id ? data.stocks : []
   const liveCount = stocks.filter((s) => s.status && s.status.kind !== 'setup').length
@@ -114,7 +129,7 @@ export default function TradeHistoryPage() {
             <strong>{selected.name || selected.code}</strong>
             <span className="muted mono">{selected.code}</span>
             <span className="muted">일봉 · 최근 60거래일 · 이 계좌의 매수·매도 체결 표시</span>
-            <button type="button" className="ghost" onClick={() => setSelected(null)}>닫기</button>
+            <button type="button" className="ghost" onClick={closeChart}>닫기</button>
           </div>
           <Chart key={`${acc.id}:${selected.code}`} prefKey={`history:${acc.id}:${selected.code}`}
             account={acc.id} code={selected.code} interval={1440} height={420} />
