@@ -39,7 +39,7 @@ const volumePoint = (bar) => ({
 // onLineDrag(id, price): 놓을 때 한 번, 마지막 가격으로 호출.
 // [측정] 단추(모든 차트): 켜고 두 점을 누르면 두 점을 잇는 선과 변화율·봉 수를 보여준다
 //   (화면 표시만, 저장 안 함). 세 번째 누르면 새로 잰다. 봉 단위를 바꾸면 지운다.
-//   측정 중엔 클릭이 측정으로 가고 onPriceClick(가격 찍기)은 쉰다.
+//   측정 중엔 클릭이 측정으로 가고 onPriceClick(가격 찍기)·선 끌기는 쉰다.
 // prefKey: 차트 자리 이름(예: 'manual:mock:005930'). 엔벨로프 켜고 끔을 이 이름별로 기억한다.
 //   없으면 '계좌:종목'.
 export default function Chart({ prefKey = null, account, code, interval, tick, height = 360, sessionOnly = false, includeToday = false, extended = false, anchorDate = null, priceLines = null, onPriceClick = null, draggableLines = null, onLineDrag = null, onSessionDate }) {
@@ -309,7 +309,8 @@ export default function Chart({ prefKey = null, account, code, interval, tick, h
     }
     const hit = (y, touch) => {
       const candle = candleRef.current
-      if (!candle || !lineDragRef.current) return null
+      // 측정 중엔 선을 잡지 않는다 — 선 위를 눌러도 측정 점으로 간다.
+      if (!candle || !lineDragRef.current || measureOnRef.current) return null
       const tol = touch ? 16 : 6
       let best = null
       let bestD = Infinity
