@@ -2,16 +2,17 @@ import React, { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import { MA_LINES } from '../indicators'
 import Chart from './Chart'
+import { useChartInterval } from '../chartInterval'
 
 // includeToday: 장중 스냅샷으로 고른 종목이면 진행 중인 오늘 세션을 보여준다.
-// defaultInterval: 처음 열 때의 주기(3=3분봉, 1440=일봉).
+// defaultInterval: 처음 열 때의 주기(3=3분봉, 1440=일봉). 고른 주기는 기억해 다음 스크리너 차트에도 쓴다.
 // anchorDate: 스크리너 조회일(YYYY-MM-DD). 일봉은 이 날 앞 20거래일부터 60거래일을 보여준다.
 // register: 있으면 헤더에 등록 버튼을 띄운다(차트 조회 계좌로 등록). 하나 또는 배열(첫 버튼이 주 버튼).
 //   { label, title(account) → 툴팁, run(account) → Promise }
 // dayPriceLines / dayNote: 일봉일 때만 그리는 수평선과 안내 문구(예: 조회일 정규장 고가).
 export default function ScreenerChart({ stock, source, includeToday = false, defaultInterval = 1440, anchorDate = null, register, dayPriceLines = null, dayNote = '', onClose }) {
   const dialogRef = useRef(null)
-  const [interval, setInterval] = useState(defaultInterval)
+  const [interval, setInterval] = useChartInterval('screener', defaultInterval)
   const [account, setAccount] = useState(null)
   const [error, setError] = useState('')
   const [retry, setRetry] = useState(0)

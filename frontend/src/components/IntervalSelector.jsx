@@ -8,6 +8,7 @@ const INTERVALS = [
   { value: 60, label: '60분' },
   { value: 1440, label: '일봉' },
 ]
+export const VALID_INTERVALS = INTERVALS.map((iv) => iv.value)
 
 export default function IntervalSelector({ value, onChange }) {
   return (

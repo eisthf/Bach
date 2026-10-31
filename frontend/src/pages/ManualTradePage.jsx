@@ -9,6 +9,7 @@ import React, { useMemo, useState } from 'react'
 import { useStore } from '../store'
 import Chart from '../components/Chart'
 import IntervalSelector from '../components/IntervalSelector'
+import { useChartInterval } from '../chartInterval'
 import PriceTicker from '../components/PriceTicker'
 import ManualTradePanel from '../components/ManualTradePanel'
 import ManualExits, { useExitDraft, useExitLines } from '../components/ManualExits'
@@ -168,7 +169,7 @@ export function ManualChipBar({ rows, isHidden, toggle, solo, showAccount, tag =
 
 function ManualTradeCard({ account, item }) {
   const { ticks, actions } = useStore()
-  const [interval, setInterval] = useState(1440) // 기본 일봉
+  const [interval, setInterval] = useChartInterval(`manual:${account.id}:${item.code}`) // 기본 일봉
   const tick = (ticks[account.id] || {})[item.code]
   const verified = item.position_verified !== false
   const exitDraft = useExitDraft(item)

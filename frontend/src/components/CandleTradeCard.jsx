@@ -6,6 +6,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { useStore } from '../store'
 import Chart from './Chart'
 import PriceTicker from './PriceTicker'
+import { useChartInterval } from '../chartInterval'
 import { ROUTES, navigate } from '../router'
 import { addRuleText, projectedAverage, roundToTick, secondLegCheck, zoneOf } from '../candleZone'
 
@@ -68,7 +69,7 @@ function validate(c) {
 
 export default function CandleTradeCard({ account, item }) {
   const { ticks, candlePositions, logs, actions } = useStore()
-  const [interval, setInterval] = useState(1440)
+  const [interval, setInterval] = useChartInterval(`candle:${account.id}:${item.code}`)
   const [form, setForm] = useState(() => toForm(item.config))
   const [dirty, setDirty] = useState(false)
   const [busy, setBusy] = useState(false)
