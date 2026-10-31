@@ -199,9 +199,10 @@ class BonusWatcher:
         self.seen = dict(raw.get("seen") or {})
         self.events = list(raw.get("events") or [])[-self.KEEP_EVENTS:]
 
-    def _persist(self) -> None:
-        # 이레 넘은 접수번호는 잊는다(조회 범위는 직전 평일~오늘).
-        cutoff = (now_kst().date() - timedelta(days=7)).isoformat()
+    def _persist(self, today: Optional[date] = None) -> None:
+        # 이레 넘은 접수번호는 잊는다(조회 범위는 직전 평일~오늘). 기준일은 조회한 날 — 실제 시계와
+        # 따로 놀면 아직 조회 범위 안인 공시를 잊고 다시 처리한다(자동 매수 중복).
+        cutoff = ((today or now_kst().date()) - timedelta(days=7)).isoformat()
         self.seen = {k: v for k, v in self.seen.items() if v >= cutoff}
         try:
             self._path.write_text(json.dumps({"seen": self.seen, "events": self.events},
@@ -287,7 +288,7 @@ class BonusWatcher:
                 dispatched.append(d)
         if found:
             self.events = self.events[-self.KEEP_EVENTS:]
-            self._persist()
+            self._persist(now.date())
         for d in dispatched:
             for hub in self.manager.hubs.values():
                 try:
