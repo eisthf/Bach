@@ -285,7 +285,7 @@ frontend/src/
   router.js          해시 라우터 (매매 / 상한가 종목)
   pages/             UpperLimitPage(상한가 종목 표)
   components/        Chart, PriceTicker, StateButton, ManualTradePanel, AutoConfigForm,
-                     StockInput, StockPanel, MarketControls, LogPanel, PageNav
+                     StockInput, StockPanel, MarketControls, PageNav
 
 dev.sh               개발 서버 일괄 실행 (--demo: 합성 mock 단독)
 dev.ps1              Windows 개발 서버 일괄 실행 (--demo: 합성 mock 단독)

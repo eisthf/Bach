@@ -5,7 +5,6 @@ import StockInput from './components/StockInput'
 import StockPanel from './components/StockPanel'
 import MarketControls from './components/MarketControls'
 import AccountSummary from './components/AccountSummary'
-import LogPanel from './components/LogPanel'
 import PageNav from './components/PageNav'
 import UpperLimitPage from './pages/UpperLimitPage'
 import BigCandlePage from './pages/BigCandlePage'
@@ -156,9 +155,6 @@ function TradingPage() {
             <AccountColumn key={a.id} account={a} />
           ))}
         </div>
-        <aside className="side-col">
-          <LogPanel />
-        </aside>
       </main>
     </>
   )

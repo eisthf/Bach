@@ -188,7 +188,6 @@ input:focus { outline: none; border-color: var(--accent); }
   padding: 16px 20px 40px; align-items: start;
 }
 .panels-col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
-.side-col { position: sticky; top: 72px; }
 .empty-state {
   background: var(--card); border: 1px dashed var(--border); border-radius: 10px;
   padding: 40px; text-align: center; color: var(--muted);
@@ -343,22 +342,14 @@ input:focus { outline: none; border-color: var(--accent); }
 .saved-note { color: var(--green); font-size: 12px; }
 
 /* Log panel */
-.log-panel { background: var(--card); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); padding: 12px; }
-.log-title { font-weight: 700; font-size: 13px; margin-bottom: 8px; }
-.log-list { max-height: 70vh; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
-.log-empty { color: var(--muted); font-size: 12px; }
-.log-row { display: flex; gap: 8px; font-size: 12px; padding: 3px 0; border-bottom: 1px solid #f3f4f6; }
-.log-time { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.log-text { color: var(--text); }
 
 @media (max-width: 1100px) {
   .main-grid { grid-template-columns: 1fr; }
-  .side-col { position: static; }
   .panels { grid-template-columns: 1fr; }
 }
 
 /* ── Multi-account (모의 + 실전 2열) ─────────────────────────────────── */
-.main-grid.multi { grid-template-columns: minmax(0, 1fr) 320px; }
+.main-grid.multi { grid-template-columns: minmax(0, 1fr); }
 .accounts-row {
   /* 표시 중인 계좌 수(--acc-cols)만큼 열을 만든다. 단독 선택 시 전폭. */
   display: grid;
@@ -397,9 +388,6 @@ input:focus { outline: none; border-color: var(--accent); }
 .account-col.danger .stock-panel { border-color: #f1c4c1; }
 
 /* 로그 계좌 배지 */
-.log-acc { font-size: 10px; font-weight: 700; padding: 0 6px; border-radius: 5px; white-space: nowrap; }
-.log-acc.safe { background: var(--accent-soft); color: var(--accent); }
-.log-acc.danger { background: #fdecec; color: #e53935; }
 
 @media (max-width: 1300px) {
   .accounts-row { grid-template-columns: 1fr; }
@@ -635,9 +623,6 @@ input:focus { outline: none; border-color: var(--accent); }
   .manual-stop-row .save-btn { width: auto; }
   .recovery-notice { margin: 8px 0; padding: 10px; }
 
-  .side-col { margin-top: 10px; }
-  .log-list { max-height: 260px; }
-  .log-row { align-items: flex-start; }
 
   /* 상한가 종목 페이지 */
   .screener { padding: 10px 8px 28px; }
