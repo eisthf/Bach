@@ -3,7 +3,7 @@ import { useStore } from '../store'
 import Chart from './Chart'
 import IntervalSelector from './IntervalSelector'
 import PriceTicker from './PriceTicker'
-import { useChartInterval } from '../chartInterval'
+import { useChartInterval } from '../chartPrefs'
 import StateButton from './StateButton'
 import ManualTradePanel from './ManualTradePanel'
 import AutoConfigForm from './AutoConfigForm'
@@ -13,7 +13,8 @@ import AutoConfigForm from './AutoConfigForm'
 // 컴팩트 모드: 자동매매설정을 숨기고 차트(좌)+보유(우)를 나란히 → 카드 높이 절약.
 export default function StockPanel({ account, stock }) {
   const { ticks, compact, actions } = useStore()
-  const [interval, setInterval] = useChartInterval(`ulc:${account}:${stock.code}`) // 기본 일봉
+  const prefKey = `ulc:${account}:${stock.code}`
+  const [interval, setInterval] = useChartInterval(prefKey) // 기본 일봉
   const tick = (ticks[account] || {})[stock.code]
   const isCompact = (compact[account] || new Set()).has(stock.code)
 
@@ -57,7 +58,7 @@ export default function StockPanel({ account, stock }) {
         <div className="compact-body">
           <div className="compact-chart">
             {toolbar}
-            <Chart account={account} code={stock.code} interval={interval} tick={tick} height={260} />
+            <Chart prefKey={prefKey} account={account} code={stock.code} interval={interval} tick={tick} height={260} />
           </div>
           <ManualTradePanel account={account} code={stock.code} position={stock.position}
             verified={stock.position_verified !== false} tick={tick} readOnly />
@@ -65,7 +66,7 @@ export default function StockPanel({ account, stock }) {
       ) : (
         <>
           {toolbar}
-          <Chart account={account} code={stock.code} interval={interval} tick={tick} />
+          <Chart prefKey={prefKey} account={account} code={stock.code} interval={interval} tick={tick} />
           <div className="panels">
             <ManualTradePanel account={account} code={stock.code} position={stock.position}
               verified={stock.position_verified !== false} tick={tick} readOnly />

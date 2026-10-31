@@ -6,7 +6,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { useStore } from '../store'
 import Chart from './Chart'
 import PriceTicker from './PriceTicker'
-import { useChartInterval } from '../chartInterval'
+import { useChartInterval } from '../chartPrefs'
 import { ROUTES, navigate } from '../router'
 import { addRuleText, projectedAverage, roundToTick, secondLegCheck, zoneOf } from '../candleZone'
 
@@ -69,7 +69,8 @@ function validate(c) {
 
 export default function CandleTradeCard({ account, item }) {
   const { ticks, candlePositions, logs, actions } = useStore()
-  const [interval, setInterval] = useChartInterval(`candle:${account.id}:${item.code}`)
+  const prefKey = `candle:${account.id}:${item.code}`
+  const [interval, setInterval] = useChartInterval(prefKey)
   const [form, setForm] = useState(() => toForm(item.config))
   const [dirty, setDirty] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -345,7 +346,7 @@ export default function CandleTradeCard({ account, item }) {
           </span>
         </div>
       )}
-      <Chart account={account.id} code={item.code} interval={interval} tick={tick} height={isZone ? 320 : 260}
+      <Chart prefKey={prefKey} account={account.id} code={item.code} interval={interval} tick={tick} height={isZone ? 320 : 260}
         anchorDate={isZone ? null : item.base.date} priceLines={lines} onPriceClick={onPriceClick}
         draggableLines={[
           ...(isZone && zoneEditable ? [{ id: 'high', price: zHigh }, { id: 'low', price: zLow }] : []),

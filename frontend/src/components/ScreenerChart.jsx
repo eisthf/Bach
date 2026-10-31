@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import { MA_LINES } from '../indicators'
 import Chart from './Chart'
-import { useChartInterval } from '../chartInterval'
+import { useChartInterval } from '../chartPrefs'
 
 // includeToday: 장중 스냅샷으로 고른 종목이면 진행 중인 오늘 세션을 보여준다.
 // defaultInterval: 처음 열 때의 주기(3=3분봉, 1440=일봉). 고른 주기는 기억해 다음 스크리너 차트에도 쓴다.
@@ -70,7 +70,7 @@ export default function ScreenerChart({ stock, source, includeToday = false, def
         : anchorDate ? `조회일 ${anchorDate} 앞 20거래일부터 60거래일 일봉` : '최근 일봉'} 기준입니다.</p>
       {interval === 1440 && dayNote && <p className="muted screener-day-note">{dayNote}</p>}
       {error ? <p role="alert">{error} <button onClick={() => setRetry((value) => value + 1)}>다시 시도</button></p>
-        : account ? <Chart key={`${stock.code}:${interval}`} account={account.id} code={stock.code} interval={interval} sessionOnly extended includeToday={includeToday} anchorDate={anchorDate} onSessionDate={setSessionDate} height={460}
+        : account ? <Chart key={`${stock.code}:${interval}`} prefKey="screener" account={account.id} code={stock.code} interval={interval} sessionOnly extended includeToday={includeToday} anchorDate={anchorDate} onSessionDate={setSessionDate} height={460}
           priceLines={interval === 1440 ? dayPriceLines : null} />
           : <p role="status">시세 연결 확인 중…</p>}
     </dialog>

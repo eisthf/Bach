@@ -1,7 +1,7 @@
 // lightweight-charts 캔들 차트.
 // - 캔들: 내부 투명, 테두리만. 상승(close>=open) 적색 / 하락 청색.
 // - SMA 5/10/20/60 겹쳐 그림 (파랑/분홍/주황/초록).
-// - 엔벨로프(중심 SMA20, ±10%) 상·하단선: [엔벨로프] 단추로 켜고 끔(브라우저에 기억).
+// - 엔벨로프(중심 SMA20, ±10%) 상·하단선: [엔벨로프] 단추로 켜고 끔(차트별로 브라우저에 기억).
 // - 거래량: 하단 막대. 상승봉 적색 / 하락봉 청색.
 // - 크로스헤어: 내장. 마우스 가격 수평선 + 가격 라벨(손절선 가늠용).
 // - 실시간 틱으로 마지막 봉 갱신. 봉 경계를 넘으면 서버에서 재조회(아래 참고).
@@ -12,6 +12,7 @@ import { sma, lastSma, MA_LINES, ENVELOPE, envelope } from '../indicators'
 import { ANCHOR_COLOR, anchorMarker, tradeMarkers, tradePoints } from '../tradeMarkers'
 import { TradeCrossPrimitive } from '../tradeCrossPrimitive'
 import { AmountStripePrimitive, amountStripeTimes } from '../amountStripePrimitive'
+import { useChartEnvelope } from '../chartPrefs'
 
 // 봉 경계를 넘었는데 서버 봉이 아직 안 만들어졌을 때, 매 틱 재조회하지 않도록.
 const REFRESH_COOLDOWN_MS = 10_000
@@ -21,10 +22,6 @@ const TALL_SCALE = 1.5
 const TALL_KEY = 'bach.chartTall'
 const readTall = () => { try { return localStorage.getItem(TALL_KEY) === '1' } catch { return false } }
 const writeTall = (v) => { try { localStorage.setItem(TALL_KEY, v ? '1' : '0') } catch { /* 저장 불가면 이번 화면만 */ } }
-// 엔벨로프 표시 여부도 마찬가지로 기억한다(모든 차트 공통).
-const ENV_KEY = 'bach.chartEnvelope'
-const readEnv = () => { try { return localStorage.getItem(ENV_KEY) === '1' } catch { return false } }
-const writeEnv = (v) => { try { localStorage.setItem(ENV_KEY, v ? '1' : '0') } catch { /* 저장 불가면 이번 화면만 */ } }
 
 const volumePoint = (bar) => ({
   time: bar.time,
@@ -41,7 +38,9 @@ const volumePoint = (bar) => ({
 // [측정] 단추(모든 차트): 켜고 두 점을 누르면 두 점을 잇는 선과 변화율·봉 수를 보여준다
 //   (화면 표시만, 저장 안 함). 세 번째 누르면 새로 잰다. 봉 단위를 바꾸면 지운다.
 //   측정 중엔 클릭이 측정으로 가고 onPriceClick(가격 찍기)은 쉰다.
-export default function Chart({ account, code, interval, tick, height = 360, sessionOnly = false, includeToday = false, extended = false, anchorDate = null, priceLines = null, onPriceClick = null, draggableLines = null, onLineDrag = null, onSessionDate }) {
+// prefKey: 차트 자리 이름(예: 'manual:mock:005930'). 엔벨로프 켜고 끔을 이 이름별로 기억한다.
+//   없으면 '계좌:종목'.
+export default function Chart({ prefKey = null, account, code, interval, tick, height = 360, sessionOnly = false, includeToday = false, extended = false, anchorDate = null, priceLines = null, onPriceClick = null, draggableLines = null, onLineDrag = null, onSessionDate }) {
   const anchor = interval === 1440 ? anchorDate : null
   const anchorRef = useRef(anchor)
   anchorRef.current = anchor
@@ -95,13 +94,12 @@ export default function Chart({ account, code, interval, tick, height = 360, ses
   const [displayVolume, setDisplayVolume] = useState(null)
   const [tall, setTall] = useState(readTall)
   const chooseTall = (v) => { setTall(v); writeTall(v) }
-  const [envOn, setEnvOn] = useState(readEnv)
+  const [envOn, setEnvOn] = useChartEnvelope(prefKey || `${account}:${code}`)
   const envOnRef = useRef(envOn)
   envOnRef.current = envOn
   const toggleEnv = () => {
     const v = !envOn
     setEnvOn(v)
-    writeEnv(v)
     envRefs.current.forEach((series) => series.applyOptions({ visible: v }))
   }
   // 엔벨로프 데이터는 켜고 끔과 무관하게 늘 채워 둔다(숨긴 시리즈는 그리지도, 축 범위에 넣지도 않는다).

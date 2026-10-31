@@ -367,11 +367,11 @@ function BonusTradeCard({ account, item, job }) {
       <div className="bonus-charts">
         <div>
           <div className="bonus-chart-label">일봉</div>
-          <Chart {...chartProps} interval={1440} />
+          <Chart {...chartProps} prefKey={`bonus:${account.id}:${item.code}:day`} interval={1440} />
         </div>
         <div>
           <div className="bonus-chart-label">1시간봉</div>
-          <Chart {...chartProps} interval={60} />
+          <Chart {...chartProps} prefKey={`bonus:${account.id}:${item.code}:hour`} interval={60} />
         </div>
       </div>
       <div className="panels manual-panels">
