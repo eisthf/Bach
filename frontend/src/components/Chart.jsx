@@ -16,6 +16,8 @@ import { useChartEnvelope } from '../chartPrefs'
 
 // 봉 경계를 넘었는데 서버 봉이 아직 안 만들어졌을 때, 매 틱 재조회하지 않도록.
 const REFRESH_COOLDOWN_MS = 10_000
+// 처음 열 때 마지막 봉과 가격축 사이에 비워 둘 너비(가격축 이름표 'Env20 +10%' 정도).
+const RIGHT_GAP_PX = 90
 
 // 차트 높이 배율(기본 / 1.5배). 마지막 선택을 브라우저에 기억해 새로 여는 차트에도 쓴다.
 const TALL_SCALE = 1.5
@@ -443,17 +445,20 @@ export default function Chart({ prefKey = null, account, code, interval, tick, h
         }
         const ts = chartRef.current.timeScale()
         // 스크리너는 정규장 하루의 첫 봉부터, 매매 차트는 이전 5봉을 곁들여 보여준다.
+        // (오늘 봉이 없으면 전체)
+        let fromIndex = 0
         if (bars.length > data.day_start_index) {
-          const fromIndex = interval === 1440 || sessionOnly
+          fromIndex = interval === 1440 || sessionOnly
             ? data.day_start_index
             : Math.max(0, data.day_start_index - 5)
-          ts.setVisibleRange({
-            from: bars[fromIndex].time,
-            to: bars[bars.length - 1].time,
-          })
-        } else {
-          ts.fitContent()
         }
+        // 마지막 봉 오른쪽에 빈 칸을 둔다. 가격축 라벨(현재가·MA·Env 이름표)이 그림 안쪽으로
+        // 뻗어 나와 마지막 봉들을 덮지 않게 — 봉 수와 무관하게 약 RIGHT_GAP_PX 너비.
+        const last = bars.length - 1
+        const shown = last - fromIndex + 1
+        const paneWidth = ts.width() || containerRef.current.clientWidth
+        const gap = Math.ceil(shown * RIGHT_GAP_PX / Math.max(1, paneWidth - RIGHT_GAP_PX))
+        ts.setVisibleLogicalRange({ from: fromIndex - 0.5, to: last + 0.5 + gap })
       }
       requestAnimationFrame(applyView)
     }).catch((error) => {
