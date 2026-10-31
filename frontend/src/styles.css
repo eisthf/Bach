@@ -337,11 +337,6 @@ input:focus { outline: none; border-color: var(--accent); }
 .lock-note { font-size: 11px; color: var(--muted); margin-top: 6px; }
 
 /* Auto config */
-.auto-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; }
-.field { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
-.field span { font-size: 11px; color: var(--muted); }
-.field input { width: 90px; }
-.auto-bools { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 10px 0; }
 .checkfield { display: flex; align-items: center; gap: 6px; font-size: 12px; }
 .auto-actions { display: flex; align-items: center; gap: 10px; }
 .save-btn { background: var(--accent); color: #fff; border: none; border-radius: 6px; padding: 7px 14px; font-weight: 600; }
@@ -631,9 +626,6 @@ input:focus { outline: none; border-color: var(--accent); }
   .buy-btn, .sell-all { margin-left: 0; }
   .buy-btn { grid-column: 3; grid-row: 2; }
   .sell-btn { min-width: 64px; }
-  .auto-grid { grid-template-columns: 1fr; gap: 8px; }
-  .field input { width: 112px; }
-  .auto-bools { grid-template-columns: 1fr; gap: 8px; }
   .checkfield input { min-height: 24px; width: 24px; }
   .save-btn { width: 100%; }
   .auto-actions { flex-wrap: wrap; }
@@ -823,3 +815,20 @@ input:focus { outline: none; border-color: var(--accent); }
 .ulc-phase { font-weight: 700; }
 .ulc-leg { padding: 1px 8px; border: 1px dashed #b39ddb; border-radius: 6px; }
 .ulc-leg.filled { border-style: solid; border-color: #6a1b9a; background: #f3e5f5; font-weight: 600; }
+
+/* [상한가 매매] 자동매매 설정: 묶음별, 라벨 옆 입력칸 */
+.ulc-cfg { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; margin-bottom: 10px; }
+.ulc-cfg fieldset { border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px 10px; margin: 0; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ulc-cfg legend { font-size: 12px; font-weight: 700; padding: 0 4px; }
+.ulc-cfg legend .muted { font-weight: 400; }
+.cfg-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 12px; }
+.cfg-row input[type="number"] { width: 64px; text-align: right; }
+.cfg-row input.wide { width: 110px; }
+.cfg-sub { padding-left: 22px; }
+.cfg-sub.off { opacity: 0.45; }
+.cfg-note { font-size: 11px; }
+.sc-tag { display: inline-block; padding: 0 6px; border-radius: 999px; color: #fff; font-size: 11px; }
+.sc-tag.sc1 { background: #2e7d32; }
+.sc-tag.sc2 { background: #ef6c00; }
+.sc-tag.sc3 { background: #c62828; }
+.cfg-sc { display: flex; flex-direction: column; gap: 2px; }
