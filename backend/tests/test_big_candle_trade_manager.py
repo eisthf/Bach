@@ -342,6 +342,24 @@ async def test_start_warns_when_cash_below_full_plan(hub):
     assert "실패할 수 있습니다" in item["notice"]
 
 
+async def test_config_change_refreshes_budget_notice(hub):
+    """감시 중 설정을 바꾸면 예수금 경고를 새 계획으로 다시 계산한다(낡은 문구가 남지 않게)."""
+    hub.candle_trades.add_zone(CODE, "테스트", {"low": 10_200, "high": 11_800})
+    it = hub.candle_trades.items[CODE]
+    await hub.candle_trades.set_config(CODE, it.engine.config.model_copy(update={"total_krw": 2_000_000}))
+    with_cash(hub, 1_500_000)                     # 1차 100만원은 되지만 총 200만원엔 부족
+    item = await hub.candle_trades.start(CODE)
+    assert "계획 2,000,000원" in item["notice"]
+    item = await hub.candle_trades.set_config(CODE, it.engine.config.model_copy(update={"total_krw": 1_000_000}))
+    assert item["notice"] == ""
+    item = await hub.candle_trades.set_config(CODE, it.engine.config.model_copy(update={"total_krw": 4_000_000}))
+    assert "주문가능금액이 부족합니다" in item["notice"]   # 저장은 되고 경고만
+    assert it.engine.config.total_krw == 4_000_000
+    it.notice = "재시작 잔고 확인 실패 — 확인될 때까지 주문 보류"
+    await hub.candle_trades.set_config(CODE, it.engine.config.model_copy(update={"total_krw": 1_000_000}))
+    assert it.notice.startswith("재시작 잔고 확인 실패")   # 다른 알림은 그대로
+
+
 async def test_rezone_via_manager_checks_cash_and_broadcasts(hub):
     hub.candle_trades.add_zone(CODE, "테스트", {"low": 10_200, "high": 11_800})
     await hub.candle_trades.start(CODE)
@@ -464,7 +482,7 @@ async def test_redo_carries_zone_and_config_into_new_draft(hub):
     hub.candle_trades.add_zone(CODE, "테스트", {"low": 10_200, "high": 11_800})
     it = hub.candle_trades.items[CODE]
     cfg = it.engine.config.model_copy(update={"total_krw": 2_000_000, "trailing_pct": 3.0})
-    hub.candle_trades.set_config(CODE, cfg)
+    await hub.candle_trades.set_config(CODE, cfg)
     with pytest.raises(ValueError, match="끝난 매매"):
         await hub.candle_trades.redo(CODE)          # 설정 중
     await hub.candle_trades.start(CODE)

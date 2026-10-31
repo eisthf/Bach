@@ -373,8 +373,8 @@ async def set_candle_trade_round_budget(account: str, code: str, payload: dict):
 
 
 @app.put("/api/{account}/candle-trades/{code}/config")
-def set_candle_trade_config(account: str, code: str, config: CandleTradeConfig):
-    return _candle_call(_candle(account).set_config, code, config)
+async def set_candle_trade_config(account: str, code: str, config: CandleTradeConfig):
+    return await _candle_acall(_candle(account).set_config, code, config)
 
 
 @app.post("/api/{account}/candle-trades/{code}/start")

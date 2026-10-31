@@ -426,14 +426,33 @@ class CandleTradeManager:
         self.items[code] = it
         self.persist()
 
-    def set_config(self, code: str, config: CandleTradeConfig) -> dict:
+    async def set_config(self, code: str, config: CandleTradeConfig) -> dict:
         it = self._get(code)
         if not (it.engine.phase == CzPhase.DRAFT or it.engine.phase.active):
             raise ValueError("종료된 매매는 설정을 바꿀 수 없습니다.")
-        it.engine.reconfigure(config)
-        self.persist()
+        async with it.lock:
+            it.engine.reconfigure(config)
+            await self._refresh_budget_notice(it)
+            self.persist()
         self.broadcast(code)
         return self.payload(code)
+
+    async def _refresh_budget_notice(self, it: CandleItem) -> None:
+        """감시 중(1차 전) 설정을 바꾸면 [감시 시작] 때의 예수금 경고를 새 계획으로 다시 계산한다.
+        저장은 막지 않는다 — 1차도 못 대면 그 문구를 경고로 남긴다. 예수금이 아닌 알림은 그대로 둔다."""
+        if it.notice and not it.notice.startswith("주문가능금액"):
+            return
+        if it.engine.phase != CzPhase.WATCHING:
+            if it.engine.phase == CzPhase.DRAFT:
+                it.notice = ""
+            return
+        try:
+            notice = await self._budget_notice(it)
+        except ValueError as e:
+            notice = str(e)
+        if notice != it.notice:
+            it.notice = notice
+            self._log(it.code, f"⚠️ {notice}" if notice else "예수금 경고 해제(설정 변경)")
 
     async def remove(self, code: str) -> None:
         it = self._get(code)
