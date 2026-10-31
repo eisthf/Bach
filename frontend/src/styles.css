@@ -806,3 +806,8 @@ input:focus { outline: none; border-color: var(--accent); }
 .th-status.holding { background: #fdecea; color: #c62828; }
 .th-status.watching { background: #e8f0fe; color: #1a56c4; }
 .th-status.setup { background: #f1f3f5; color: var(--muted); }
+.pager { display: flex; align-items: center; justify-content: center; gap: 4px; flex-wrap: wrap; margin: 12px 0; font-size: 13px; }
+.pager button { min-width: 32px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); cursor: pointer; }
+.pager button.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
+.pager button:disabled { opacity: 0.4; cursor: default; }
+.pager .muted { margin: 0 4px; }

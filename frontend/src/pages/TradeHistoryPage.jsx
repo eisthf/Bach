@@ -10,6 +10,17 @@ import Chart from '../components/Chart'
 
 const STRATEGIES = { ulc: '상한가', candle: '대금 양봉', zone: '구간', manual: '수동', bonus: '무상증자' }
 const fmt = (n) => Number(n || 0).toLocaleString('ko-KR')
+const PAGE_SIZE = 9
+
+// 페이지 번호 목록: 처음·끝과 지금 페이지 ±2, 그 사이는 '…'.
+function pageItems(page, pages) {
+  const out = []
+  for (let p = 1; p <= pages; p++) {
+    if (p === 1 || p === pages || Math.abs(p - page) <= 2) out.push(p)
+    else if (out[out.length - 1] !== '…') out.push('…')
+  }
+  return out
+}
 
 const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 // 기본 기간: 오늘부터 두 달 전(말일 보정)까지.
@@ -28,6 +39,7 @@ export default function TradeHistoryPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [selected, setSelected] = useState(null)
+  const [page, setPage] = useState(1)
   const chartRef = useRef(null)
   const acc = accounts.find((a) => a.id === account) || accounts[0]
 
@@ -38,6 +50,7 @@ export default function TradeHistoryPage() {
     try {
       const res = await api.tradedStocks(accId, r.start, r.end)
       setData({ ...res, account: accId })
+      setPage(1)
       setSelected((cur) => (cur && res.stocks.some((s) => s.code === cur.code) ? cur : null))
     } catch (e) {
       setError(e.message || '매매 기록을 불러오지 못했습니다.')
@@ -79,6 +92,9 @@ export default function TradeHistoryPage() {
   }, [selected])
 
   const stocks = data && data.account === acc?.id ? data.stocks : []
+  const pages = Math.max(1, Math.ceil(stocks.length / PAGE_SIZE))
+  const curPage = Math.min(page, pages)
+  const pageStocks = stocks.slice((curPage - 1) * PAGE_SIZE, curPage * PAGE_SIZE)
   const liveCount = stocks.filter((s) => s.status && s.status.kind !== 'setup').length
   const rangeError = range.start && range.end && range.start > range.end ? '시작일이 종료일보다 늦습니다.' : ''
 
@@ -155,7 +171,7 @@ export default function TradeHistoryPage() {
               </tr>
             </thead>
             <tbody>
-              {stocks.map((s) => (
+              {pageStocks.map((s) => (
                 <tr key={s.code} className={`screener-stock-row${selected?.code === s.code ? ' selected' : ''}`}
                   onClick={() => choose(s)}>
                   <td className="col-name">
@@ -184,6 +200,18 @@ export default function TradeHistoryPage() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {pages > 1 && (
+        <nav className="pager" aria-label="목록 페이지">
+          <button type="button" disabled={curPage <= 1} onClick={() => setPage(curPage - 1)}>‹ 이전</button>
+          {pageItems(curPage, pages).map((p, i) => (p === '…'
+            ? <span key={`gap${i}`} className="muted">…</span>
+            : <button key={p} type="button" className={p === curPage ? 'on' : ''} aria-current={p === curPage ? 'page' : undefined}
+              onClick={() => setPage(p)}>{p}</button>))}
+          <button type="button" disabled={curPage >= pages} onClick={() => setPage(curPage + 1)}>다음 ›</button>
+          <span className="muted">{(curPage - 1) * PAGE_SIZE + 1}–{Math.min(curPage * PAGE_SIZE, stocks.length)} / {stocks.length}종목</span>
+        </nav>
       )}
     </main>
   )
