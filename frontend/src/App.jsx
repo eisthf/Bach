@@ -6,6 +6,7 @@ import StockPanel from './components/StockPanel'
 import MarketControls from './components/MarketControls'
 import AccountSummary from './components/AccountSummary'
 import PageNav from './components/PageNav'
+import LayoutToggle from './components/LayoutToggle'
 import UpperLimitPage from './pages/UpperLimitPage'
 import BigCandlePage from './pages/BigCandlePage'
 import CandleTradePage from './pages/CandleTradePage'
@@ -131,7 +132,10 @@ function AppHeader({ children }) {
           </div>
           <PageNav />
         </div>
-        {children}
+        <div className="head-right">
+          {children}
+          <LayoutToggle />
+        </div>
       </header>
     </div>
   )

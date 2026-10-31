@@ -817,3 +817,22 @@ input:focus { outline: none; border-color: var(--accent); }
 .sc-tag.sc2 { background: #ef6c00; }
 .sc-tag.sc3 { background: #c62828; }
 .cfg-sc { display: flex; flex-direction: column; gap: 2px; }
+
+/* 화면 폭 선택(LayoutToggle): 가운데 모드는 내용 폭을 1440px로 묶고 양쪽을 여백으로 둔다.
+   배경(헤더 띠 등)은 그대로 전폭이고, 안쪽 여백(padding)만 늘린다. 좁은 화면에선 차이가 없어 숨긴다. */
+.head-right { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; margin-left: auto; }
+.layout-toggle { display: inline-flex; }
+.layout-toggle button { border: 1px solid var(--border); background: var(--card); color: var(--muted);
+  padding: 4px 9px; font-size: 11px; cursor: pointer; white-space: nowrap; }
+.layout-toggle button:first-child { border-radius: 6px 0 0 6px; }
+.layout-toggle button:last-child { border-radius: 0 6px 6px 0; border-left: none; }
+.layout-toggle button.on { color: var(--accent); background: var(--accent-soft); font-weight: 700; }
+@media (max-width: 1500px) { .layout-toggle { display: none; } }
+@media (min-width: 1501px) {
+  :root[data-layout="center"] { --page-gutter: max(20px, calc((100vw - 1440px) / 2)); }
+  :root[data-layout="center"] .app-header,
+  :root[data-layout="center"] .main-grid,
+  :root[data-layout="center"] .candle-trade { padding-left: var(--page-gutter); padding-right: var(--page-gutter); }
+  :root[data-layout="center"] .screener { margin-left: auto; margin-right: auto; }
+}
+@media (max-width: 700px) { .head-right { display: contents; } }
