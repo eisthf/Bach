@@ -7,9 +7,10 @@
 from __future__ import annotations
 
 import asyncio
+import calendar
 import os
 from typing import Optional
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
@@ -517,6 +518,50 @@ def get_bars(
 @app.get("/api/{account}/trades")
 def chart_trades(account: str, code: str):
     return {"trades": _hub(account).trade_history.for_code(code)}
+
+
+@app.get("/api/{account}/traded-stocks")
+async def traded_stocks(account: str, start: Optional[str] = None, end: Optional[str] = None):
+    """기간(YYYY-MM-DD, 양 끝 포함) 동안 체결이 있었던 종목 목록. 기본은 오늘 기준 지난 두 달."""
+    hub = _hub(account)
+    today = now_kst().date()
+    try:
+        end_d = date.fromisoformat(end) if end else today
+        start_d = date.fromisoformat(start) if start else _months_before(end_d, 2)
+    except ValueError:
+        raise HTTPException(400, "날짜는 YYYY-MM-DD")
+    if start_d > end_d:
+        raise HTTPException(400, "시작일이 종료일보다 늦습니다")
+    stocks = hub.trade_history.summary(start_d.strftime("%Y%m%d"), end_d.strftime("%Y%m%d"))
+    names = await _stock_names(hub, [s["code"] for s in stocks])
+    for s in stocks:
+        s["name"] = names.get(s["code"]) or ""
+    return {"start": start_d.isoformat(), "end": end_d.isoformat(), "stocks": stocks}
+
+
+def _months_before(d: date, months: int) -> date:
+    y, m = divmod(d.year * 12 + d.month - 1 - months, 12)
+    m += 1
+    return date(y, m, min(d.day, calendar.monthrange(y, m)[1]))
+
+
+async def _stock_names(hub, codes: list) -> dict:
+    """종목명. 매매 목록에 있으면 그 이름, 없으면 시세 원천에 묻는다(한 번 물은 이름은 원천이 기억).
+    09:00 [상한가 매매] 1차 주문이 남아 있으면 REST 게이트를 잡지 않게 묻지 않는다(코드로 표시)."""
+    names = {}
+    for it in [*hub.stocks.values(), *hub.manual_trades.items.values(), *hub.candle_trades.items.values()]:
+        if it.name and it.name != it.code:
+            names[it.code] = it.name
+    if hub.ulc_first_orders_pending():
+        return names
+    for code in codes:
+        if code in names:
+            continue
+        try:
+            names[code] = await asyncio.to_thread(hub.data.stock_name, code) or ""
+        except Exception:  # noqa: BLE001
+            names[code] = ""
+    return names
 
 
 # ---------------------------------------------------------------------------

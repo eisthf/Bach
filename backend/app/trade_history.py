@@ -299,3 +299,35 @@ class TradeHistory:
         with self.lock:
             snapshot = self._by_code.get(code, ())
         return [dict(row) for row in snapshot]
+
+    def summary(self, start_day, end_day):
+        """기간(YYYYMMDD, 양 끝 포함)에 체결이 있었던 종목별 요약. 마지막 체결이 최근인 순.
+
+        종목마다 {code, buy_count, sell_count, buy_qty, sell_qty, buy_amount, sell_amount,
+        first_day, last_day(YYYY-MM-DD), strategies(체결 행에 붙은 전략 이름들)}.
+        """
+        with self.lock:
+            rows = list(self.rows)
+        out = {}
+        for row in rows:
+            day = _day(row["time"])
+            if not start_day <= day <= end_day:
+                continue
+            s = out.setdefault(row["code"], {
+                "code": row["code"], "buy_count": 0, "sell_count": 0, "buy_qty": 0, "sell_qty": 0,
+                "buy_amount": 0, "sell_amount": 0, "first_day": day, "last_day": day, "strategies": set(),
+            })
+            side = row["side"]
+            s[f"{side}_count"] += 1
+            s[f"{side}_qty"] += int(row["qty"])
+            s[f"{side}_amount"] += round(row["qty"] * row["price"])
+            s["first_day"], s["last_day"] = min(s["first_day"], day), max(s["last_day"], day)
+            if row.get("strategy"):
+                s["strategies"].add(row["strategy"])
+        result = []
+        for s in out.values():
+            for key in ("first_day", "last_day"):
+                s[key] = f"{s[key][:4]}-{s[key][4:6]}-{s[key][6:]}"
+            s["strategies"] = sorted(s["strategies"])
+            result.append(s)
+        return sorted(result, key=lambda s: (s["last_day"], s["code"]), reverse=True)

@@ -13,6 +13,7 @@ import CandleTradePage from './pages/CandleTradePage'
 import ZoneTradePage from './pages/ZoneTradePage'
 import ManualTradePage from './pages/ManualTradePage'
 import BonusTradePage from './pages/BonusTradePage'
+import TradeHistoryPage from './pages/TradeHistoryPage'
 import BrokerConnection from './components/BrokerConnection'
 import { longPress } from './longPress'
 
@@ -174,6 +175,7 @@ function Router() {
     [ROUTES.ZONE_TRADE]: ZoneTradePage,
     [ROUTES.MANUAL_TRADE]: ManualTradePage,
     [ROUTES.BONUS_TRADE]: BonusTradePage,
+    [ROUTES.TRADE_HISTORY]: TradeHistoryPage,
   }
   const Page = pages[route]
   if (Page) {

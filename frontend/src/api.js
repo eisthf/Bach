@@ -27,6 +27,7 @@ export const api = {
   // 전역
   accounts: () => req('/api/accounts'),
   trades: (account, code) => req(`/api/${enc(account)}/trades?code=${enc(code)}`),
+  tradedStocks: (account, start, end) => req(`/api/${enc(account)}/traded-stocks?start=${enc(start)}&end=${enc(end)}`),
   market: () => req('/api/market'),
   marketOpen: () => req('/api/market/open', { method: 'POST' }),
   marketClose: () => req('/api/market/close', { method: 'POST' }),

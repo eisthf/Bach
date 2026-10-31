@@ -13,6 +13,7 @@ export const ROUTES = {
   ZONE_TRADE: '/zone-trade',
   MANUAL_TRADE: '/manual-trade',
   BONUS_TRADE: '/bonus-trade',
+  TRADE_HISTORY: '/trade-history',
 }
 
 function currentPath() {

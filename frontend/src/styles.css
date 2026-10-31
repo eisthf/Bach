@@ -796,3 +796,9 @@ input:focus { outline: none; border-color: var(--accent); }
   .bonus-settings-row { grid-template-columns: 1fr; }
   .bonus-jobs { display: block; overflow-x: auto; }
 }
+
+/* 매매 기록 */
+.trade-history .screener-stock-row.selected { background: var(--accent-soft); }
+.trade-history-chart { border: 1px solid var(--border); border-radius: 10px; background: var(--card); padding: 10px 12px; margin: 10px 0; scroll-margin-top: 140px; }
+.trade-history-chart-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+.trade-history-chart-head button { margin-left: auto; }

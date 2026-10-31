@@ -2,7 +2,7 @@ import React from 'react'
 import { ROUTES, navigate, useRoute } from '../router'
 
 // 페이지 전환. 성격이 다른 두 묶음을 나눠 보인다:
-//   조회 — 시장 전체 스크리너(주문 없음)
+//   조회 — 시장 전체 스크리너·지난 매매 기록(주문 없음)
 //   매매 — 계좌에서 주문이 나가는 화면. 어느 자동매매든 [수동 전환]하면 수동 매매로 모인다.
 const GROUPS = [
   {
@@ -10,6 +10,7 @@ const GROUPS = [
     pages: [
       { path: ROUTES.UPPER_LIMIT, label: '상한가 종목' },
       { path: ROUTES.BIG_CANDLE, label: '대금 양봉' },
+      { path: ROUTES.TRADE_HISTORY, label: '매매 기록' },
     ],
   },
   {
