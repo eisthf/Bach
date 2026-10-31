@@ -682,3 +682,49 @@ def test_zone_kind_roundtrip():
     eng.watch_from = D1
     back = CandleTradeEngine.from_dict("000001", eng.config, eng.to_dict())
     assert back.kind == "zone" and back.zone() == (10_200, 11_800) and back.watch_from == D1
+
+
+# ---------------------------------------------------------------------------
+# 한 번에 매수(분할 끔)
+# ---------------------------------------------------------------------------
+def test_split_is_on_by_default():
+    assert CandleTradeConfig().split is True
+    assert CandleTradeConfig.model_validate({"total_krw": 1_000_000}).split is True   # 예전 저장값
+
+
+async def test_single_buy_spends_total_at_once_and_holds():
+    eng, br, logs = make(split=False)
+    assert [(leg.ratio, leg.amount) for leg in eng.legs] == [(100.0, 1_000_000)]
+    day(eng, D1, 1)
+    await tick(eng, br, 11_000, D1)
+    assert br.buys == [1_000_000] and eng.phase == CzPhase.HOLDING and eng.shares == 90
+    assert not eng.add_possible() and any("한 번에 매수" in m for m in logs)
+    day(eng, D2, 2)
+    await tick(eng, br, 10_300, D2)           # 구간 안 깊은 가격이어도 추가 매수 없음
+    assert br.buys == [1_000_000]
+    await tick(eng, br, 13_200, D2)           # 익절: 평단 +20% → 절반 매도 후 트레일링
+    assert br.sells == [45] and eng.phase == CzPhase.TRAILING
+
+
+async def test_split_toggle_only_before_first_buy():
+    eng, br, _ = make()
+    eng.reconfigure(eng.config.model_copy(update={"split": False}))
+    assert [leg.amount for leg in eng.legs] == [1_000_000]
+    eng.reconfigure(eng.config.model_copy(update={"split": True}))
+    assert [leg.amount for leg in eng.legs] == [500_000, 500_000]
+    day(eng, D1, 1)
+    await tick(eng, br, 11_000, D1)
+    with pytest.raises(ValueError, match="분할"):
+        eng.reconfigure(eng.config.model_copy(update={"split": False}))
+
+
+async def test_single_buy_rezone_round_is_single_too():
+    eng, br, _ = make_zone(split=False)
+    eng.start()
+    day(eng, D1, 1)
+    await tick(eng, br, 11_000, D1)
+    eng.rezone(9_000, 9_400, 300_000)
+    assert [leg.amount for leg in eng.legs] == [300_000]
+    day(eng, D2, 2, prev_close=9_500)
+    await tick(eng, br, 9_400, D2)
+    assert br.buys == [1_000_000, 300_000] and eng.phase == CzPhase.HOLDING

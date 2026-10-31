@@ -33,6 +33,7 @@ function fromForm(f) {
   return {
     total_krw: Math.round(Number(f.total_krw) || 0),
     first_ratio_pct: Number(f.first_ratio_pct),
+    split: f.split !== false,
     zone_margin_pct: Number(f.zone_margin_pct),
     add_mode: f.add_mode,
     add_drop_pct: Number(f.add_drop_pct),
@@ -53,7 +54,7 @@ function fromForm(f) {
 
 function validate(c) {
   if (c.total_krw < 10_000) return '총 투자액은 1만원 이상이어야 합니다.'
-  if (!(c.first_ratio_pct >= 10 && c.first_ratio_pct <= 90)) return '1차 매수 비중은 10~90%여야 합니다.'
+  if (c.split && !(c.first_ratio_pct >= 10 && c.first_ratio_pct <= 90)) return '1차 매수 비중은 10~90%여야 합니다.'
   if (!(c.zone_margin_pct >= 0 && c.zone_margin_pct < 50)) return '매입 구간 여백은 0 이상 50% 미만이어야 합니다.'
   if (!(c.add_drop_pct > 0 && c.add_drop_pct < 100)) return '2차 매수 하락률은 0~100% 사이여야 합니다.'
   if (!(c.add_gap_pct > 0 && c.add_gap_pct <= 100)) return '2차 구간 폭 비율은 0 초과 100% 이하여야 합니다.'
@@ -137,7 +138,7 @@ export default function CandleTradeCard({ account, item }) {
   // 2차 매수 가능성. 2차가 아직 대기 중이고 운용(또는 설정) 중일 때만 경고한다.
   const leg2Waiting = item.legs[1]?.status === 'waiting'
   const leg2 = secondLegCheck(zone, cfg, bought ? item.legs[0].price : 0)
-  const leg2Warn = leg2 && !leg2.possible && leg2Waiting && editable
+  const leg2Warn = leg2 && !leg2.possible && leg2Waiting && editable && cfg.split
   const body = item.base.close - item.base.open
 
   const startRezone = () => {
@@ -199,7 +200,7 @@ export default function CandleTradeCard({ account, item }) {
   const start = async () => {
     if (dirty && !(await save())) return
     if (isZone && zoneDirty && !(await saveZone())) return
-    const first = Math.floor(cfg.total_krw * cfg.first_ratio_pct / 100)
+    const first = Math.floor(cfg.total_krw * (cfg.split ? cfg.first_ratio_pct : 100) / 100)
     const message = `⚠️ ${account.label} 계좌 ${isZone ? '구간' : '대금 양봉'} 매매 감시 시작\n${item.name} ${item.code}\n`
       + `매입 구간 ${fmtPrice(zone?.low)} ~ ${fmtPrice(zone?.high)}에 들어오면 1차 ${fmt(first)}원 시장가 매수가 자동으로 나갑니다.\n진행할까요?`
     await run(() => actions.startCandle(account.id, item.code, message), '감시 시작됨')
@@ -374,18 +375,27 @@ export default function CandleTradeCard({ account, item }) {
                   {round.no}회차 매수 금액
                   <input type="number" min="10000" step="10000" value={roundBudget} disabled={!roundEditable}
                     onChange={(e) => { setRoundBudget(e.target.value); setRoundDirty(true) }} />원
-                  <span className="muted">(1차 {fmt(item.legs[0]?.amount)} · 2차 {fmt(item.legs[1]?.amount)})</span>
+                  {item.legs.length > 1 && <span className="muted">(1차 {fmt(item.legs[0]?.amount)} · 2차 {fmt(item.legs[1]?.amount)})</span>}
                   {roundEditable && roundDirty && (
                     <button type="button" disabled={busy || roundBudgetNum < 10_000} onClick={saveRoundBudget}>금액 저장</button>
                   )}
                 </label>
               </>
             )}
-            <label title="1차 매수에 쓰는 비중. 나머지가 2차 매수 금액입니다.">1차 매수 비중
+            <label title="분할: 1차·2차로 나눠 삽니다. 한 번에: 구간에 들어오면 총 투자액을 한 번에 사고 추가 매수는 하지 않습니다. 1차 매수 후에는 바꿀 수 없습니다.">매수 방식
+              <select value={form.split === false ? 'single' : 'split'} disabled={bought}
+                onChange={(e) => set('split', e.target.value === 'split')}>
+                <option value="split">분할 매수(1차·2차)</option>
+                <option value="single">한 번에 매수</option>
+              </select>
+            </label>
+            {form.split !== false && (
+            <label className="ct-sub" title="1차 매수에 쓰는 비중. 나머지가 2차 매수 금액입니다.">1차 매수 비중
               <input type="number" min="10" max="90" step="any" value={form.first_ratio_pct} disabled={bought}
                 onChange={(e) => set('first_ratio_pct', e.target.value)} />%
               <span className="muted">(2차 {Math.max(0, 100 - Number(form.first_ratio_pct || 0))}%)</span>
             </label>
+            )}
             {!isZone && (
               <label title={`몸통 ${fmtPrice(body)}원의 이 비율만큼 시가 위·종가 아래를 구간 끝으로 잡습니다.`}>매입 구간: 몸통 양 끝에서
                 <input type="number" min="0" max="49" step="any" value={form.zone_margin_pct} disabled={bought}
@@ -396,6 +406,7 @@ export default function CandleTradeCard({ account, item }) {
               <input type="number" min="1" max="60" step="1" value={form.entry_days} disabled={bought}
                 onChange={(e) => set('entry_days', e.target.value)} />거래일
             </label>}
+            {form.split !== false && (<>
             <label title="1차 매수 다음 날부터, 가격이 매입 구간 안이면서 2차 매수가 이하로 내려오면 2차를 삽니다. 혼합: ①1차가 대비 최소 하락과 ②구간 상단에서 구간 폭의 일정 비율 아래 중 더 낮은 가격. 1차가가 하단에 너무 가까우면 2차를 하지 않습니다.">2차 매수 가격
               <select value={form.add_mode} onChange={(e) => set('add_mode', e.target.value)}>
                 <option value="mixed">혼합</option>
@@ -434,6 +445,7 @@ export default function CandleTradeCard({ account, item }) {
                 </label>
               </>
             )}
+            </>)}
             <label title={form.trailing !== false
               ? '도달하면 보유의 절반을 팔고, 아직 사지 않은 2차 계획은 취소합니다.'
               : '도달하면 보유 전량을 팔고 매매를 끝냅니다. 아직 사지 않은 2차 계획은 취소합니다.'}>

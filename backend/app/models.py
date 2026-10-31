@@ -192,6 +192,8 @@ class CandleTradeConfig(BaseModel):
     """
     total_krw: int = Field(1_000_000, ge=10_000, description="총 투자액(원)")
     first_ratio_pct: float = Field(50.0, ge=10, le=90, description="1차 매수 비중(%). 나머지가 2차")
+    # 분할 매수. False면 총 투자액을 1차에 한 번에 산다(2차 없음 — 2차 조건 설정은 쓰지 않는다).
+    split: bool = Field(True, description="분할 매수(1차·2차). 끄면 한 번에 전액 매수")
     zone_margin_pct: float = Field(10.0, ge=0, lt=50, description="매입 구간: 몸통 양 끝에서 안쪽으로(몸통 대비 %)")
     # 2차 매수 조건가 (P=1차 매수가, L·H=구간 하단·상단):
     #   fixed = P×(1−u%)      gap = H − k%×(H−L), 단 1차가 대비 하락폭이 최소 하락률 미만이면 2차 없음

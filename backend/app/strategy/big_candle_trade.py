@@ -133,9 +133,14 @@ def add_trigger_for(config: CandleTradeConfig, first_price: float,
     return (band, "gap") if band < fixed else (fixed, "fixed")
 
 
-def build_legs(config: CandleTradeConfig) -> List[CzLeg]:
+def leg_ratios(config: CandleTradeConfig) -> Tuple[float, ...]:
+    """차수별 비중(%). 분할이면 (1차, 2차), 아니면 한 번에 (100,)."""
     first = config.first_ratio_pct
-    return [CzLeg(ratio=r, amount=int(config.total_krw * r / 100)) for r in (first, 100 - first)]
+    return (first, 100 - first) if config.split else (100.0,)
+
+
+def build_legs(config: CandleTradeConfig) -> List[CzLeg]:
+    return [CzLeg(ratio=r, amount=int(config.total_krw * r / 100)) for r in leg_ratios(config)]
 
 
 @dataclass
@@ -282,8 +287,7 @@ class CandleTradeEngine:
     def _new_legs(self, config: CandleTradeConfig) -> List[CzLeg]:
         if self.round_budget <= 0:
             return build_legs(config)
-        first = config.first_ratio_pct
-        return [CzLeg(ratio=r, amount=int(self.round_budget * r / 100)) for r in (first, 100 - first)]
+        return [CzLeg(ratio=r, amount=int(self.round_budget * r / 100)) for r in leg_ratios(config)]
 
     def rezone(self, low: float, high: float, budget: int) -> None:
         """새 구간(재진입). 대기 차수를 취소하고 보유는 이월, 새 구간에서 ``budget``원으로
@@ -354,7 +358,9 @@ class CandleTradeEngine:
             self.config = config
             self.legs = self._new_legs(config)
             return
-        if abs(config.first_ratio_pct - self.config.first_ratio_pct) > 1e-9:
+        if config.split != self.config.split:
+            raise ValueError("1차 매수 후에는 분할 매수 여부를 바꿀 수 없습니다.")
+        if config.split and abs(config.first_ratio_pct - self.config.first_ratio_pct) > 1e-9:
             raise ValueError("1차 매수 후에는 1차 비중을 바꿀 수 없습니다.")
         if self.kind == "candle" and abs(config.zone_margin_pct - self.config.zone_margin_pct) > 1e-9:
             raise ValueError("1차 매수 후에는 매입 구간을 바꿀 수 없습니다.")
@@ -469,9 +475,10 @@ class CandleTradeEngine:
         if self.phase == CzPhase.WATCHING:
             if lo <= price <= hi:
                 if await self._buy(0, price, today, buy_fn):
-                    self.phase = CzPhase.ACCUMULATING
+                    self.phase = CzPhase.ACCUMULATING if len(self.legs) > 1 else CzPhase.HOLDING
                     trigger, basis = self.add_plan()
-                    add = (f"2차 매수: 다음 거래일부터 구간 안 & ≤ {trigger:,.0f}({_BASIS[basis]})"
+                    add = ("한 번에 매수(분할 없음)" if len(self.legs) < 2
+                           else f"2차 매수: 다음 거래일부터 구간 안 & ≤ {trigger:,.0f}({_BASIS[basis]})"
                            if self.add_possible() else "2차 매수 없음(1차가에서 구간 하단까지 여유 부족)")
                     tp = (f"라인 {c.take_profit_line:,.0f} 이상" if c.take_profit_mode == "line"
                           else f"평단 +{c.take_profit_pct:g}%")
@@ -512,6 +519,9 @@ class CandleTradeEngine:
             # 새 구간 회차의 1차: 새 구간에 들어오면 바로(기한 없음)
             if self.legs[0].status == "waiting" and lo <= price <= hi:
                 if await self._buy(0, price, today, buy_fn):
+                    if len(self.legs) < 2:
+                        self.phase = CzPhase.HOLDING
+                        return
                     trigger, basis = self.add_plan()
                     self.log(f"{self.round_no}회차 2차 매수: " + (
                         f"다음 거래일부터 구간 안 & ≤ {trigger:,.0f}({_BASIS[basis]})" if self.add_possible()

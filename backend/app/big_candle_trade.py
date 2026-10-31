@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING, Dict, Optional
 from .market_clock import now_kst
 from .models import CandleTradeConfig, Tick
 from .providers.base import DAY_INTERVAL
-from .strategy.big_candle_trade import CandleTradeEngine, CzPhase
+from .strategy.big_candle_trade import CandleTradeEngine, CzPhase, leg_ratios
 
 if TYPE_CHECKING:
     from .hub import Hub
@@ -282,7 +282,7 @@ class CandleTradeManager:
         if orderable <= 0:
             return ""
         committed = self.committed_krw(exclude=it.code)
-        first = int(budget * it.engine.config.first_ratio_pct / 100)
+        first = int(budget * leg_ratios(it.engine.config)[0] / 100)
         if orderable < committed + first:
             raise ValueError(
                 f"주문가능금액이 부족합니다. 가능 {orderable:,}원, "
