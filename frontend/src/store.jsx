@@ -278,6 +278,7 @@ export function StoreProvider({ children }) {
       return api.startCandle(acc, code)
     },
     stopCandle: (acc, code) => api.stopCandle(acc, code),
+    redoCandle: (acc, code) => api.redoCandle(acc, code),
     handoffCandle: (acc, code) => {
       if (!window.confirm(`${code} 자동 매매를 멈추고 수동 매매로 옮길까요?
 이후 자동 매수·추가매수·익절·트레일링·손절은 하지 않으며, 되돌릴 수 없습니다.`)) {

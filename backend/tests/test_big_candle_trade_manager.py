@@ -457,3 +457,36 @@ async def test_zone_and_candle_share_one_stock_rule(hub):
         add(hub)
     with pytest.raises(ValueError):
         hub.add_stock(CODE)
+
+
+async def test_redo_carries_zone_and_config_into_new_draft(hub):
+    """[다시 설정]: 끝난 구간 매매를 같은 설정·구간으로 새 '설정 중' 매매로 올린다."""
+    hub.candle_trades.add_zone(CODE, "테스트", {"low": 10_200, "high": 11_800})
+    it = hub.candle_trades.items[CODE]
+    cfg = it.engine.config.model_copy(update={"total_krw": 2_000_000, "trailing_pct": 3.0})
+    hub.candle_trades.set_config(CODE, cfg)
+    with pytest.raises(ValueError, match="끝난 매매"):
+        await hub.candle_trades.redo(CODE)          # 설정 중
+    await hub.candle_trades.start(CODE)
+    with pytest.raises(ValueError, match="끝난 매매"):
+        await hub.candle_trades.redo(CODE)          # 감시 중
+    it.engine.phase = CzPhase.DONE
+    it.engine.exit_reason = "트레일링 스톱"
+    item = await hub.candle_trades.redo(CODE)
+    new = hub.candle_trades.items[CODE].engine
+    assert item["phase"] == "DRAFT" and item["kind"] == "zone"
+    assert item["zone"] == {"low": pytest.approx(10_200), "high": pytest.approx(11_800)}
+    assert new.config.total_krw == 2_000_000 and new.config.trailing_pct == 3.0
+    assert new.config is not it.engine.config
+    assert new.round_no == 1 and new.exit_reason == "" and not new.bought
+    await hub.candle_trades.start(CODE)             # 바로 감시 시작 가능
+    assert hub.candle_trades.items[CODE].engine.phase == CzPhase.WATCHING
+
+
+async def test_redo_candle_keeps_base(hub):
+    add(hub)
+    hub.candle_trades.items[CODE].engine.phase = CzPhase.DONE
+    item = await hub.candle_trades.redo(CODE)
+    assert item["phase"] == "DRAFT" and item["kind"] == "candle"
+    assert item["zone"] == {"low": pytest.approx(10_200), "high": pytest.approx(11_800)}
+    assert hub.candle_trades.items[CODE].engine.base_date == BASE["date"]

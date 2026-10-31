@@ -351,6 +351,31 @@ class CandleTradeManager:
         self.broadcast(code)
         return self.payload(code)
 
+    async def redo(self, code: str) -> dict:
+        """[다시 설정]: 끝난 매매(종료·수동 전환)를 같은 설정으로 새로 등록(설정 중).
+        구간 매매는 마지막 매입 구간(새 구간 회차였다면 그 구간)을, 대금 양봉은 기준 캔들을 이어받는다.
+        회차·이월·차수 기록은 넘기지 않는다 — 감시 시작은 사람이 확인하고 누른다."""
+        it = self._get(code)
+        old = it.engine
+        if old.phase == CzPhase.DRAFT or old.phase.active:
+            raise ValueError("끝난 매매만 다시 설정할 수 있습니다.")
+        self._check_free(code)
+        await self._stop_loop(it)
+        config = old.config.model_copy(deep=True)
+        eng = CandleTradeEngine(code, config, kind=old.kind, log=self._engine_log(code))
+        if old.kind == "zone":
+            z = old.zone()
+            if z:
+                eng.zone_low, eng.zone_high = z
+            what = f"매입 구간 {z[0]:,.0f} ~ {z[1]:,.0f}" if z else "매입 구간 없음"
+        else:
+            eng.set_base(old.base_date, old.base_open, old.base_close, confirmed=old.base_confirmed)
+            what = f"기준 캔들 {old.base_date}"
+        self._insert(code, it.name, eng)
+        self._log(code, f"다시 설정(설정 중) — 이전 매매의 설정·{what} 이어받음")
+        self.broadcast(code)
+        return self.payload(code)
+
     def set_zone(self, code: str, low: float, high: float) -> dict:
         it = self._get(code)
         if not (it.engine.phase == CzPhase.DRAFT or it.engine.phase.active):

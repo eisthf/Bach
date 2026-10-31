@@ -108,5 +108,6 @@ export const api = {
   startCandle: (a, code) => req(`/api/${enc(a)}/candle-trades/${enc(code)}/start`, { method: 'POST' }),
   stopCandle: (a, code) => req(`/api/${enc(a)}/candle-trades/${enc(code)}/stop`, { method: 'POST' }),
   handoffCandle: (a, code) => req(`/api/${enc(a)}/candle-trades/${enc(code)}/handoff`, { method: 'POST' }),
+  redoCandle: (a, code) => req(`/api/${enc(a)}/candle-trades/${enc(code)}/redo`, { method: 'POST' }),
   removeCandle: (a, code) => req(`/api/${enc(a)}/candle-trades/${enc(code)}`, { method: 'DELETE' }),
 }

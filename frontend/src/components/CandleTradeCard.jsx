@@ -575,6 +575,13 @@ export default function CandleTradeCard({ account, item }) {
                 수동 전환
               </button>
             )}
+            {!active && !draft && (
+              <button disabled={busy}
+                title={`이전 매매의 설정과 ${isZone ? '매입 구간' : '기준 캔들'}을 그대로 가져와 새로 '설정 중'으로 올립니다. 감시는 [감시 시작]을 눌러야 시작합니다.`}
+                onClick={() => run(() => actions.redoCandle(account.id, item.code), '같은 설정으로 다시 올렸습니다 — 확인 후 [감시 시작]을 누르세요')}>
+                다시 설정
+              </button>
+            )}
             {!active && (
               <button className="ghost" disabled={busy}
                 onClick={() => run(() => actions.removeCandle(account.id, item.code))}>

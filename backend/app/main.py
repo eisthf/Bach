@@ -395,6 +395,12 @@ async def hand_off_candle_trade(account: str, code: str):
     return await _candle_acall(_candle(account).hand_off, code)
 
 
+@app.post("/api/{account}/candle-trades/{code}/redo")
+async def redo_candle_trade(account: str, code: str):
+    """[다시 설정]: 끝난 매매를 같은 설정·구간(대금 양봉은 기준 캔들)으로 새로 등록(설정 중)."""
+    return await _candle_acall(_candle(account).redo, code)
+
+
 @app.delete("/api/{account}/candle-trades/{code}")
 async def remove_candle_trade(account: str, code: str):
     await _candle_acall(_candle(account).remove, code)
