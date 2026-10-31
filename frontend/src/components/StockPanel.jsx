@@ -7,6 +7,7 @@ import { useChartInterval } from '../chartPrefs'
 import StateButton from './StateButton'
 import ManualTradePanel from './ManualTradePanel'
 import AutoConfigForm from './AutoConfigForm'
+import UlcPlan, { ulcLines } from './UlcPlan'
 
 // [상한가 매매] 종목 1개 카드: 차트 + 시세 + 상태버튼·수동 전환 + 계좌 보유(읽기 전용) + 자동매매 설정.
 // 수동 매수·매도는 없다 — [수동 전환]하면 종목이 수동 매매 화면으로 옮겨간다.
@@ -17,6 +18,8 @@ export default function StockPanel({ account, stock }) {
   const [interval, setInterval] = useChartInterval(prefKey) // 기본 일봉
   const tick = (ticks[account] || {})[stock.code]
   const isCompact = (compact[account] || new Set()).has(stock.code)
+  // 자동매매 중이면 시나리오·분할 계획·청산 기준을 카드와 차트(가격선)에 보인다.
+  const lines = ulcLines(stock.engine)
 
   const toolbar = (
     <div className="chart-toolbar">
@@ -53,12 +56,13 @@ export default function StockPanel({ account, stock }) {
 
       {stock.recovery_notice && <div className="recovery-notice" role="alert">{stock.recovery_notice}</div>}
       {stock.position_verified === false && <div className="recovery-notice" role="alert">잔고 조회 실패 — 표시 수량을 신뢰하지 말고 계좌에서 확인하세요.</div>}
+      <UlcPlan engine={stock.engine} config={stock.config} />
 
       {isCompact ? (
         <div className="compact-body">
           <div className="compact-chart">
             {toolbar}
-            <Chart prefKey={prefKey} account={account} code={stock.code} interval={interval} tick={tick} height={260} />
+            <Chart prefKey={prefKey} account={account} code={stock.code} interval={interval} tick={tick} height={260} priceLines={lines} />
           </div>
           <ManualTradePanel account={account} code={stock.code} position={stock.position}
             verified={stock.position_verified !== false} tick={tick} readOnly />
@@ -66,7 +70,7 @@ export default function StockPanel({ account, stock }) {
       ) : (
         <>
           {toolbar}
-          <Chart prefKey={prefKey} account={account} code={stock.code} interval={interval} tick={tick} />
+          <Chart prefKey={prefKey} account={account} code={stock.code} interval={interval} tick={tick} priceLines={lines} />
           <div className="panels">
             <ManualTradePanel account={account} code={stock.code} position={stock.position}
               verified={stock.position_verified !== false} tick={tick} readOnly />

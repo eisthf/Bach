@@ -811,3 +811,15 @@ input:focus { outline: none; border-color: var(--accent); }
 .pager button.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
 .pager button:disabled { opacity: 0.4; cursor: default; }
 .pager .muted { margin: 0 4px; }
+
+/* [상한가 매매] 시나리오·분할 계획 */
+.ulc-plan { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: #fafbfe; font-size: 13px; }
+.ulc-plan-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
+.ulc-sc { display: inline-block; padding: 1px 8px; border-radius: 999px; font-weight: 800; color: #fff; background: #6a1b9a; }
+.ulc-sc.sc1 { background: #2e7d32; }
+.ulc-sc.sc2 { background: #ef6c00; }
+.ulc-sc.sc3 { background: #c62828; }
+.ulc-sc.none { background: #9e9e9e; }
+.ulc-phase { font-weight: 700; }
+.ulc-leg { padding: 1px 8px; border: 1px dashed #b39ddb; border-radius: 6px; }
+.ulc-leg.filled { border-style: solid; border-color: #6a1b9a; background: #f3e5f5; font-weight: 600; }

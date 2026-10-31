@@ -59,6 +59,12 @@ class Stock:
     resume_pending: bool = False
 
 
+def _engine_signature(eng) -> tuple:
+    """화면에 보이는 엔진 요약이 바뀌었는지 가리는 값(트레일링 고점처럼 틱마다 바뀌는 값은 뺀다)."""
+    return (eng.phase, eng.scenario, eng.z, eng.shares, round(eng.avg_cost, 2),
+            tuple((leg.target, leg.amount, leg.filled) for leg in eng.legs))
+
+
 class Hub:
     """단일 계좌의 종목/매매를 담당. 시계와 WS 버스는 manager에서 공유."""
 
@@ -496,6 +502,7 @@ class Hub:
             position=pos,
             position_verified=verified,
             recovery_notice=stock.recovery_notice,
+            engine=stock.engine.view() if stock.engine is not None else None,
         )
 
     def broadcast_status(self, code: str) -> None:
@@ -691,6 +698,7 @@ class Hub:
                     tick_time=tick.time, scenario=eng.scenario,
                 )
         before_shares = eng.shares
+        before_view = _engine_signature(eng)
 
         def ulc_ctx() -> dict:
             return {"scenario": eng.scenario, "x": eng.x, "z": eng.z, "exit": exit_settings(eng.config)}
@@ -773,6 +781,9 @@ class Hub:
                                  position_verified=True)
             self._log(f"[{stock.code}] 자동매매 청산 완료(보유수량 0) → 대기")
             changed = True
+        if not changed and stock.engine is eng and _engine_signature(eng) != before_view:
+            # 수량은 그대로인데 시나리오·계획·단계가 바뀌었다(시가 보정, SKIP, 트레일링 시작 등) — 화면만 갱신.
+            await self._refresh_status(stock.code)
         if changed:
             self._persist()
             # 주문이 나갔으면 포지션 캐시가 무효화된 상태다. broadcast_status는

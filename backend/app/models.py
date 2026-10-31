@@ -142,6 +142,8 @@ class StockStatus(BaseModel):
     position: Position
     position_verified: bool = True
     recovery_notice: str = ""
+    # [상한가 매매] 자동매매 엔진 요약(UlcEngine.view) — 시나리오·분할 계획·청산 기준. 엔진이 없으면 None.
+    engine: Optional[dict] = None
 
 
 class MarketStatus(BaseModel):

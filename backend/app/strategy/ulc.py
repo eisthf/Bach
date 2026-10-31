@@ -453,6 +453,25 @@ class UlcEngine:
         return (self.phase in (Phase.ACCUMULATING, Phase.HOLDING, Phase.TRAILING)
                 and self.shares > 0)
 
+    def view(self) -> dict:
+        """화면용 요약: 시나리오·X·Z·분할 계획(차수별 목표가·금액·체결)·평단·청산 기준.
+        트레일링 고점은 틱마다 바뀌어 넣지 않는다(손절·보장 익절 가격만)."""
+        c = self.config
+        held = self.shares > 0 and self.avg_cost > 0
+        return {
+            "scenario": self.scenario, "x": self.x, "z": self.z, "phase": self.phase.value,
+            "legs": [{"no": i, "target": leg.target, "amount": leg.amount, "filled": leg.filled}
+                     for i, leg in enumerate(self.legs, 1)],
+            "shares": self.shares, "avg_cost": self.avg_cost if held else 0.0,
+            "take_profit": self.avg_cost * (1 + c.ulc_tp) if held and self.phase != Phase.TRAILING else None,
+            "take_profit_half": bool(c.ulc_trailing),
+            "stop": self.avg_cost * (1 - c.ulc_sl) if held else None,
+            "stop_active": held and self.all_filled,
+            "guarantee": self.avg_cost * (1 + c.ulc_g) if held and self.phase == Phase.TRAILING else None,
+            "trailing_pct": c.ulc_t,
+            "limit_up": self.limit_up or None,
+        }
+
     def to_dict(self) -> dict:
         return {
             "x": self.x, "z": self.z, "phase": self.phase.value, "scenario": self.scenario,

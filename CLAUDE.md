@@ -82,6 +82,7 @@ cd backend && uv run python backtest.py 079650:20260903 --state real     --varia
 | `router.js` | 최소 해시 라우터(`#/`, `#/upper-limit`, `#/big-candle`, `#/candle-trade`, `#/zone-trade`, `#/bonus-trade`, `#/manual-trade`, `#/trade-history`). react-router 의존 없음 |
 | `App.jsx` | 라우팅 + 공통 헤더, 계좌 컬럼 레이아웃, 계좌 필터 세그먼트 |
 | `components/ManualExits.jsx` | 수동 매매 자동 손절·익절 폼 + 차트 선(평단·손절·익절). 카드가 초안을 들고, 선을 끌면 가격 라인 방식으로 바뀜(저장은 폼). 두 점 변화율 [측정]·높이 [기본/1.5배]는 Chart 자체 기능(모든 차트) |
+| `components/UlcPlan.jsx` | [상한가 매매] 카드의 시나리오(SC1~3)·분할 매수 계획·평단·익절/손절 기준 + 차트 가격선. 서버 `UlcEngine.view()`가 `StockStatus.engine`으로 온다(틱마다 바뀌는 트레일링 고점은 제외) |
 | `components/PageNav.jsx` | 페이지 탭을 두 묶음으로 — 조회(상한가 종목·대금 양봉·매매 기록) / 매매(상한가 매매·대금 양봉 매매·구간 매매·수동 매매) |
 | `pages/` | UpperLimitPage — 상한가 종목 조회/표, BigCandlePage — 거래대금 상위 양봉 조회/표, CandleTradePage — 대금 양봉 매매, ZoneTradePage — 구간 매매(둘 다 `components/CandleTradeCard`), BonusTradePage — 무상증자 매매(일봉+1시간봉), ManualTradePage — 수동 매매(origin `bonus` 제외), TradeHistoryPage — 매매 기록(기간별 체결 종목 목록 `GET /api/{account}/traded-stocks`, 기본 지난 두 달 → 일봉 차트에 체결 표시) |
 | `components/` | Chart, PriceTicker, StateButton, ManualTradePanel, AutoConfigForm, IntervalSelector, StockInput, StockPanel, MarketControls, AccountSummary, LogPanel, PageNav |
