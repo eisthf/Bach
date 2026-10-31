@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Bach 탭 아이콘: 오선지 위로 오르는 빨간 선 -->
+  <rect x="0.5" y="0.5" width="31" height="31" rx="7" fill="#fff" stroke="#d0d7e2"/>
+  <g stroke="#b9c2d0" stroke-width="1">
+    <line x1="4" y1="9" x2="28" y2="9"/>
+    <line x1="4" y1="14" x2="28" y2="14"/>
+    <line x1="4" y1="19" x2="28" y2="19"/>
+    <line x1="4" y1="24" x2="28" y2="24"/>
+  </g>
+  <polyline points="4,25 11,20 16,22 23,11 28,7" fill="none" stroke="#d32f2f" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/>
+  <circle cx="28" cy="7" r="2.6" fill="#d32f2f"/>
+</svg>
