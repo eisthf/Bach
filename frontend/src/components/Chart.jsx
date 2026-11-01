@@ -4,8 +4,9 @@
 // - 엔벨로프(중심 SMA20, ±10%) 상·하단선: [엔벨로프] 단추로 켜고 끔(차트별로 브라우저에 기억).
 // - 거래량: 하단 막대. 상승봉 적색 / 하락봉 청색.
 // - 크로스헤어: 내장. 마우스 가격 수평선 + 가격 라벨(손절선 가늠용).
+// - [봉 정보] 단추: 켜면 마우스를 올린 봉의 시·고·저·종가·거래량·이평을 커서 옆 상자로(모든 차트 공통 기억).
 // - 실시간 틱으로 마지막 봉 갱신. 봉 경계를 넘으면 서버에서 재조회(아래 참고).
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createChart, CrosshairMode } from 'lightweight-charts'
 import { api } from '../api'
 import { sma, lastSma, MA_LINES, ENVELOPE, envelope } from '../indicators'
@@ -24,6 +25,36 @@ const TALL_SCALE = 1.5
 const TALL_KEY = 'bach.chartTall'
 const readTall = () => { try { return localStorage.getItem(TALL_KEY) === '1' } catch { return false } }
 const writeTall = (v) => { try { localStorage.setItem(TALL_KEY, v ? '1' : '0') } catch { /* 저장 불가면 이번 화면만 */ } }
+
+// [봉 정보]: 켜면 마우스를 올린 봉의 시·고·저·종가(전일 종가 대비), 거래량(앞 봉 대비),
+// 이평(종가 대비)을 커서 옆 상자로 보인다. 높이 배율처럼 모든 차트 공통으로 기억한다.
+const INFO_KEY = 'bach.chartBarInfo'
+const readInfo = () => { try { return localStorage.getItem(INFO_KEY) === '1' } catch { return false } }
+const writeInfo = (v) => { try { localStorage.setItem(INFO_KEY, v ? '1' : '0') } catch { /* 저장 불가면 이번 화면만 */ } }
+const DAY_SEC = 86400
+const REGULAR_CLOSE_SEC = 15 * 3600 + 30 * 60
+// 분봉의 전일 종가: 받은 봉 안의 앞 거래일 정규장 마지막 봉 종가. 없으면(당일 봉만 받은 차트·첫 거래일)
+// 일봉 종가 — 키움 일봉 종가는 시간외 체결이 섞일 수 있다(kiwoom_api.py 함정 8).
+const prevCloseOf = (bars, i, interval, dailyCloses) => {
+  if (interval === 1440) return i > 0 ? bars[i - 1].close : null
+  const day = Math.floor(bars[i].time / DAY_SEC)
+  for (let k = i - 1; k >= 0; k--) {
+    const t = bars[k].time
+    if (Math.floor(t / DAY_SEC) < day && t % DAY_SEC < REGULAR_CLOSE_SEC) return bars[k].close
+  }
+  let close = null
+  for (const d of dailyCloses || []) {
+    if (Math.floor(d.time / DAY_SEC) >= day) break
+    close = d.close
+  }
+  return close
+}
+const smaAt = (bars, i, n) => {
+  if (i < n - 1) return null
+  let sum = 0
+  for (let k = i - n + 1; k <= i; k++) sum += bars[k].close
+  return sum / n
+}
 
 const volumePoint = (bar) => ({
   time: bar.time,
@@ -96,6 +127,22 @@ export default function Chart({ prefKey = null, account, code, interval, tick, h
   const [displayVolume, setDisplayVolume] = useState(null)
   const [tall, setTall] = useState(readTall)
   const chooseTall = (v) => { setTall(v); writeTall(v) }
+  const [infoOn, setInfoOn] = useState(readInfo)
+  const infoOnRef = useRef(infoOn)
+  infoOnRef.current = infoOn
+  const [hoverBar, setHoverBar] = useState(null)   // [봉 정보] 상자: {time, x, y}
+  const toggleInfo = () => { const v = !infoOn; setInfoOn(v); writeInfo(v); if (!v) setHoverBar(null) }
+  // 분봉 전일 종가의 대체값(일봉 종가). [봉 정보]를 켠 분봉 차트만 받는다.
+  const [dailyCloses, setDailyCloses] = useState(null)
+  useEffect(() => {
+    setDailyCloses(null)
+    if (!infoOn || interval === 1440) return undefined
+    let cancelled = false
+    api.getBars(account, code, 1440).then((data) => {
+      if (!cancelled) setDailyCloses((data.bars || []).map((b) => ({ time: b.time, close: b.close })))
+    }).catch(() => { /* 없으면 앞 거래일 분봉이 있을 때만 % 표시 */ })
+    return () => { cancelled = true }
+  }, [account, code, interval, infoOn])
   const [envOn, setEnvOn] = useChartEnvelope(prefKey || `${account}:${code}`)
   const envOnRef = useRef(envOn)
   envOnRef.current = envOn
@@ -212,7 +259,7 @@ export default function Chart({ prefKey = null, account, code, interval, tick, h
       measureSeriesRef.current = null
     }
   }
-  useEffect(() => { clearMeasure() }, [interval, code]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { clearMeasure(); setHoverBar(null) }, [interval, code]) // eslint-disable-line react-hooks/exhaustive-deps
   // 포인터 위치의 (봉 시각, 가격). 마지막 봉 오른쪽 빈 곳이면 가장 가까운 봉으로.
   const pointAt = (param) => {
     if (!param.point || !candleRef.current) return null
@@ -234,8 +281,19 @@ export default function Chart({ prefKey = null, account, code, interval, tick, h
       const pt = pointAt(param)
       setHoverPt((prev) => (prev && pt && prev.x === pt.x && prev.y === pt.y && prev.time === pt.time) || prev === pt ? prev : pt)
     }
+    // [봉 정보] 상자 위치. 측정 중·선 끄는 중에는 숨긴다.
+    const onInfo = (param) => {
+      const hide = !infoOnRef.current || measureOnRef.current || !param.point || param.time == null
+        || containerRef.current?.classList.contains('dragging-line')
+      const next = hide ? null : { time: param.time, x: param.point.x, y: param.point.y }
+      setHoverBar((prev) => (prev === next || (prev && next && prev.time === next.time && prev.x === next.x && prev.y === next.y) ? prev : next))
+    }
     chart.subscribeCrosshairMove(onMove)
-    return () => chart.unsubscribeCrosshairMove(onMove)
+    chart.subscribeCrosshairMove(onInfo)
+    return () => {
+      chart.unsubscribeCrosshairMove(onMove)
+      chart.unsubscribeCrosshairMove(onInfo)
+    }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
   const measurePair = measurePts.length === 2 ? measurePts
     : measurePts.length === 1 && hoverPt ? [measurePts[0], hoverPt] : null
@@ -576,6 +634,40 @@ export default function Chart({ prefKey = null, account, code, interval, tick, h
   const floatLabel = previewing && hoverPt && measured
     ? { x: hoverPt.x, y: hoverPt.y, text: `${measured.pctText}${measured.bars ? ` · ${measured.bars}` : ''}`, up: measured.up }
     : null
+  // [봉 정보] 상자 내용. 마지막 봉이면 틱마다 다시 그려져 값이 따라간다.
+  let barInfo = null
+  if (infoOn && hoverBar && !measureOn) {
+    const bars = barsRef.current
+    const i = bars.findIndex((b) => b.time === hoverBar.time)
+    if (i >= 0) {
+      const b = bars[i]
+      const d = new Date(b.time * 1000).toISOString()  // KST 벽시계를 UTC로 둔 epoch
+      const pc = prevCloseOf(bars, i, interval, dailyCloses)
+      const pv = i > 0 ? Number(bars[i - 1].volume || 0) : 0
+      const v = Number(b.volume || 0)
+      barInfo = {
+        x: hoverBar.x, y: hoverBar.y, pc,
+        head: interval === 1440 ? d.slice(0, 10) : `${d.slice(0, 10)} ${d.slice(11, 16)}`,
+        ohlc: [['시가', b.open], ['고가', b.high], ['저가', b.low], ['종가', b.close]],
+        volume: v, volumeChg: pv > 0 ? v / pv - 1 : null,
+        ma: MA_LINES.map((m) => ({ title: m.title, period: m.period, value: smaAt(bars, i, m.period) })).filter((m) => m.value != null),
+        close: b.close,
+      }
+    }
+  }
+  const pctOf = (x, base) => {
+    if (!(base > 0)) return null
+    const r = (x / base - 1) * 100
+    return <span className={r > 0 ? 'up' : r < 0 ? 'down' : ''}>({r > 0 ? '+' : ''}{r.toFixed(2)}%)</span>
+  }
+  const boxW = containerRef.current?.clientWidth || 0
+  // 상자가 차트 아래로 넘치면 차트 안으로 끌어올린다(높이는 그려 봐야 안다).
+  const barInfoRef = useRef(null)
+  useLayoutEffect(() => {
+    const box = barInfoRef.current
+    const h = containerRef.current?.clientHeight || 0
+    if (box && h && box.offsetTop + box.offsetHeight > h) box.style.top = `${Math.max(0, h - box.offsetHeight)}px`
+  })
 
   return (
     <div className="chart-container">
@@ -585,8 +677,13 @@ export default function Chart({ prefKey = null, account, code, interval, tick, h
           title={`엔벨로프: 중심 ${ENVELOPE.period}봉 이동평균, 폭 ±${ENVELOPE.pct}%`}>
           엔벨로프{envOn ? ' 끄기' : ''}
         </button>
+        <button type="button" className={`measure-btn${infoOn ? ' on' : ''}`} aria-pressed={infoOn}
+          onClick={toggleInfo}
+          title="봉에 마우스를 올리면 시·고·저·종가(전일 종가 대비), 거래량, 이동평균을 보여 줍니다">
+          봉 정보{infoOn ? ' 끄기' : ''}
+        </button>
         <button type="button" className={`measure-btn${measureOn ? ' on' : ''}`} aria-pressed={measureOn}
-          onClick={() => { setMeasureOn((v) => !v); clearMeasure() }}
+          onClick={() => { setMeasureOn((v) => !v); clearMeasure(); setHoverBar(null) }}
           title="두 점을 눌러 변화율을 잽니다">
           📏 측정{measureOn ? ' 끄기' : ''}
         </button>
@@ -630,6 +727,34 @@ export default function Chart({ prefKey = null, account, code, interval, tick, h
             ? { left: floatLabel.x - 14, top: Math.max(0, floatLabel.y - 30), transform: 'translateX(-100%)' }
             : { left: floatLabel.x + 14, top: Math.max(0, floatLabel.y - 30) }}>
           {floatLabel.text}
+        </div>
+      )}
+      {barInfo && (
+        <div className="bar-info"
+          ref={barInfoRef}
+          style={{
+            left: barInfo.x + 16, top: barInfo.y + 16,
+            transform: barInfo.x > boxW * 0.6 ? 'translateX(calc(-100% - 32px))' : undefined,
+          }}>
+          <div className="bar-info-head">{barInfo.head}</div>
+          <table>
+            <tbody>
+              {barInfo.ohlc.map(([k, p]) => (
+                <tr key={k}><td>{k}</td><td>{priceLabel(p)} {pctOf(p, barInfo.pc)}</td></tr>
+              ))}
+              <tr>
+                <td>거래량</td>
+                <td>{barInfo.volume.toLocaleString('ko-KR')}{barInfo.volumeChg != null && (
+                  <span className="muted"> (앞 봉 {barInfo.volumeChg >= 0 ? '+' : ''}{(barInfo.volumeChg * 100).toFixed(1)}%)</span>)}</td>
+              </tr>
+              {barInfo.ma.map((m, k) => (
+                <tr key={m.period} className={k === 0 ? 'sep' : ''}>
+                  <td>{m.title}</td><td>{priceLabel(m.value)} {pctOf(m.value, barInfo.close)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {!(barInfo.pc > 0) && <div className="muted">전일 종가 없음 — % 생략</div>}
         </div>
       )}
     </div>

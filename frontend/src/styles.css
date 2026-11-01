@@ -305,6 +305,20 @@ input:focus { outline: none; border-color: var(--accent); }
 }
 .measure-float.up { color: #d32f2f; }
 .measure-float.down { color: #1565c0; }
+.bar-info {
+  position: absolute; z-index: 4; pointer-events: none; white-space: nowrap;
+  background: rgba(255, 255, 255, 0.96); border: 1px solid var(--border); border-radius: 8px;
+  padding: 6px 10px; font-size: 12px; line-height: 1.5; font-variant-numeric: tabular-nums;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.14);
+}
+.bar-info-head { font-weight: 700; margin-bottom: 2px; }
+.bar-info table { border-collapse: collapse; }
+.bar-info td { padding: 0 0 0 10px; text-align: right; }
+.bar-info td:first-child { padding: 0; text-align: left; color: var(--muted); }
+.bar-info tr.sep td { padding-top: 4px; }
+.bar-info .up { color: #d32f2f; }
+.bar-info .down { color: #1565c0; }
+.bar-info .muted { color: var(--muted); }
 .measure-result .link-btn { border: none; background: none; color: var(--accent); cursor: pointer; font-size: 12px; padding: 0; }
 .origin-badge {
   font-size: 11px; font-weight: 600; color: var(--muted); border: 1px solid var(--border);
