@@ -40,6 +40,33 @@ export function tradeMarkers(bars, trades, interval) {
   }))
 }
 
+// 일정 표시(무상증자 공시·권리락 안내·권리락일 등). events: [{at, text, color, position, shape}]
+// at = 'YYYY-MM-DD'(그날 첫 봉) 또는 'YYYY-MM-DDTHH:MM'(KST, 그 시각이 든 봉 — 일봉이면 그날 봉).
+// 봉 시각은 KST 벽시계를 UTC로 둔 epoch라 문자열을 'Z'로 읽으면 같은 축이 된다. 봉이 없는 날은 건너뛴다.
+export function eventMarkers(bars, events, interval) {
+  const out = []
+  for (const e of events || []) {
+    if (!e?.at || bars.length === 0) continue
+    const day = e.at.slice(0, 10)
+    let bar = null
+    if (interval === 1440 || e.at.length <= 10) {
+      bar = bars.find((b) => new Date(b.time * 1000).toISOString().slice(0, 10) === day)
+    } else {
+      const t = Date.parse(`${e.at.slice(0, 16)}:00Z`) / 1000
+      for (let i = bars.length - 1; i >= 0; i--) {
+        if (bars[i].time <= t) {
+          if (t < bars[i].time + interval * 60) bar = bars[i]
+          break
+        }
+      }
+    }
+    if (!bar) continue
+    out.push({ time: bar.time, position: e.position || 'aboveBar', shape: e.shape || 'arrowDown',
+      color: e.color, text: e.text, size: e.size || 1 })
+  }
+  return out
+}
+
 // 스크리너 기준봉(조회일) 표시. 봉 시각은 KST 벽시계를 UTC로 둔 epoch라 ISO 날짜가 곧 KST 날짜다.
 export const ANCHOR_COLOR = '#7b1fa2'
 

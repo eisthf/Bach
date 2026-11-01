@@ -1,16 +1,18 @@
 // 무상증자 매매 페이지.
 // 서버가 KIND 공시를 감시하다가 무상증자 결정 공시가 나오면, 자동 매수를 켠 계좌에서 그 종목을
-// 수동 매매 목록(origin "bonus")에 손절·익절을 정해 올리고 매수 작업을 돌린다(backend/app/bonus_issue.py).
+// 수동 매매 목록(origin "bonus")에 카드로 올리고 매수 작업을 돌린다(backend/app/bonus_issue.py).
+// 사지 않는 공시(유무상 제외·이미 재개·시가 상한 초과 등)도 '수동' 카드로 올린다.
 //   계좌별 설정: 자동 매수 켜기(기본 꺼짐) · 금액(기본 100만 원) · 주문 방식(기본 예상 체결가) ·
-//                익절 +25% · 손절 −10% · 재개가 건너뛰기 · 유무상 포함
-//   종목 카드: 일봉 + 1시간봉. 손절·익절은 종목별로 평단 대비 % 또는 차트에 그은 선(끌어서 옮김)으로 바꾼다.
-//   보유·평단은 계좌 잔고 기준이고 청산 규칙은 수동 매매와 같다(조건 충족 시 전량 시장가, 그 뒤 둘 다 해제).
+//                익절 +20%(전량 / 절반 후 트레일링) · 손절 −15% · 장전 공시 시가 상한 +10% · 재개가 건너뛰기 · 유무상 포함
+//   종목 카드: 상태(매수 대기 / 자동 감시 / 수동 / 갭상승 대기), 권리락 일정, 일봉(공시·권리락 표시) + 1시간봉.
+//     [수동으로]는 언제든 — 수동에서 [갭상승 모드]를 켤 수 있다. 화면을 떠나는 건 [수동 매매 화면으로]·
+//     [구간 매매로](보유 0)·✕(보유 0) 세 가지뿐이다. 손절·익절은 평단 대비 % 또는 차트에 그은 선으로 바꾼다.
 import React, { useEffect, useMemo, useState } from 'react'
 import { useStore } from '../store'
 import Chart from '../components/Chart'
 import PriceTicker from '../components/PriceTicker'
 import ManualTradePanel from '../components/ManualTradePanel'
-import ManualExits, { useExitDraft, useExitLines } from '../components/ManualExits'
+import ManualExits, { ruleBody, useExitDraft, useExitLines } from '../components/ManualExits'
 import { roundToTick } from '../candleZone'
 import { useHiddenCards } from '../components/TradeChipBar'
 import AccountViewFilter, { useAccountView } from '../components/AccountViewFilter'
@@ -35,6 +37,21 @@ const JOB_STATUS = {
   waiting: '매수 대기', ordering: '주문 중', sent: '주문 전송', skipped: '건너뜀',
   failed: '실패', cancelled: '취소',
 }
+const EX_COLOR = '#7b1fa2'
+const DISCLOSE_COLOR = '#ef6c00'
+const todayIso = () => {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+const dayDiff = (a, b) => Math.round((Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / 86400000)
+
+// 카드 상태. 매수 대기 > 갭상승 대기 > 자동 감시(손절·익절 켜짐) > 수동.
+function cardMode(item, job) {
+  if (job && ['waiting', 'ordering'].includes(job.status)) return { key: 'waiting', label: '매수 대기' }
+  if (job?.gap) return { key: 'gap', label: '갭상승 대기' }
+  if (item.exits?.stop?.enabled || item.exits?.take_profit?.enabled) return { key: 'auto', label: '자동 감시' }
+  return { key: 'manual', label: '수동' }
+}
 
 export default function BonusTradePage() {
   const { accounts, manualTrades, bonus } = useStore()
@@ -58,8 +75,8 @@ export default function BonusTradePage() {
         <strong>무상증자 매매</strong>
         <span className="muted">
           KIND 공시를 감시하다가 <b>무상증자 결정</b> 공시가 나오면, 자동 매수를 켠 계좌에서 그 종목을 삽니다.
-          장중 공시는 보통 매매정지 후 약 40분 뒤 재개 단일가에서 첫 체결이 납니다. 산 종목은 아래 카드에서
-          손절·익절을 평단 대비 % 또는 차트의 선으로 바꿀 수 있습니다.
+          장중 공시는 매매정지 후 약 40분 뒤 재개 단일가에서 사고, 장전·장후 공시는 시가가 기준가 대비 상한(기본 +10%)
+          이하일 때만 삽니다. 사지 않은 공시도 '수동' 카드로 남습니다 — 카드는 권리락 뒤 지켜보다 사람이 지웁니다.
         </span>
       </div>
       <WatchStatus demo={demo} />
@@ -223,12 +240,28 @@ function BonusSettingsForm({ account, state }) {
           <input type="number" min="0.1" step="0.5" value={draft.take_profit_pct}
             onChange={(e) => set({ take_profit_pct: e.target.value })} />
         </label>
+        <label className="checkfield" title="익절 기준에서 절반을 팔고, 나머지는 고점 대비 −t% 또는 익절 기준가 되밀림에 판다">
+          <input type="checkbox" checked={!!draft.take_profit_partial}
+            onChange={(e) => set({ take_profit_partial: e.target.checked })} />
+          절반 익절 후 트레일링
+        </label>
+        {draft.take_profit_partial && (
+          <label>트레일링 고점 −%
+            <input type="number" min="0.5" step="0.5" value={draft.trail_pct}
+              onChange={(e) => set({ trail_pct: e.target.value })} />
+          </label>
+        )}
         <label>손절 평단 −%
           <input type="number" min="0.1" step="0.5" value={draft.stop_pct}
             onChange={(e) => set({ stop_pct: e.target.value })} />
         </label>
-        <label title="예상체결가·첫 체결가가 기준가(전일 종가) 대비 이 % 이상이면 사지 않습니다. 0이면 끔.">
-          건너뛰기 기준가 +%
+        <label title="장전·장후 공시(그리고 재개가 15:20을 넘는 장중 공시)는 다음 장 시작 단일가에서 삽니다. 시가 예상가가 기준가 대비 이 %를 넘으면 사지 않습니다. 0이면 제한 없음.">
+          장전 공시 시가 상한 +%
+          <input type="number" min="0" max="30" step="1" value={draft.open_max_pct}
+            onChange={(e) => set({ open_max_pct: e.target.value })} />
+        </label>
+        <label title="장중 공시: 재개 예상체결가·첫 체결가가 기준가(전일 종가) 대비 이 % 이상이면 사지 않습니다. 0이면 끔.">
+          장중 재개가 건너뛰기 +%
           <input type="number" min="0" max="30" step="1" value={draft.skip_above_pct}
             onChange={(e) => set({ skip_above_pct: e.target.value })} />
         </label>
@@ -298,13 +331,39 @@ function JobList({ accounts, bonus }) {
   )
 }
 
+// 권리락 일정 한 줄 + 일봉 표시. 권리락일은 신주배정기준일 직전 평일(예정) → KIND 권리락 안내로 확정.
+function exSchedule(job) {
+  if (!job) return { text: '', marks: [] }
+  const parts = []
+  if (job.ratio > 0) parts.push(`1주당 ${job.ratio}주`)
+  if (job.record_date) parts.push(`신주배정기준일 ${mmdd(job.record_date)}`)
+  if (job.ex_date) {
+    const d = dayDiff(job.ex_date, todayIso())
+    const when = d > 0 ? `D-${d}` : d === 0 ? '오늘' : `${-d}일 지남`
+    parts.push(`권리락일 ${job.ex_date} (${job.ex_confirmed ? '확정' : '예정'}, ${when})`)
+  }
+  if (job.ex_notice_at) parts.push(`권리락 안내 ${mmdd(job.ex_notice_at)} ${hhmm(job.ex_notice_at)}`)
+  if (job.listing_date) parts.push(`상장예정 ${mmdd(job.listing_date)}`)
+  const marks = [{ at: job.disclosed_at.slice(0, 16), text: `공시 ${hhmm(job.disclosed_at)}`, color: DISCLOSE_COLOR }]
+  if (job.ex_notice_at) marks.push({ at: job.ex_notice_at.slice(0, 16), text: '권리락 안내', color: EX_COLOR, shape: 'square' })
+  if (job.ex_date) marks.push({ at: job.ex_date, text: job.ex_confirmed ? '권리락일' : '권리락일(예정)', color: EX_COLOR, position: 'belowBar', shape: 'arrowUp' })
+  return { text: parts.length ? parts.join(' · ') : '권리락 일정 아직 모름 — DART 조건·KIND 권리락 안내를 기다리는 중', marks }
+}
+
 function BonusTradeCard({ account, item, job }) {
   const { ticks, actions } = useStore()
   const tick = (ticks[account.id] || {})[item.code]
   const verified = item.position_verified !== false
   const exitDraft = useExitDraft(item)
   const avg = verified ? Number(item.position?.avg_price || 0) : 0
-  const { lines, drag } = useExitLines(exitDraft.draft, avg)
+  const { lines, drag } = useExitLines(exitDraft.draft, avg, item.trailing)
+  const mode = cardMode(item, job)
+  const sched = exSchedule(job)
+  const [gapOpen, setGapOpen] = useState(false)
+  const run = async (fn, ask) => {
+    if (ask && !window.confirm(ask)) return
+    try { await fn() } catch (e) { window.alert(String(e.message || e)) }
+  }
   const onLineDrag = (side, p) => {
     exitDraft.update(side, { mode: 'price', price: roundToTick(p), enabled: true })
     if (exitDraft.pick === side) exitDraft.setPick(null)
@@ -320,6 +379,7 @@ function BonusTradeCard({ account, item, job }) {
   const chartProps = {
     account: account.id, code: item.code, tick, height: 300, priceLines: lines,
     draggableLines: drag, onLineDrag, onPriceClick: exitDraft.pick ? exitDraft.drawAt : null,
+    eventMarks: sched.marks,
   }
 
   return (
@@ -331,7 +391,7 @@ function BonusTradeCard({ account, item, job }) {
           <span className={`account-badge ${account.danger ? 'danger' : 'safe'}`}>
             {account.danger ? '⚠️ 실전' : account.label}
           </span>
-          {job && <span className={`origin-badge job-${job.status}`}>{JOB_STATUS[job.status] || job.status}</span>}
+          <span className={`origin-badge bonus-mode-${mode.key}`}>{mode.label}</span>
         </div>
         <PriceTicker tick={tick} />
         <div className="panel-actions">
@@ -344,11 +404,39 @@ function BonusTradeCard({ account, item, job }) {
           <span className="muted">
             {MODE_LABEL[job.mode] || job.mode}
             {job.status === 'waiting' && ` · 첫 체결 예상 ${hhmm(job.target_at)}`}
+            {` · ${JOB_STATUS[job.status] || job.status}`}
             {job.qty > 0 && ` · ${fmt(job.qty)}주 (수량 기준 ${job.basis} ${fmt(job.price)}원)`}
             {job.message && ` · ${job.message}`}
           </span>
         )}
+        {job && <span className="bonus-ex">📅 {sched.text}</span>}
       </div>
+      <div className="bonus-card-actions">
+        {mode.key !== 'manual' && (
+          <button className="ghost" onClick={() => run(() => actions.bonusToManual(account.id, item.code),
+            `${item.name}: ${mode.key === 'waiting' ? '매수 대기를 취소하고 ' : mode.key === 'gap' ? '갭상승 모드를 끄고 ' : '자동 손절·익절을 끄고 '}수동으로 바꿀까요?`)}>
+            수동으로
+          </button>
+        )}
+        {mode.key === 'manual' && (
+          <button className={gapOpen ? 'ghost on' : 'ghost'} onClick={() => setGapOpen((v) => !v)}>
+            갭상승 모드{gapOpen ? ' 닫기' : ' 켜기'}
+          </button>
+        )}
+        <span className="bonus-actions-gap" />
+        <button className="link-btn" onClick={() => run(() => actions.bonusToManualPage(account.id, item.code),
+          `${item.name}을(를) 수동 매매 화면으로 옮길까요? (무상증자 화면에서 빠집니다. 손절·익절 설정은 그대로)`)}>
+          수동 매매 화면으로
+        </button>
+        <button className="link-btn" onClick={() => run(() => actions.bonusToZone(account.id, item.code),
+          `${item.name}을(를) 구간 매매(설정 중)로 옮길까요? 보유가 0일 때만 됩니다.`)}>
+          구간 매매로
+        </button>
+      </div>
+      {job?.gap && <GapStatus account={account} item={item} gap={job.gap} />}
+      {mode.key === 'manual' && gapOpen && (
+        <GapForm account={account} item={item} tick={tick} onDone={() => setGapOpen(false)} />
+      )}
       {item.notice && (
         <div className="recovery-notice" role="alert">
           {item.notice}
@@ -378,7 +466,117 @@ function BonusTradeCard({ account, item, job }) {
         <ManualTradePanel account={account.id} code={item.code} position={item.position}
           verified={verified} tick={tick} />
         <ManualExits account={account.id} code={item.code} position={item.position}
-          verified={verified} tick={tick} exitDraft={exitDraft} />
+          verified={verified} tick={tick} exitDraft={exitDraft} trailing={item.trailing} />
+      </div>
+    </div>
+  )
+}
+
+// 켜진 갭상승 계획.
+function GapStatus({ account, item, gap }) {
+  const { actions } = useStore()
+  const one = (r, side) => (r.mode === 'price' ? `${fmt(r.price)}원` : `${side === 'stop' ? '−' : '+'}${r.pct}%`)
+  const off = async () => {
+    if (!window.confirm(`${item.name}: 갭상승 모드를 끌까요?`)) return
+    try { await actions.clearBonusGap(account.id, item.code) } catch (e) { window.alert(String(e.message || e)) }
+  }
+  return (
+    <div className="bonus-gap-status">
+      <b>갭상승 대기</b>
+      <span>
+        {fmt(gap.budget)}원 · 시가 ≥ 전일 {gap.bull_open ? '종가(양봉이면 시가)' : '종가'} +{gap.gap_pct}% ·
+        익절 {one(gap.take_profit, 'take_profit')}{gap.take_profit.partial ? `(절반, 나머지 고점 −${gap.take_profit.trail_pct}%)` : ''} ·
+        손절 {one(gap.stop, 'stop')} · {mmdd(gap.started)} 켬 — 다음 거래일부터 매일 장 시작에 판정
+      </span>
+      {gap.message && <span className="muted">최근: {gap.message}</span>}
+      <button className="link-btn" onClick={off}>끄기</button>
+    </div>
+  )
+}
+
+// 갭상승 모드 켜기. 익절·손절은 % 또는 가격(라인) — 산 뒤에는 카드의 손절·익절 폼·차트 선으로 바꾼다.
+function GapForm({ account, item, tick, onDone }) {
+  const { actions } = useStore()
+  const [f, setF] = useState({
+    budget: 1000000, gap_pct: 1, bull_open: false,
+    take_profit: { mode: 'pct', pct: 10, price: 0, partial: false, trail_pct: 5 },
+    stop: { mode: 'pct', pct: 3, price: 0 },
+  })
+  const [msg, setMsg] = useState('')
+  const [busy, setBusy] = useState(false)
+  const set = (patch) => { setF((v) => ({ ...v, ...patch })); setMsg('') }
+  const setRule = (side, patch) => { setF((v) => ({ ...v, [side]: { ...v[side], ...patch } })); setMsg('') }
+  const ruleRow = (side, name, sign) => {
+    const r = f[side]
+    return (
+      <div className="exit-row">
+        <span className="gap-rule-name">{name}</span>
+        <select value={r.mode} onChange={(e) => setRule(side, { mode: e.target.value,
+          price: r.price || (tick?.price ? roundToTick(tick.price * (side === 'stop' ? 0.97 : 1.1)) : 0) })}
+          aria-label={`${name} 방식`}>
+          <option value="pct">매수가(평단) 대비 %</option>
+          <option value="price">가격 라인</option>
+        </select>
+        {r.mode === 'pct' ? (
+          <span className="exit-input">{sign}<input type="number" min="0.1" step="0.5" value={r.pct}
+            onChange={(e) => setRule(side, { pct: e.target.value })} aria-label={`${name} 비율`} />%</span>
+        ) : (
+          <span className="exit-input"><input type="number" min="1" step="1" value={r.price}
+            onChange={(e) => setRule(side, { price: e.target.value })} aria-label={`${name} 가격`} />원</span>
+        )}
+        {side === 'take_profit' && (
+          <label className="checkfield">
+            <input type="checkbox" checked={r.partial} onChange={(e) => setRule(side, { partial: e.target.checked })} />
+            절반 익절 후 트레일링
+            {r.partial && (
+              <span className="exit-input">고점 −<input type="number" min="0.5" step="0.5" value={r.trail_pct}
+                onChange={(e) => setRule(side, { trail_pct: e.target.value })} aria-label="트레일링 비율" />%</span>
+            )}
+          </label>
+        )}
+      </div>
+    )
+  }
+  const submit = async () => {
+    setBusy(true)
+    try {
+      const r = await actions.setBonusGap(account.id, item.code, {
+        budget: Number(f.budget), gap_pct: Number(f.gap_pct), bull_open: f.bull_open,
+        take_profit: ruleBody({ ...f.take_profit, enabled: true }),
+        stop: ruleBody({ ...f.stop, enabled: true }),
+      })
+      if (r) onDone()
+    } catch (e) {
+      setMsg(String(e.message || e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="bonus-gap-form">
+      <div className="panel-title">갭상승 모드</div>
+      <div className="bonus-fields">
+        <label>매수 금액(원)
+          <input type="number" min="10000" step="10000" value={f.budget} onChange={(e) => set({ budget: e.target.value })} />
+        </label>
+        <label>시가 ≥ 전일 종가 +%
+          <input type="number" min="0" max="29" step="0.5" value={f.gap_pct} onChange={(e) => set({ gap_pct: e.target.value })} />
+        </label>
+        <label className="checkfield" title="전일 봉이 양봉(종가 > 시가)이면 전일 종가 대신 전일 시가를 기준으로 본다">
+          <input type="checkbox" checked={f.bull_open} onChange={(e) => set({ bull_open: e.target.checked })} />
+          전일이 양봉이면 전일 시가 기준
+        </label>
+      </div>
+      {ruleRow('take_profit', '익절', '+')}
+      {ruleRow('stop', '손절', '−')}
+      <div className="exit-actions">
+        <button className="save-btn" disabled={busy} onClick={submit}>갭상승 모드 켜기</button>
+        <button className="ghost" disabled={busy} onClick={onDone}>닫기</button>
+        {msg && <span className="input-err">{msg}</span>}
+      </div>
+      <div className="manual-stop-note">
+        켠 날 다음 거래일부터 매일 장 시작 직후 일봉으로 시가를 확인해, 조건이 맞으면 금액만큼 시장가로 사고
+        위 익절·손절 감시로 넘어갑니다. 안 맞으면 다음 거래일에 다시 봅니다(끌 때까지).
       </div>
     </div>
   )

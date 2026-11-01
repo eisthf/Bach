@@ -10,7 +10,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { createChart, CrosshairMode } from 'lightweight-charts'
 import { api } from '../api'
 import { sma, lastSma, MA_LINES, ENVELOPE, envelope } from '../indicators'
-import { ANCHOR_COLOR, anchorMarker, tradeMarkers, tradePoints } from '../tradeMarkers'
+import { ANCHOR_COLOR, anchorMarker, eventMarkers, tradeMarkers, tradePoints } from '../tradeMarkers'
 import { TradeCrossPrimitive } from '../tradeCrossPrimitive'
 import { AmountStripePrimitive, amountStripeTimes } from '../amountStripePrimitive'
 import { useChartEnvelope } from '../chartPrefs'
@@ -71,9 +71,10 @@ const volumePoint = (bar) => ({
 // [측정] 단추(모든 차트): 켜고 두 점을 누르면 두 점을 잇는 선과 변화율·봉 수를 보여준다
 //   (화면 표시만, 저장 안 함). 세 번째 누르면 새로 잰다. 봉 단위를 바꾸면 지운다.
 //   측정 중엔 클릭이 측정으로 가고 onPriceClick(가격 찍기)·선 끌기는 쉰다.
+// eventMarks: [{at, text, color, position, shape}] 일정 표시(무상증자 공시·권리락 등, tradeMarkers.eventMarkers).
 // prefKey: 차트 자리 이름(예: 'manual:mock:005930'). 엔벨로프 켜고 끔을 이 이름별로 기억한다.
 //   없으면 '계좌:종목'.
-export default function Chart({ prefKey = null, account, code, interval, tick, height = 360, sessionOnly = false, includeToday = false, extended = false, anchorDate = null, priceLines = null, onPriceClick = null, draggableLines = null, onLineDrag = null, onSessionDate }) {
+export default function Chart({ prefKey = null, account, code, interval, tick, height = 360, sessionOnly = false, includeToday = false, extended = false, anchorDate = null, priceLines = null, onPriceClick = null, draggableLines = null, onLineDrag = null, onSessionDate, eventMarks = null }) {
   const anchor = interval === 1440 ? anchorDate : null
   const anchorRef = useRef(anchor)
   anchorRef.current = anchor
@@ -91,6 +92,10 @@ export default function Chart({ prefKey = null, account, code, interval, tick, h
   const [loadError, setLoadError] = useState('')
   const [retry, setRetry] = useState(0)
   const tradesRef = useRef([])
+  const eventMarksRef = useRef(eventMarks)
+  eventMarksRef.current = eventMarks
+  const eventKey = JSON.stringify(eventMarks || [])
+  useEffect(() => { drawTrades(barsRef.current) }, [eventKey]) // eslint-disable-line react-hooks/exhaustive-deps
   const crossRef = useRef(null)
   const stripeRef = useRef(null)
   const [tradeError, setTradeError] = useState(false)
@@ -100,6 +105,7 @@ export default function Chart({ prefKey = null, account, code, interval, tick, h
     const markers = tradeMarkers(bars, tradesRef.current, interval)
     const anchorMark = anchorMarker(bars, anchorRef.current)
     if (anchorMark) markers.push(anchorMark)
+    markers.push(...eventMarkers(bars, eventMarksRef.current, interval))
     candleRef.current?.setMarkers(markers.sort((a, b) => a.time - b.time))
     crossRef.current?.setPoints(tradePoints(bars, tradesRef.current, interval))
   }

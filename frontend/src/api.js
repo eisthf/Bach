@@ -71,6 +71,12 @@ export const api = {
   setBonusSettings: (a, settings) =>
     req(`/api/${enc(a)}/bonus/settings`, { method: 'PUT', body: JSON.stringify(settings) }),
   cancelBonusJob: (a, code) => req(`/api/${enc(a)}/bonus/jobs/${enc(code)}/cancel`, { method: 'POST' }),
+  bonusToManual: (a, code) => req(`/api/${enc(a)}/bonus/${enc(code)}/manual`, { method: 'POST' }),
+  setBonusGap: (a, code, plan) =>
+    req(`/api/${enc(a)}/bonus/${enc(code)}/gap`, { method: 'PUT', body: JSON.stringify(plan) }),
+  clearBonusGap: (a, code) => req(`/api/${enc(a)}/bonus/${enc(code)}/gap`, { method: 'DELETE' }),
+  bonusToManualPage: (a, code) => req(`/api/${enc(a)}/bonus/${enc(code)}/to-manual-page`, { method: 'POST' }),
+  bonusToZone: (a, code) => req(`/api/${enc(a)}/bonus/${enc(code)}/to-zone`, { method: 'POST' }),
 
   // 일봉은 최근 60일 전체에 MA60을 그릴 수 있도록 59일의 계산 여유분을 더 받는다.
   // anchor: 일봉에서 이 날짜(YYYY-MM-DD) 앞 20거래일부터 60거래일(스크리너 조회일).

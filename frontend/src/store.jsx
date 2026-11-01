@@ -244,6 +244,17 @@ export function StoreProvider({ children }) {
       return api.setBonusSettings(acc, settings)
     },
     cancelBonusJob: (acc, code) => api.cancelBonusJob(acc, code),
+    bonusToManual: (acc, code) => api.bonusToManual(acc, code),
+    setBonusGap: (acc, code, plan) => {
+      if (dangerRef.current[acc] &&
+          !window.confirm('⚠️ 실전 계좌에서 갭상승 모드를 켭니다.\n조건이 맞으면 사람 확인 없이 실제 매수 주문이 나갑니다. 계속할까요?')) {
+        return Promise.resolve(null)
+      }
+      return api.setBonusGap(acc, code, plan)
+    },
+    clearBonusGap: (acc, code) => api.clearBonusGap(acc, code),
+    bonusToManualPage: (acc, code) => api.bonusToManualPage(acc, code),
+    bonusToZone: (acc, code) => api.bonusToZone(acc, code),
     simulateBonus: (body) => api.bonusSimulate(body),
     refreshBonusWatch: () => api.bonusWatch().then(setBonusWatch).catch(() => {}),
     buy: (acc, code, amount) => {

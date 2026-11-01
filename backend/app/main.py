@@ -290,6 +290,42 @@ def bonus_cancel(account: str, code: str):
         raise HTTPException(409, str(e))
 
 
+# 무상증자 카드: [수동으로] · 갭상승 모드 켜기/끄기 · [수동 매매 화면으로] · [구간 매매로]
+async def _bonus_call(fn, *args):
+    try:
+        out = fn(*args)
+        return await out if asyncio.iscoroutine(out) else out
+    except KeyError:
+        raise HTTPException(404, "무상증자 화면의 종목이 아닙니다.")
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+
+
+@app.post("/api/{account}/bonus/{code}/manual")
+async def bonus_to_manual(account: str, code: str):
+    return await _bonus_call(_hub(account).bonus_trades.to_manual, code)
+
+
+@app.put("/api/{account}/bonus/{code}/gap")
+async def bonus_set_gap(account: str, code: str, payload: dict):
+    return await _bonus_call(_hub(account).bonus_trades.set_gap, code, payload)
+
+
+@app.delete("/api/{account}/bonus/{code}/gap")
+async def bonus_clear_gap(account: str, code: str):
+    return await _bonus_call(_hub(account).bonus_trades.clear_gap, code)
+
+
+@app.post("/api/{account}/bonus/{code}/to-manual-page")
+async def bonus_to_manual_page(account: str, code: str):
+    return await _bonus_call(_hub(account).bonus_trades.move_to_manual_page, code)
+
+
+@app.post("/api/{account}/bonus/{code}/to-zone")
+async def bonus_to_zone(account: str, code: str):
+    return await _bonus_call(_hub(account).bonus_trades.move_to_zone, code)
+
+
 # ---------------------------------------------------------------------------
 # 대금 양봉 매매·구간 매매 (계좌 스코프) — 매입 구간에서 여러 거래일에 걸친 2분할
 # 매수·절반 익절·트레일링. [상한가 매매] 목록과 분리. 구간 매매(kind="zone")는 구간을

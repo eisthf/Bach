@@ -145,3 +145,47 @@ async def test_persist_round_trip_and_legacy(mock_hub, tmp_path):
     assert (b.stop.enabled, b.stop.mode, b.stop.pct, b.take_profit.enabled) == (True, "pct", 3, False)
     for it in m.items.values():
         it.task.cancel()
+
+
+async def test_partial_take_profit_then_trailing(mock_hub):
+    hub, manager, it = prepare(mock_hub, None, {"enabled": True, "mode": "pct", "pct": 10,
+                                                "partial": True, "trail_pct": 5})
+    hub.broker.unfilled_orders = Mock(return_value={})
+    await run(hub, it, 11_000)                       # 평단 +10% → 절반(5주)
+    hub.broker.sell.assert_called_once_with("005930", 5)
+    assert (it.tp_stage, it.tp_level, it.take_profit.enabled) == (1, 11_000.0, True)
+    hub.broker.position.return_value = Position(code="005930", quantity=5, avg_price=10_000.0)
+    await run(hub, it, 12_000)                       # 고점 12,000 → 트레일링 선 11,400
+    assert hub.broker.sell.call_count == 1 and it.peak == 12_000
+    await run(hub, it, 11_400)                       # 고점 −5% → 남은 전량
+    assert hub.broker.sell.call_args.args == ("005930", 5)
+    assert (it.tp_stage, it.take_profit.enabled, it.stop.enabled) == (0, False, False)
+
+
+async def test_partial_take_profit_pullback_to_level(mock_hub):
+    hub, manager, it = prepare(mock_hub, None, {"enabled": True, "mode": "pct", "pct": 10,
+                                                "partial": True, "trail_pct": 20})
+    # 절반 매도가 아직 미체결이면 그 수량은 빼고 판다
+    hub.broker.unfilled_orders = Mock(return_value={"005930": [{"side": "sell", "unfilled": 5}]})
+    await run(hub, it, 11_000)
+    await run(hub, it, 11_500)
+    await run(hub, it, 11_000)                       # 트레일링(9,200)보다 익절 기준 11,000이 먼저
+    assert hub.broker.sell.call_args.args == ("005930", 5)
+    assert it.tp_stage == 0
+
+
+async def test_partial_with_one_share_sells_all(mock_hub):
+    hub, manager, it = prepare(mock_hub, None, {"enabled": True, "mode": "pct", "pct": 10, "partial": True})
+    hub.broker.position.return_value = Position(code="005930", quantity=1, avg_price=10_000.0)
+    await run(hub, it, 11_000)
+    hub.broker.sell.assert_called_once_with("005930", 1)
+    assert it.tp_stage == 0 and not it.take_profit.enabled
+
+
+async def test_partial_stage_persists(mock_hub, tmp_path):
+    hub, manager, it = prepare(mock_hub, None, {"enabled": True, "mode": "pct", "pct": 10, "partial": True})
+    hub.broker.unfilled_orders = Mock(return_value={})
+    hub.manual_trades._path = tmp_path / "m.json"
+    await run(hub, it, 11_000)
+    saved = json.loads((tmp_path / "m.json").read_text(encoding="utf-8"))["items"][0]
+    assert (saved["tp_stage"], saved["tp_level"], saved["take_profit"]["partial"]) == (1, 11_000.0, True)

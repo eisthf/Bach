@@ -8,9 +8,9 @@ from datetime import datetime, timedelta
 import pytest
 
 from app.bonus_issue import (BonusSettings, BonusTradeManager, BonusWatcher, Disclosure, classify,
-                             target_time)
-from app.market_clock import KST
-from app.models import OrderResult
+                             ex_notice_of, parse_terms, target_time)
+from app.market_clock import KST, chart_epoch
+from app.models import Bar, OrderResult, Position
 
 
 def kst(s: str) -> datetime:
@@ -43,8 +43,8 @@ def test_target_time():
 
 def test_settings_validation():
     s = BonusSettings.parse({})
-    assert (s.enabled, s.budget, s.order_mode, s.take_profit_pct, s.stop_pct) == (
-        False, 1_000_000, "expected", 25.0, 10.0)
+    assert (s.enabled, s.budget, s.order_mode, s.take_profit_pct, s.stop_pct, s.open_max_pct,
+            s.take_profit_partial, s.trail_pct) == (False, 1_000_000, "expected", 20.0, 15.0, 10.0, False, 5.0)
     with pytest.raises(ValueError):
         BonusSettings.parse({"order_mode": "x"})
     with pytest.raises(ValueError):
@@ -90,11 +90,14 @@ async def test_disabled_account_skips(bonus):
     assert any("꺼져" in t for t in mgr.logs())
 
 
-async def test_paid_too_skipped_by_default(bonus):
+async def test_paid_too_skipped_by_default_but_card_kept_manual(bonus):
     hub, mgr, clock, bt = bonus
     bt.settings.enabled = True
+    bt._now = lambda: kst("2026-10-26 10:01")
     assert await bt.on_disclosure(disclosure(kst("2026-10-26 10:00"), paid=True)) is None
-    assert "005930" not in hub.manual_trades.items
+    item = hub.manual_trades.items["005930"]
+    assert item.origin == "bonus" and not item.stop.enabled and not item.take_profit.enabled
+    assert bt.jobs["005930"].status == "skipped" and "유무상" in bt.jobs["005930"].message
 
 
 async def test_upper_limit_mode_buys_within_budget_with_exits(bonus):
@@ -107,7 +110,8 @@ async def test_upper_limit_mode_buys_within_budget_with_exits(bonus):
     item = hub.manual_trades.items["005930"]
     assert item.origin == "bonus"
     assert (item.stop.enabled, item.stop.pct, item.take_profit.enabled, item.take_profit.pct) == (
-        True, 10.0, True, 25.0)
+        True, 15.0, True, 20.0)
+    assert bt.jobs["005930"].kind == "intraday"
     pos = hub.broker.position("005930")
     assert pos.quantity == job.qty > 0
     upper = hub.data.auction_quote("005930")["upper"]
@@ -239,8 +243,16 @@ async def test_watcher_dispatches_new_disclosures_once(tmp_path):
     got = []
 
     class Bt:
+        jobs = {}
+
         async def on_disclosure(self, d):
             got.append(d.code)
+
+        def wants_ex_notice(self):
+            return False
+
+        def apply_ex_notice(self, n):
+            pass
 
     class H:
         account = "mock"
@@ -251,7 +263,7 @@ async def test_watcher_dispatches_new_disclosures_once(tmp_path):
             row(t="2026-10-26 07:58", code5="22222", acpt="2"),
             row(title="[정정]무상증자결정", t="2026-10-26 07:59", code5="33333", acpt="3")]
 
-    def fetch(start, end):
+    def fetch(start, end, keyword="무상증자"):
         asked.append((start.isoformat(), end.isoformat()))
         return rows
 
@@ -281,7 +293,8 @@ async def test_skip_when_target_already_passed(bonus):
     assert await bt.on_disclosure(disclosure(kst("2026-10-26 10:00"))) is None
     job = bt.jobs["005930"]
     assert job.status == "skipped" and "지남" in job.message
-    assert "005930" not in hub.manual_trades.items
+    item = hub.manual_trades.items["005930"]   # 카드는 '수동'으로 올린다
+    assert not item.stop.enabled and not item.take_profit.enabled
 
 
 async def test_late_detection_before_target_still_buys(bonus):
@@ -395,3 +408,210 @@ async def test_ulc_yield_has_upper_bound(bonus, monkeypatch):
 def test_hub_ulc_first_orders_pending(mock_hub):
     hub, mgr, clock = mock_hub
     assert hub.ulc_first_orders_pending() is False
+
+
+# ---------------------------------------------------------------- 시가 단일가(장전·장후 공시)
+async def test_open_auction_buys_within_max_pct(bonus, monkeypatch):
+    hub, mgr, clock, bt = bonus
+    clock.open()
+    bt.settings = BonusSettings(enabled=True, order_mode="market", open_max_pct=10)
+    bt._now = lambda: kst("2026-10-26 08:59:45")   # 장전 공시, 09:00 시가 20초 전이 지났다
+    quote = hub.data.auction_quote("005930")
+    monkeypatch.setattr(hub.data, "auction_quote",
+                        lambda code: {**quote, "expected": quote["base"] * 1.10})
+    job = await bt.on_disclosure(disclosure(kst("2026-10-26 07:50")))
+    assert job.kind == "open"
+    await wait_status(job, "sent")
+    assert job.basis == "예상체결가"   # 시장가 설정이어도 시가 예상가를 확인하고 낸다
+
+
+async def test_open_auction_skips_above_max_pct(bonus, monkeypatch):
+    hub, mgr, clock, bt = bonus
+    clock.open()
+    bt.settings = BonusSettings(enabled=True, order_mode="expected", open_max_pct=10)
+    bt._now = lambda: kst("2026-10-27 08:59:45")
+    quote = hub.data.auction_quote("005930")
+    monkeypatch.setattr(hub.data, "auction_quote",
+                        lambda code: {**quote, "expected": quote["base"] * 1.11})
+    # 장중 공시인데 재개가 15:20을 넘는다 → 다음 날 시가 단일가(장전 공시처럼)
+    job = await bt.on_disclosure(disclosure(kst("2026-10-26 14:50")))
+    assert job.kind == "open"
+    await wait_status(job, "skipped")
+    assert "상한 +10%" in job.message
+    item = hub.manual_trades.items["005930"]
+    assert not item.stop.enabled and not item.take_profit.enabled
+    assert hub.broker.position("005930").quantity == 0
+
+
+def test_old_default_exits_migrate(mock_hub, tmp_path):
+    import json
+    hub, mgr, clock = mock_hub
+    bt = hub.bonus_trades
+    bt._path = tmp_path / "b.json"
+    bt._path.write_text(json.dumps({"settings": {"enabled": True, "take_profit_pct": 25.0,
+                                                 "stop_pct": 10.0}}), encoding="utf-8")
+    bt.restore()
+    assert (bt.settings.take_profit_pct, bt.settings.stop_pct, bt.settings.enabled) == (20.0, 15.0, True)
+    bt._path.write_text(json.dumps({"version": 2, "settings": {"take_profit_pct": 25.0, "stop_pct": 10.0}}),
+                        encoding="utf-8")
+    bt.restore()
+    assert (bt.settings.take_profit_pct, bt.settings.stop_pct) == (25.0, 10.0)
+
+
+# ---------------------------------------------------------------- 카드: 수동·갭상승·옮기기
+async def manual_card(bt, code="005930"):
+    bt.settings = BonusSettings(enabled=True, order_mode="after_resume")
+    bt._now = lambda: kst("2026-10-26 10:01")
+    job = await bt.on_disclosure(disclosure(kst("2026-10-26 10:00"), code=code))
+    return job
+
+
+async def test_to_manual_cancels_waiting_job_and_exits(bonus):
+    hub, mgr, clock, bt = bonus
+    job = await manual_card(bt)
+    assert hub.manual_trades.items["005930"].stop.enabled
+    bt.to_manual("005930")
+    assert job.status == "cancelled"
+    it = hub.manual_trades.items["005930"]
+    assert not it.stop.enabled and not it.take_profit.enabled
+    assert it.stop.pct == 15.0          # 값은 남긴다(다시 켤 때 보인다)
+    assert it.origin == "bonus"
+
+
+def day_bar(d: str, o: float, c: float) -> Bar:
+    return Bar(time=chart_epoch(kst(d + " 09:00").replace(hour=0)), open=o, high=max(o, c),
+               low=min(o, c), close=c)
+
+
+async def test_gap_mode_requires_manual_and_buys_on_gap(bonus, monkeypatch):
+    hub, mgr, clock, bt = bonus
+    await manual_card(bt)
+    with pytest.raises(ValueError):
+        bt.set_gap("005930", {})          # 매수 대기 중
+    bt.to_manual("005930")
+    bt._now = lambda: kst("2026-10-26 15:00")   # 켠 날 D = 10-26
+    bt.GAP_STEP_SEC = 0.01
+    bars = {"v": [day_bar("2026-10-26", 10_000, 10_500), day_bar("2026-10-27", 10_600, 10_700)]}
+    monkeypatch.setattr(hub.data, "get_bars", lambda code, interval, *a: bars["v"])
+    bt.set_gap("005930", {"budget": 500_000, "gap_pct": 1,
+                          "take_profit": {"mode": "pct", "pct": 10, "partial": True},
+                          "stop": {"mode": "pct", "pct": 3}})
+    job = bt.jobs["005930"]
+    assert job.gap["started"] == "2026-10-26"
+    clock.open()
+    await asyncio.sleep(0.05)
+    assert hub.broker.position("005930").quantity == 0    # D 당일엔 판정하지 않는다
+    # D+1: 시가 10,600 ≥ 10,500 × 1.01 = 10,605? 아니다 → 미달, 다음 날 다시
+    bt._now = lambda: kst("2026-10-27 09:00:30")
+    end = time.monotonic() + 3
+    while not (job.gap or {}).get("checked") and time.monotonic() < end:
+        await asyncio.sleep(0.01)
+    assert job.gap["checked"] == "2026-10-27" and "미달" in job.gap["message"]
+    assert hub.broker.position("005930").quantity == 0
+    # D+2: 시가 10,900 ≥ 10,700 × 1.01 = 10,807 → 매수, 갭상승용 손절·익절 감시로
+    bars["v"] = bars["v"] + [day_bar("2026-10-28", 10_900, 11_000)]
+    bt._now = lambda: kst("2026-10-28 09:00:30")
+    end = time.monotonic() + 3
+    while job.gap and time.monotonic() < end:
+        await asyncio.sleep(0.01)
+    assert job.gap is None and "갭상승 매수" in job.message
+    assert hub.broker.position("005930").quantity > 0
+    it = hub.manual_trades.items["005930"]
+    assert (it.stop.enabled, it.stop.pct, it.take_profit.enabled, it.take_profit.pct,
+            it.take_profit.partial) == (True, 3.0, True, 10.0, True)
+
+
+async def test_gap_bull_open_reference(bonus, monkeypatch):
+    hub, mgr, clock, bt = bonus
+    await manual_card(bt)
+    bt.to_manual("005930")
+    bt._now = lambda: kst("2026-10-26 15:00")
+    bt.GAP_STEP_SEC = 0.01
+    # 전일 양봉(시가 10,000 → 종가 10,500). 시가 10,200: 종가 기준이면 미달, 양봉 시가 기준이면 10,100 이상 → 매수
+    monkeypatch.setattr(hub.data, "get_bars", lambda code, interval, *a: [
+        day_bar("2026-10-26", 10_000, 10_500), day_bar("2026-10-27", 10_200, 10_300)])
+    bt.set_gap("005930", {"gap_pct": 1, "bull_open": True})
+    clock.open()
+    bt._now = lambda: kst("2026-10-27 09:00:30")
+    job = bt.jobs["005930"]
+    end = time.monotonic() + 3
+    while job.gap and time.monotonic() < end:
+        await asyncio.sleep(0.01)
+    assert job.gap is None and "전일(양봉) 시가" in job.message
+
+
+async def test_move_to_manual_page_and_zone(bonus):
+    hub, mgr, clock, bt = bonus
+    await manual_card(bt)
+    await bt.move_to_manual_page("005930")
+    it = hub.manual_trades.items["005930"]
+    assert it.origin == "from_bonus" and bt.jobs["005930"].status == "cancelled"
+    with pytest.raises(KeyError):        # 더는 무상증자 카드가 아니다
+        bt.to_manual("005930")
+
+    await manual_card(bt, code="000660")
+    hub.broker.position = lambda code: Position(code=code, quantity=3, avg_price=100.0)
+    with pytest.raises(ValueError):      # 보유가 있으면 구간 매매로 못 옮긴다
+        await bt.move_to_zone("000660")
+    hub.broker.position = lambda code: Position(code=code)
+    await bt.move_to_zone("000660")
+    assert "000660" not in hub.manual_trades.items
+    assert hub.candle_trades.items["000660"].engine.kind == "zone"
+
+
+# ---------------------------------------------------------------- 권리락 일정
+def test_parse_terms_and_ex_notice_filter():
+    text = ("1. 신주의 종류와 수 보통주식 (주) 1,000 ... 1주당 신주배정 주식수 보통주식 (주) 2 "
+            "신주배정기준일 2026년 03월 03일 ... 신주의 상장 예정일 2026년 03월 27일")
+    assert parse_terms(text) == {"ratio": 2.0, "record_date": "2026-03-03", "listing_date": "2026-03-27"}
+    assert ex_notice_of({"time": "2026-02-26 15:51", "title": "권리락 기준가격 안내",
+                         "code5": "48037", "corp": "씨케이솔루션"})["code"] == "480370"
+    assert ex_notice_of({"time": "2026-02-26 15:51", "title": "권리락(유상증자)", "code5": "48037"}) is None
+    assert ex_notice_of({"time": "2026-02-26 15:51", "title": "무상증자결정", "code5": "48037"}) is None
+
+
+async def test_ex_date_from_terms_then_notice(bonus):
+    hub, mgr, clock, bt = bonus
+    await manual_card(bt)
+    bt.apply_terms("005930", {"ratio": 2, "record_date": "2026-11-17", "listing_date": "2026-12-08"})
+    job = bt.jobs["005930"]
+    assert (job.ex_date, job.ex_confirmed) == ("2026-11-16", False)   # 기준일 직전 평일(예정)
+    bt.apply_ex_notice({"code": "005930", "at": "2026-11-12T16:50+09:00", "title": "권리락(무상증자)"})
+    assert (job.ex_date, job.ex_confirmed) == ("2026-11-13", True)    # 안내 다음 평일(휴장일이면 안내가 맞다)
+    bt.apply_terms("005930", {"ratio": 2, "record_date": "2026-11-17"})
+    assert job.ex_date == "2026-11-13"                                 # 확정값은 덮지 않는다
+
+
+async def test_watcher_routes_ex_notices(tmp_path):
+    got = []
+
+    class Bt:
+        jobs = {}
+
+        async def on_disclosure(self, d):
+            pass
+
+        def wants_ex_notice(self):
+            return True
+
+        def apply_ex_notice(self, n):
+            got.append((n["code"], n["title"]))
+
+    class H:
+        account = "mock"
+        bonus_trades = Bt()
+
+    calls = []
+
+    def fetch(start, end, keyword="무상증자"):
+        calls.append(keyword)
+        if keyword == "권리락":
+            return [row(title="권리락 기준가격 안내", code5="48037", acpt="9")]
+        return [row(title="권리락(무상증자)", code5="37317", acpt="8")]
+
+    w = BonusWatcher(_Mgr({"mock": H()}), fetch=fetch, path=tmp_path / "w.json")
+    await w.poll_once(kst("2026-10-26 17:00"))
+    assert calls == ["무상증자", "권리락"]
+    assert set(got) == {("373170", "권리락(무상증자)"), ("480370", "권리락 기준가격 안내")}
+    await w.poll_once(kst("2026-10-26 17:01"))
+    assert calls == ["무상증자", "권리락", "무상증자"]   # '권리락' 검색은 몇 번에 한 번

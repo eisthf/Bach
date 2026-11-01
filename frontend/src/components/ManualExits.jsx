@@ -2,6 +2,8 @@
 //   (1) 평단 대비 %: 숫자로 지정 — 손절 평단 −x% 이하, 익절 평단 +y% 이상
 //   (2) 라인: 차트에 수평선을 그어 지정([차트에 긋기] 후 차트 클릭, 끌어서 옮기기) — 손절 라인 미만, 익절 라인 이상
 // 조건이 되면 서버가 보유 전량을 시장가로 한 번 팔고 둘 다 끈다(backend/app/manual_trade.py).
+// 익절은 '절반 익절'로 둘 수 있다: 기준에서 절반을 팔고, 나머지는 고점 −t% 또는 익절 기준가 되밀림에 판다
+// (그동안 item.trailing = {tp_level, peak, trail_pct} — 차트에 '트레일링' 선).
 // 설정은 카드가 '초안(draft)'으로 들고 있다 — 폼과 차트 선이 같은 초안을 보고, 차트의 선을 끌면
 // 그 가격의 라인 방식으로 바뀐다. 긋는 중(pick)인 쪽도 초안이 들고 있다. [저장]해야 서버에 반영된다.
 import React, { useEffect, useMemo, useState } from 'react'
@@ -14,7 +16,17 @@ const SIDES = [
   { key: 'take_profit', name: '익절', sign: '+', color: '#2e7d32', defaultPct: 10 },
   { key: 'stop', name: '손절', sign: '−', color: '#d32f2f', defaultPct: 5 },
 ]
-const ruleOf = (r, pct) => ({ enabled: !!r?.enabled, mode: r?.mode || 'pct', pct: r?.pct ?? pct, price: r?.price || 0 })
+const ruleOf = (r, pct) => ({
+  enabled: !!r?.enabled, mode: r?.mode || 'pct', pct: r?.pct ?? pct, price: r?.price || 0,
+  partial: !!r?.partial, trail_pct: r?.trail_pct ?? 5,
+})
+// 서버에 보낼 모양(폼 문자열 → 숫자).
+export const ruleBody = (r) => ({
+  enabled: r.enabled, mode: r.mode, pct: Number(r.pct), price: Number(r.price) || 0,
+  partial: !!r.partial, trail_pct: Number(r.trail_pct) || 5,
+})
+// 부분 익절 뒤 남은 절반을 파는 가격: 고점 −t% 와 익절 기준가 중 높은 쪽.
+export const trailLevel = (t) => (t ? Math.max(t.peak * (1 - t.trail_pct / 100), t.tp_level) : null)
 const fromItem = (exits) => ({
   stop: ruleOf(exits?.stop, 5),
   take_profit: ruleOf(exits?.take_profit, 10),
@@ -63,24 +75,27 @@ export function useExitDraft(item) {
 }
 
 // 차트에 넘길 선(켜진 것만) + 평단선. 손절·익절 선은 끌 수 있다.
-export function useExitLines(draft, avg) {
+export function useExitLines(draft, avg, trailing = null) {
+  const trailKey = JSON.stringify(trailing || null)
   return useMemo(() => {
     const lines = []
     const drag = []
     if (avg > 0) lines.push({ price: avg, color: '#888', title: '평단', dashed: true })
+    if (trailing) lines.push({ price: trailLevel(trailing), color: '#2e7d32', title: '트레일링', dashed: true })
     SIDES.forEach((s) => {
       const rule = draft[s.key]
       const level = exitLevel(rule, avg, s.key)
       if (!rule.enabled || level == null) return
-      const title = rule.mode === 'price' ? `${s.name} 라인` : `${s.name} ${s.sign}${rule.pct}%`
+      const title = (rule.mode === 'price' ? `${s.name} 라인` : `${s.name} ${s.sign}${rule.pct}%`)
+        + (s.key === 'take_profit' && rule.partial ? '(절반)' : '')
       lines.push({ price: level, color: s.color, title, dragId: s.key })
       drag.push({ id: s.key, price: level })
     })
     return { lines, drag }
-  }, [draft, avg])
+  }, [draft, avg, trailKey]) // eslint-disable-line react-hooks/exhaustive-deps
 }
 
-export default function ManualExits({ account, code, position, verified, tick, exitDraft }) {
+export default function ManualExits({ account, code, position, verified, tick, exitDraft, trailing = null }) {
   const { actions } = useStore()
   const { draft, dirty, update, reset, setDirty, pick, setPick } = exitDraft
   const [msg, setMsg] = useState('')
@@ -101,6 +116,7 @@ export default function ManualExits({ account, code, position, verified, tick, e
     if (r.mode === 'price' && !(Number(r.price) > 0)) return [`차트에 ${s.name} 라인을 그으세요.`]
     const high = s.key === 'stop' ? 100 : 1000
     if (r.mode === 'pct' && !(Number(r.pct) > 0 && Number(r.pct) < high)) return [`${s.name} 비율은 0 초과 ${high}% 미만이어야 합니다.`]
+    if (s.key === 'take_profit' && r.partial && !(Number(r.trail_pct) > 0 && Number(r.trail_pct) < 50)) return ['트레일링 비율은 0 초과 50% 미만이어야 합니다.']
     return []
   })
   const lo = draft.stop.enabled ? exitLevel(draft.stop, avg, 'stop') : null
@@ -114,8 +130,7 @@ export default function ManualExits({ account, code, position, verified, tick, e
       + '저장하면 정규장 중 곧바로 보유 전량이 시장가로 매도됩니다. 저장할까요?')) return
     setBusy(true)
     try {
-      const body = (r) => ({ enabled: r.enabled, mode: r.mode, pct: Number(r.pct), price: Number(r.price) || 0 })
-      await actions.setManualExits(account, code, body(draft.stop), body(draft.take_profit))
+      await actions.setManualExits(account, code, ruleBody(draft.stop), ruleBody(draft.take_profit))
       setDirty(false)
       setMsg('자동 손절·익절 저장됨')
     } catch (e) {
@@ -163,9 +178,27 @@ export default function ManualExits({ account, code, position, verified, tick, e
                 </span>
               )}
             </span>
+            {s.key === 'take_profit' && (
+              <label className="checkfield exit-partial" title="익절 기준에서 보유의 절반을 팔고, 나머지는 그 뒤 고점 대비 −t%로 떨어지거나 익절 기준가로 되밀리면 판다">
+                <input type="checkbox" checked={!!r.partial} onChange={(e) => update(s.key, { partial: e.target.checked })} />
+                절반 익절 후 트레일링
+                {r.partial && (
+                  <span className="exit-input">
+                    고점 −<input type="number" min="0.5" step="0.5" value={r.trail_pct}
+                      onChange={(e) => update(s.key, { trail_pct: e.target.value })} aria-label="트레일링 비율" />%
+                  </span>
+                )}
+              </label>
+            )}
           </div>
         )
       })}
+      {trailing && (
+        <div className="exit-trailing">
+          절반 익절 끝 · 남은 수량 트레일링 중 — 고점 {fmt(trailing.peak)}원, 매도선 {fmt(trailLevel(trailing))}원
+          (고점 −{trailing.trail_pct}% / 익절 기준 {fmt(trailing.tp_level)}원 중 높은 값)
+        </div>
+      )}
       <div className="exit-actions">
         <button className="save-btn" disabled={busy || !dirty || problems.length > 0} onClick={save}>저장</button>
         {dirty && <button className="ghost" disabled={busy} onClick={() => { reset(); setMsg('') }}>되돌리기</button>}
@@ -173,7 +206,7 @@ export default function ManualExits({ account, code, position, verified, tick, e
       </div>
       {problems.length > 0 && <div className="input-err">{problems[0]}</div>}
       <div className="manual-stop-note">
-        정규장 체결가로 판단 · 조건 충족 시 보유 전량 시장가 매도 후 손절·익절 모두 해제 ·
+        정규장 체결가로 판단 · 조건 충족 시 보유 전량(절반 익절이면 먼저 절반) 시장가 매도 후 손절·익절 모두 해제 ·
         라인은 [차트에 긋기] 후 차트를 눌러 긋고, 그은 선은 끌어서 옮깁니다(비율 선을 끌어도 라인으로 바뀜)
       </div>
       {msg && <div className="trade-msg">{msg}</div>}

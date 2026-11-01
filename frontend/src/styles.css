@@ -777,6 +777,22 @@ input:focus { outline: none; border-color: var(--accent); }
 .bonus-chart-label { font-size: 12px; font-weight: 700; color: var(--muted); margin-bottom: 2px; }
 .origin-badge.job-sent { color: var(--green); }
 .origin-badge.job-failed { color: #d32f2f; }
+.origin-badge.bonus-mode-waiting { color: #ef6c00; border-color: #ffcc80; }
+.origin-badge.bonus-mode-auto { color: var(--green); border-color: #a5d6a7; }
+.origin-badge.bonus-mode-gap { color: #7b1fa2; border-color: #ce93d8; }
+.bonus-ex { color: #7b1fa2; }
+.bonus-card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 0 0 8px; font-size: 12px; }
+.bonus-card-actions .bonus-actions-gap { flex: 1; }
+.bonus-card-actions .ghost.on { border-color: #7b1fa2; color: #7b1fa2; }
+.bonus-gap-status { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 12px; margin: 0 0 8px;
+  padding: 6px 10px; border: 1px solid #ce93d8; border-radius: 6px; background: #faf5fc; }
+.bonus-gap-status b { color: #7b1fa2; }
+.bonus-gap-form { border: 1px solid #ce93d8; border-radius: 8px; padding: 10px 12px; margin: 0 0 10px; background: var(--card); }
+.bonus-gap-form .bonus-fields { margin-bottom: 6px; }
+.bonus-gap-form .gap-rule-name { min-width: 32px; font-weight: 600; }
+.bonus-gap-form .exit-input input { width: 90px; }
+.exit-partial { flex-basis: 100%; margin-left: 22px; font-size: 12px; }
+.exit-trailing { font-size: 12px; color: var(--green); margin: 4px 0; }
 @media (max-width: 900px) {
   .bonus-charts { grid-template-columns: 1fr; }
   .bonus-settings-row { grid-template-columns: 1fr; }

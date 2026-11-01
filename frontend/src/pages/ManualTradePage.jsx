@@ -26,6 +26,7 @@ const ORIGINS = {
   restore: '재시작 잔고',
   import: '보유 가져오기',
   bonus: '무상증자 매매',
+  from_bonus: '무상증자 매매에서',
 }
 const fmt = (n) => Number(n || 0).toLocaleString('ko-KR')
 const held = (it) => (it.position?.quantity || 0) > 0
@@ -175,7 +176,7 @@ function ManualTradeCard({ account, item }) {
   const verified = item.position_verified !== false
   const exitDraft = useExitDraft(item)
   const avg = verified ? Number(item.position?.avg_price || 0) : 0
-  const { lines, drag } = useExitLines(exitDraft.draft, avg)
+  const { lines, drag } = useExitLines(exitDraft.draft, avg, item.trailing)
   // 선을 끌면 그 가격(호가 단위)의 라인 방식으로 바꾼다. 저장은 폼에서.
   // 그 선을 긋는 중이었으면 끌어서 놓은 것으로 긋기를 마친다(뒤이은 클릭이 선을 다시 옮기지 않게).
   const onLineDrag = (side, p) => {
@@ -235,7 +236,7 @@ function ManualTradeCard({ account, item }) {
         <ManualTradePanel account={account.id} code={item.code} position={item.position}
           verified={verified} tick={tick} />
         <ManualExits account={account.id} code={item.code} position={item.position}
-          verified={verified} tick={tick} exitDraft={exitDraft} />
+          verified={verified} tick={tick} exitDraft={exitDraft} trailing={item.trailing} />
       </div>
     </div>
   )
