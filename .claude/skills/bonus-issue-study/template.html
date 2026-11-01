@@ -69,6 +69,14 @@ svg.measure { position: absolute; left: 0; top: 0; width: 100%; height: 100%; po
   border-radius: 6px; padding: 2px 7px; font-size: 12px; font-weight: 600; white-space: nowrap;
   font-variant-numeric: tabular-nums; display: none; }
 .mhint { color: var(--muted); font-size: 12px; min-height: 18px; }
+.binfo { position: absolute; z-index: 5; pointer-events: none; display: none; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 4px 14px rgba(0,0,0,.14);
+  padding: 7px 10px; font-size: 12px; line-height: 1.55; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.binfo table { border-collapse: collapse; }
+.binfo td { padding: 0 0 0 10px; text-align: right; }
+.binfo td:first-child { padding: 0; text-align: left; color: var(--muted); }
+.binfo .h { font-weight: 600; margin-bottom: 3px; }
+.binfo .sep td { padding-top: 4px; }
 @media (max-width: 760px) {
   .layout { grid-template-columns: 1fr; height: auto; }
   aside { display: none; }
@@ -96,7 +104,8 @@ svg.measure { position: absolute; left: 0; top: 0; width: 100%; height: 100%; po
     <select class="mobile" id="msel"></select>
     <div class="card" id="info"></div>
     <div class="card">
-      <div class="chart-h"><h3>일봉 (수정주가) <button class="mbtn" id="dmeasure">변화율 측정</button></h3>
+      <div class="chart-h"><h3>일봉 (수정주가) <button class="mbtn" id="dmeasure">변화율 측정</button>
+          <button class="mbtn" id="dinfo">봉 정보</button></h3>
         <div class="legend"><span><i style="background:var(--ann)"></i>무상증자 공시</span>
           <span><i style="background:var(--exn)"></i>권리락 안내 공시</span>
           <span><i style="background:var(--ex);opacity:.45"></i>권리락일</span>
@@ -107,7 +116,8 @@ svg.measure { position: absolute; left: 0; top: 0; width: 100%; height: 100%; po
       <div class="note" id="dnote"></div>
     </div>
     <div class="card">
-      <div class="chart-h"><h3>3분봉 — 공시 전후 거래일 <button class="mbtn" id="mmeasure">변화율 측정</button></h3>
+      <div class="chart-h"><h3>3분봉 — 공시 전후 거래일 <button class="mbtn" id="mmeasure">변화율 측정</button>
+          <button class="mbtn" id="minfo">봉 정보</button></h3>
         <div class="legend"><span><i style="background:var(--ann)"></i>공시 시각</span>
           <span><i style="background:var(--resume)"></i>매매 재개</span>
           <span><i style="background:var(--muted);opacity:.5"></i>정규장 밖(NXT)</span></div></div>
@@ -278,6 +288,50 @@ function attachMeasure(ch, series, el, btnId, hintId, unit) {
   setHint();
 }
 
+// 봉 정보: [봉 정보]를 켜면 마우스를 올린 봉의 시·고·저·종가(전일 종가 대비), 거래량(앞 봉 대비),
+// 종가 이동평균(종가가 아니라 이평선 값의 종가 대비 %)을 커서 옆 상자로 보인다. 켬/끔은 브라우저에 기억.
+const MA_PERIODS = [5, 10, 20, 60];
+const infoOn = {};
+try { Object.assign(infoOn, JSON.parse(localStorage.getItem('bonusChartInfo') || '{}')); } catch (_) {}
+function attachInfo(ch, el, btnId, bars, prevClose, label) {
+  const wrap = el.parentElement;
+  wrap.querySelectorAll('.binfo').forEach(n => n.remove());
+  const box = document.createElement('div'); box.className = 'binfo';
+  wrap.append(box);
+  const btn = document.getElementById(btnId);
+  btn.classList.toggle('on', !!infoOn[btnId]);
+  btn.onclick = () => {
+    infoOn[btnId] = !infoOn[btnId]; btn.classList.toggle('on', infoOn[btnId]);
+    if (!infoOn[btnId]) box.style.display = 'none';
+    try { localStorage.setItem('bonusChartInfo', JSON.stringify(infoOn)); } catch (_) {}
+  };
+  const ma = MA_PERIODS.map(n => {
+    let sum = 0;
+    return bars.map((b, i) => { sum += b[4]; if (i >= n) sum -= bars[i - n][4]; return i >= n - 1 ? sum / n : null; });
+  });
+  const rel = (x, base) => base ? ` <span class="${cls(x / base - 1)}">(${pct(x / base - 1)})</span>` : '';
+  ch.subscribeCrosshairMove(param => {
+    // 띠 시리즈의 시각은 봉 시각의 부분집합이라 논리 인덱스 = 봉 순번
+    const i = param.logical == null ? -1 : Math.round(param.logical);
+    if (!infoOn[btnId] || !param.point || param.time == null || i < 0 || i >= bars.length) { box.style.display = 'none'; return; }
+    const [, o, h, l, c, v] = bars[i], pc = prevClose(i), pv = i > 0 ? bars[i - 1][5] : 0;
+    const row = (k, val) => `<tr><td>${k}</td><td>${val}</td></tr>`;
+    box.innerHTML = `<div class="h">${label(bars[i][0])}</div><table>` +
+      row('시가', fmtN(o) + rel(o, pc)) + row('고가', fmtN(h) + rel(h, pc)) +
+      row('저가', fmtN(l) + rel(l, pc)) + row('종가', fmtN(c) + rel(c, pc)) +
+      row('거래량', fmtN(v) + (pv ? ` <span style="color:var(--muted)">(앞 봉 ${pct(v / pv - 1)})</span>` : '')) +
+      MA_PERIODS.map((n, k) => ma[k][i] == null ? '' : (k === 0 ? '<tr class="sep">' : '<tr>') +
+        `<td>이평 ${n}</td><td>${fmtN(ma[k][i])}${rel(ma[k][i], c)}</td></tr>`).join('') +
+      `</table>` + (pc ? '' : `<div style="color:var(--muted)">전일 종가 없음(첫 거래일)</div>`);
+    box.style.display = 'block';
+    const w = box.offsetWidth, bh = box.offsetHeight;
+    let x = param.point.x + 16, y = param.point.y + 16;
+    if (x + w > wrap.clientWidth - 70) x = param.point.x - w - 16;
+    if (y + bh > wrap.clientHeight) y = Math.max(0, wrap.clientHeight - bh);
+    box.style.left = Math.max(0, x) + 'px'; box.style.top = y + 'px';
+  });
+}
+
 function render(e) {
   charts.forEach(c => c.remove()); charts = []; measures.length = 0;
   const s = e.stats;
@@ -344,6 +398,7 @@ function renderDaily(e) {
   c.setMarkers(mk);
   ch.timeScale().fitContent();
   attachMeasure(ch, c, el, 'dmeasure', 'dhint', '거래일');
+  attachInfo(ch, el, 'dinfo', e.daily, i => i > 0 ? e.daily[i - 1][4] : 0, ymd);
   document.getElementById('dnote').textContent =
     `${ymd(dates[0])} ~ ${ymd(dates[dates.length - 1])} · ${dates.length}거래일` +
     (e.daily_truncated ? ` · 권리락 후 20거래일이 아직 다 지나지 않아 ${META.last}까지만 표시` : '');
@@ -392,6 +447,12 @@ function renderM3(e) {
   c.setMarkers(mk);
   ch.timeScale().fitContent();
   attachMeasure(ch, c, el, 'mmeasure', 'mhint', '봉');
+  // 전일 종가 = 앞 거래일 정규장 마지막 봉 종가(원시 가격). 첫 거래일은 없음.
+  const dayClose = {};
+  e.m3.forEach(b => { if (regular(b[0])) dayClose[dayOf(b[0])] = b[4]; });
+  const prevDay = d => { const k = e.days3.indexOf(d); return k > 0 ? dayClose[e.days3[k - 1]] || 0 : 0; };
+  attachInfo(ch, el, 'minfo', e.m3, i => prevDay(dayOf(e.m3[i][0])),
+    ts => { const s = new Date(ts * 1000).toISOString(); return `${s.slice(0, 10)} ${s.slice(11, 16)}`; });
   const days = e.days3.map(ymd).join(', ');
   document.getElementById('mnote').textContent =
     `${days} · ${e.m3.length}봉 · 원시 가격(이후 권리락 미반영)이라 일봉 수정주가와 숫자가 다를 수 있음` +
