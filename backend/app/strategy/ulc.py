@@ -10,12 +10,14 @@ AUTO_TRADING 상태의 종목에 대해 틱마다 ``on_tick``이 호출된다. �
   상한가 도달 청산은 X가 아니라 실제 상한가(limit_up, 공식 기준가 기준)로 판단
   - 진입필터: Z >= X*(1+w) → SKIP, X < 1000 → SKIP, 하락시가 & !allow_lower_open → SKIP
   - 시나리오: SC1 [X,X*(1+p)) / SC2 [X*(1+p),X*(1+p1)) / SC3 [X*(1+p1),∞)
-  - 분할매수: SC1/2 = 2분할, SC3 = 3분할
+  - 분할매수: SC1/2 = 2분할, SC3 = 3분할. 2차 이후는 목표가 IOC 지정가 — 목표가보다
+    비싸게 사지 않고, 실제로 다 체결돼야 그 차수가 끝난다(못 사면 다시 내려올 때 재주문)
   - 청산: 평단*(1+tp) 익절(1차 매수 직후부터), 평단*(1-sl) 손절(분할 완료
     후 활성), 트레일링(옵션)
 """
 from __future__ import annotations
 
+import time
 from dataclasses import asdict, dataclass, field
 from decimal import Decimal
 from enum import Enum
@@ -60,11 +62,25 @@ def describe_exit(s: dict) -> str:
     return " · ".join(parts)
 
 
+# 2차 이후 IOC 지정가 주문의 결과를 기다리는 시간. IOC 잔량은 거래소가 곧바로 취소하고
+# 체결 통지(00)는 '체결'만 오므로, 이 시간이 지나도 다 못 샀으면 그만큼은 못 산 것으로 본다.
+# 재주문 간격이기도 하다 — 09:00 직후 다른 종목의 1차 주문과 REST 게이트를 다투지 않게 넉넉히.
+IOC_SETTLE_SEC = 5.0
+
+
 @dataclass
 class BuyLeg:
     target: float            # 매수 목표가
     amount: int              # 배정 금액(원)
-    filled: bool = False
+    filled: bool = False     # 이 차수가 끝났다(더 사지 않는다)
+    # 2차 이후는 목표가 IOC 지정가로 산다(2026-11-06 한진칼우: 2차 조건 X 이하 틱에 낸
+    # 시장가가 0.5초 새 되튄 65,000에 체결돼 평단을 못 낮추고 손절만 켰다).
+    # 체결은 주문번호로 이 차수에 모은다.
+    bought: int = 0          # 이 차수로 체결된 수량
+    spent: float = 0.0       # 그 체결 금액
+    order_no: str = ""       # 결과를 기다리는 IOC 주문번호(빈 문자열이면 없음)
+    ordered: int = 0         # 그 주문 수량
+    sent_at: float = 0.0     # 그 주문 시각(UlcEngine.clock)
 
 
 @dataclass
@@ -126,6 +142,16 @@ class UlcEngine:
     # 지금 내는 주문의 사유("1차"·"익절 절반"·"손절" 등). buy_fn/sell_fn 을 부르기 직전에 적어 두면
     # 호출측(Hub)이 주문번호에 붙여 체결 기록에 남긴다. 콜백 시그니처는 바꾸지 않는다.
     order_reason: str = ""
+    # 지금 내는 매수의 IOC 지정가(2차 이후). 0이면 1차(시장가·매도 3호가). 호출측이 보고
+    # 주문 방식을 고르고, 받은 주문번호를 last_order_no 에 적어 둔다. 주문번호를 적지 않는
+    # 호출측(백테스트·테스트)은 예전처럼 즉시 체결로 본다.
+    order_limit: float = 0.0
+    last_order_no: str = ""
+    clock: Callable[[], float] = field(default=time.monotonic)
+    # 주문 응답 전에 온 매수 체결(체결 통지가 REST 응답보다 먼저 올 수 있다). 주문번호를
+    # 받은 뒤 다시 처리한다.
+    _awaiting_order: bool = False
+    _early_fills: list = field(default_factory=list)
 
     # ------------------------------------------------------------------
     def _emit(self, msg: str) -> None:
@@ -183,14 +209,81 @@ class UlcEngine:
             f"SC{self.scenario} 진입. 1차: 첫 판단 시 "
             f"{'매도 3호가 지정가' if c.ulc_first_buy_ask3 else '시장가'} "
             f"(당일 시가 {z:,.0f}); "
-            f"추가 매수 조건: {targets or '없음'}")
+            f"추가 매수(목표가 IOC 지정가): {targets or '없음'}")
 
     # ------------------------------------------------------------------
     @property
     def all_filled(self) -> bool:
         return all(leg.filled for leg in self.legs)
 
-    def on_fill(self, side: str, qty: int, price: float) -> None:
+    def _leg_of(self, order_no: str) -> Optional[BuyLeg]:
+        if not order_no:
+            return None
+        return next((leg for leg in self.legs if leg.order_no == order_no), None)
+
+    def _leg_no(self, leg: BuyLeg) -> int:
+        return self.legs.index(leg) + 1
+
+    def _settle_ioc(self) -> None:
+        """결과를 기다린 IOC 주문을 정리한다. 다 못 샀으면 남은 금액으로 다시 내려올 때 재주문."""
+        now = self.clock()
+        for leg in self.legs:
+            if not leg.order_no or now - leg.sent_at < IOC_SETTLE_SEC:
+                continue
+            leg.order_no = ""
+            left = leg.amount - leg.spent
+            no = self._leg_no(leg)
+            if left < leg.target:
+                leg.filled = True
+                self._emit(f"{no}차 매수 끝 {leg.bought}주 (남은 금액 {left:,.0f}원 < 1주)")
+            elif leg.bought:
+                self._emit(f"{no}차 일부만 체결 {leg.bought}주 — 남은 {left:,.0f}원은 "
+                           f"{leg.target:,.0f} 이하로 다시 오면 재주문")
+            else:
+                self._emit(f"{no}차 미체결({leg.target:,.0f} 이하 매도 물량 없음) — "
+                           f"다시 {leg.target:,.0f} 이하로 오면 재주문")
+
+    async def _buy_limit_leg(self, i: int, leg: BuyLeg,
+                             buy_fn: Callable[[int], Awaitable[float]]) -> None:
+        """2차 이후: 목표가 IOC 지정가. 체결은 on_fill 이 주문번호로 이 차수에 모은다."""
+        amount = int(leg.amount - leg.spent)
+        self.order_reason = f"{i+1}차"
+        self.order_limit = leg.target
+        self.last_order_no = ""
+        self._awaiting_order = True
+        try:
+            fill = await buy_fn(amount)
+        finally:
+            self.order_limit = 0.0
+            self._awaiting_order = False
+        early, self._early_fills = self._early_fills, []
+        order_no, self.last_order_no = self.last_order_no, ""
+        qty = int(amount // leg.target)
+        if fill <= 0 or qty <= 0:
+            leg.filled = True  # 주문 거부·전송 실패 — 무한 재주문 방지
+            self._emit(f"⚠️ {i+1}차 지정가 주문 실패 — 이 차수는 건너뜀")
+        elif not order_no:
+            # 주문번호를 모르는 호출측: 즉시 체결로 본다(백테스트·테스트).
+            qty = int(amount // fill)
+            new_shares = self.shares + qty
+            self.avg_cost = (self.avg_cost * self.shares + fill * qty) / new_shares
+            self.shares = new_shares
+            leg.bought += qty
+            leg.spent += fill * qty
+            leg.filled = True
+            self._emit(f"{i+1}차 매수 {qty}주 @ {fill:,.0f} (평단 {self.avg_cost:,.0f})")
+            self._avg_synced = False
+            await self._sync_from_account()
+        else:
+            leg.order_no = order_no
+            leg.ordered = leg.bought + qty
+            leg.sent_at = self.clock()
+            self._emit(f"{i+1}차 지정가(IOC) {qty}주 @ {leg.target:,.0f} 주문 — "
+                       f"이 가격 이하로만 체결, 나머지는 취소")
+        for f in early:
+            self.on_fill(*f)
+
+    def on_fill(self, side: str, qty: int, price: float, order_no: str = "") -> None:
         """실시간 체결(00) 반영 — 평단을 실체결가로 즉시 확정.
 
         주문 REST 응답에는 체결가가 없고(주문번호만), 계좌 평단은 폴링이라
@@ -202,6 +295,9 @@ class UlcEngine:
         """
         if qty <= 0 or self.phase in (Phase.INIT, Phase.SKIPPED):
             return
+        if side == "buy" and self._awaiting_order:
+            self._early_fills.append((side, qty, price, order_no))
+            return
         if side == "buy":
             if price <= 0:
                 return
@@ -211,7 +307,19 @@ class UlcEngine:
         else:
             # 매도는 수량만 줄인다(주당 평단은 변하지 않는다).
             self.fill_qty = max(0, self.fill_qty - qty)
-        if side == "buy" and self._unconfirmed > 0 and self.phase != Phase.DONE:
+        leg = self._leg_of(order_no) if side == "buy" else None
+        if leg is not None:
+            # 2차 이후 IOC — 보유는 추정 없이 체결로만 는다.
+            leg.bought += qty
+            leg.spent += price * qty
+            if self.phase != Phase.DONE:
+                self.shares += qty
+            if leg.bought >= leg.ordered:
+                leg.order_no = ""
+                leg.filled = True
+                self._emit(f"{self._leg_no(leg)}차 매수 체결 완료 {leg.bought}주 "
+                           f"(평균 {leg.spent / leg.bought:,.0f})")
+        elif side == "buy" and self._unconfirmed > 0 and self.phase != Phase.DONE:
             add = min(qty, self._unconfirmed)
             self._unconfirmed -= add
             self._emit(f"미확인 매수 {add}주 체결 확인 → 보유 {self.shares}주 → {self.shares + add}주")
@@ -339,31 +447,36 @@ class UlcEngine:
                     f"X*(1+w)={self.x * (1 + c.ulc_w):,.0f}"
                 )
                 return
+            self._settle_ioc()
             for i, leg in enumerate(self.legs):
-                if leg.filled:
+                if leg.filled or leg.order_no:
                     continue
-                hit = (i == 0) or (price <= leg.target)
-                if hit:
-                    self.order_reason = f"{i+1}차"
-                    fill = await buy_fn(leg.amount)
-                    if fill > 0:
-                        qty = int(leg.amount // fill)
-                        if qty > 0:
-                            new_shares = self.shares + qty
-                            self.avg_cost = (self.avg_cost * self.shares + fill * qty) / new_shares
-                            self.shares = new_shares
-                            leg.filled = True
-                            self._emit(f"{i+1}차 매수 {qty}주 @ {fill:,.0f} (평단 {self.avg_cost:,.0f})")
-                            # 위 수량·평단은 직전 틱 가격 기준 추정치다.
-                            # 익절·손절이 이 평단에 걸리므로 계좌로 보정한다.
-                            self._avg_synced = False
-                            await self._sync_from_account()
-                    else:
-                        if i == 0 and c.ulc_first_buy_ask3:
-                            self.phase = Phase.SKIPPED
-                            self._emit("SKIP: 매도 3호가 지정가 1차 매수 실패 — 추가 매수 중단")
-                            return
-                        leg.filled = True  # 체결 실패해도 무한루프 방지
+                if i > 0:
+                    if price <= leg.target:
+                        await self._buy_limit_leg(i, leg, buy_fn)
+                        break  # 한 틱에 한 단계만
+                    continue
+                # 1차: 첫 판단 시 시장가 또는 매도 3호가 지정가
+                self.order_reason = f"{i+1}차"
+                fill = await buy_fn(leg.amount)
+                if fill > 0:
+                    qty = int(leg.amount // fill)
+                    if qty > 0:
+                        new_shares = self.shares + qty
+                        self.avg_cost = (self.avg_cost * self.shares + fill * qty) / new_shares
+                        self.shares = new_shares
+                        leg.filled = True
+                        self._emit(f"{i+1}차 매수 {qty}주 @ {fill:,.0f} (평단 {self.avg_cost:,.0f})")
+                        # 위 수량·평단은 직전 틱 가격 기준 추정치다.
+                        # 익절·손절이 이 평단에 걸리므로 계좌로 보정한다.
+                        self._avg_synced = False
+                        await self._sync_from_account()
+                else:
+                    if i == 0 and c.ulc_first_buy_ask3:
+                        self.phase = Phase.SKIPPED
+                        self._emit("SKIP: 매도 3호가 지정가 1차 매수 실패 — 추가 매수 중단")
+                        return
+                    leg.filled = True  # 체결 실패해도 무한루프 방지
                 break  # 한 틱에 한 단계만
             if self.all_filled:
                 self.phase = Phase.HOLDING
@@ -460,7 +573,9 @@ class UlcEngine:
         held = self.shares > 0 and self.avg_cost > 0
         return {
             "scenario": self.scenario, "x": self.x, "z": self.z, "phase": self.phase.value,
-            "legs": [{"no": i, "target": leg.target, "amount": leg.amount, "filled": leg.filled}
+            "legs": [{"no": i, "target": leg.target, "amount": leg.amount, "filled": leg.filled,
+                      "bought": leg.bought,
+                      "pending": bool(leg.order_no) and self.phase == Phase.ACCUMULATING}
                      for i, leg in enumerate(self.legs, 1)],
             "shares": self.shares, "avg_cost": self.avg_cost if held else 0.0,
             "take_profit": self.avg_cost * (1 + c.ulc_tp) if held and self.phase != Phase.TRAILING else None,
@@ -492,6 +607,8 @@ class UlcEngine:
         eng.phase = Phase(data["phase"])
         eng.scenario = int(data.get("scenario") or 0)
         eng.legs = [BuyLeg(**leg) for leg in data.get("legs") or []]
+        for leg in eng.legs:
+            leg.order_no = ""  # IOC 는 그 자리에서 끝난다 — 저장된 대기 주문은 없다
         eng.avg_cost = float(data.get("avg_cost") or 0.0)
         eng.shares = int(data.get("shares") or 0)
         eng.fill_qty = int(data.get("fill_qty") or 0)

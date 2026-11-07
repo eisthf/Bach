@@ -144,11 +144,16 @@ async def test_resumed_engine_trades_on_original_plan(mock_hub, tmp_path):
     def buy(code, amount):
         bought.append(amount)
         return OrderResult(ok=True, code=code, side="buy", filled_qty=0, price=1_350.0)
+
+    def buy_limit(code, qty, price, ioc=False):
+        bought.append((qty, price, ioc))
+        return OrderResult(ok=True, code=code, side="buy", filled_qty=0, price=price, order_no="N2")
     hub.broker.buy = buy
+    hub.broker.buy_limit = buy_limit
     await hub._run_engine_tick(stock, tick(1_400.0))
     assert bought == []
     await hub._run_engine_tick(stock, tick(1_350.0))
-    assert bought == [500_000]               # 2차 ≤ 1,351
+    assert bought == [(370, 1_351.0, True)]  # 2차 ≤ 1,351: 목표가 IOC 지정가로 50만 원어치
 
 
 async def test_overnight_manual_sell_shrinks_engine(mock_hub, tmp_path):

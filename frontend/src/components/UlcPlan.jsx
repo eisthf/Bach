@@ -52,7 +52,9 @@ export default function UlcPlan({ engine, config }) {
       {engine.phase !== 'SKIPPED' && <div className="ulc-plan-row ulc-legs">
         {engine.legs.map((l) => (
           <span key={l.no} className={`ulc-leg${l.filled ? ' filled' : ''}`}>
-            {l.no}차 {l.filled ? '✓ 체결' : l.no === 1 ? `시가 매수 (${won(l.target)})` : `≤ ${won(l.target)}`}
+            {l.no}차 {l.filled ? '✓ 체결' : l.no === 1 ? `시가 매수 (${won(l.target)})` : `≤ ${won(l.target)} 지정가`}
+            {!l.filled && l.pending && <span className="muted"> · 주문 중</span>}
+            {!l.filled && l.bought > 0 && <span className="muted"> · {won(l.bought)}주 체결</span>}
             <span className="muted"> {won(l.amount)}원</span>
           </span>
         ))}

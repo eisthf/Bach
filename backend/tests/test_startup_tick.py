@@ -118,10 +118,12 @@ async def test_older_queue_is_ignored_but_new_ticks_continue(mock_hub, monkeypat
     await hub._prepare_auto(stock)
     await hub._run_engine_tick(stock, tick.model_copy(update={'received_ns': tick.received_ns - 1}))
     hub.broker.buy.assert_not_called()
-    hub.broker.buy.side_effect = None
-    hub.broker.buy.return_value = hub.broker.buy_ask3.return_value
+    hub.broker.buy_limit = Mock(return_value=hub.broker.buy_ask3.return_value)
+    await hub._run_engine_tick(stock, tick.model_copy(update={'received_ns': tick.received_ns - 1}))
+    hub.broker.buy_limit.assert_not_called()
     await hub._run_engine_tick(stock, tick.model_copy(update={'received_ns': tick.received_ns + 1}))
-    hub.broker.buy.assert_called_once()
+    hub.broker.buy_limit.assert_called_once_with(stock.code, 121, 4100.0, True)   # 2차 ≤ X: IOC 지정가
+    hub.broker.buy.assert_not_called()
 
 
 async def test_default_market_buy_uses_same_startup_path(mock_hub, monkeypatch):

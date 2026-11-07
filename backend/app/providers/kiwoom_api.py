@@ -815,7 +815,7 @@ def place_order(
     quantity: int,
     side: str,            # "buy" | "sell"
     mock: bool = False,
-    order_type: str = "3",  # 매매구분(trde_tp): 3=시장가, 6=최유리지정가, 0=보통
+    order_type: str = "3",  # 매매구분(trde_tp): 3=시장가, 6=최유리지정가, 0=보통, 10=보통(IOC)
     price: str = "",        # 주문단가(ord_uv): 시장가면 ""
 ) -> Optional[str]:
     """주문 전송 후 주문번호(ord_no) 반환, 실패 시 None.

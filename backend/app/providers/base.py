@@ -126,8 +126,11 @@ class Broker(ABC):
     def buy(self, code: str, amount_krw: int) -> OrderResult:
         """금액 기준 매수(현재가로 수량 환산)."""
 
-    def buy_limit(self, code: str, qty: int, price: float) -> OrderResult:
-        """수량·가격 지정가 매수. 미지원 브로커는 주문하지 않는다."""
+    def buy_limit(self, code: str, qty: int, price: float, ioc: bool = False) -> OrderResult:
+        """수량·가격 지정가 매수. 미지원 브로커는 주문하지 않는다.
+
+        ``ioc``: 그 자리에서 지정가 이하로 살 수 있는 만큼만 사고 잔량은 바로 취소한다.
+        주문이 접수되면 한 주도 못 사도 ``ok`` 다(체결 수량은 체결 통지로 안다)."""
         return OrderResult(ok=False, code=code, side="buy", filled_qty=0,
                            price=price, message="지정가 주문 미지원")
 

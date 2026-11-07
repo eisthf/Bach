@@ -541,6 +541,7 @@ class Hub:
                     str(fill.get("side") or ""),
                     int(fill.get("qty") or 0),
                     float(fill.get("price") or 0.0),
+                    str(fill.get("order_no") or ""),
                 )
             except Exception:  # noqa: BLE001  (체결 통지가 엔진을 죽이지 않게)
                 logger.exception("[%s] 엔진 체결 반영 실패", code)
@@ -711,13 +712,24 @@ class Hub:
             result = None
             error_type = None
             try:
-                first_leg = not any(leg.filled for leg in eng.legs)
-                buy = (self.broker.buy_ask3 if first_leg and eng.config.ulc_first_buy_ask3
-                       else self.broker.buy)
-                result = await asyncio.to_thread(buy, stock.code, amount)
+                limit = eng.order_limit
+                if limit > 0:
+                    # 2차 이후: 목표가 IOC 지정가 — 되튄 가격에 사지 않는다.
+                    result = await asyncio.to_thread(
+                        self.broker.buy_limit, stock.code, int(amount // limit), limit, True)
+                else:
+                    first_leg = not any(leg.filled for leg in eng.legs)
+                    buy = (self.broker.buy_ask3 if first_leg and eng.config.ulc_first_buy_ask3
+                           else self.broker.buy)
+                    result = await asyncio.to_thread(buy, stock.code, amount)
                 self.tag_order(result, "ulc", eng.order_reason, ulc_ctx())
                 if not result.ok:
                     self._log(f"[{stock.code}] 자동매수 실패: {result.message}")
+                elif limit > 0:
+                    eng.last_order_no = result.order_no or ""
+                    if not hasattr(self.data, "on_order_fill"):
+                        # 체결 통지가 없는 브로커(mock)는 주문 응답이 곧 체결 결과다.
+                        eng.on_fill("buy", result.filled_qty, result.price, result.order_no or "")
                 return result.price if result.ok else 0.0
             except (Exception, asyncio.CancelledError) as exc:
                 error_type = type(exc).__name__

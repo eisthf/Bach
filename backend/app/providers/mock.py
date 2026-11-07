@@ -332,13 +332,18 @@ class MockBroker(Broker):
                            order_no=order_no,
                            message=f"{qty}주 매수 체결 @ {price:,.0f}")
 
-    def buy_limit(self, code: str, qty: int, price: float) -> OrderResult:
+    def buy_limit(self, code: str, qty: int, price: float, ioc: bool = False) -> OrderResult:
         # 지정가 이하의 현재가로 즉시 체결(그보다 비싸면 미체결 대신 거부로 단순화).
+        # IOC 는 접수 후 한 주도 못 산 것으로 본다(잔량 취소).
         cur = self._price(code)
         if qty <= 0 or price <= 0 or cur <= 0:
             return OrderResult(ok=False, code=code, side="buy", filled_qty=0,
                                price=price, message="수량·가격 또는 현재가 없음")
         if cur > price:
+            if ioc:
+                return OrderResult(ok=True, code=code, side="buy", filled_qty=0, price=price,
+                                   order_no=self._next_order_no(),
+                                   message=f"현재가 {cur:,.0f}원이 지정가보다 높음 — IOC 잔량 취소")
             return OrderResult(ok=False, code=code, side="buy", filled_qty=0,
                                price=price, message=f"현재가 {cur:,.0f}원이 지정가보다 높음")
         pos = self.position(code)
