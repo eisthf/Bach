@@ -61,6 +61,17 @@ def bonus(mock_hub):
     bt._demo = lambda: False  # 실제 요일·장 시간 규칙으로 시험한다
     bt.RETRY_SEC = 0.01
     bt.STEP_SEC = 0.01
+    on_disclosure = bt.on_disclosure
+
+    async def with_terms(d, ratio=1.0):
+        # DART 본문(1주당 배정)이 감지와 함께 읽힌 것으로 둔다. 배정 기준 시험은 on_disclosure 를 직접 쓴다.
+        job = await on_disclosure(d)
+        if job is not None:
+            bt.apply_terms(d.code, {"ratio": ratio})
+        return job
+
+    bt.on_disclosure = with_terms
+    bt.raw_on_disclosure = on_disclosure
     yield hub, mgr, clock, bt
     for job in bt.jobs.values():
         if job.task:
@@ -332,6 +343,7 @@ async def test_demo_clock_ignores_weekday_and_hours(mock_hub):
     sunday = kst("2026-10-25 21:00")
     bt._now = lambda: sunday
     job = await bt.on_disclosure(disclosure(sunday))
+    bt.apply_terms(job.code, {"ratio": 1.0})
     try:
         assert job.target_at == kst("2026-10-25 21:01").isoformat()
         await wait_status(job, "sent")
@@ -615,3 +627,105 @@ async def test_watcher_routes_ex_notices(tmp_path):
     assert set(got) == {("373170", "권리락(무상증자)"), ("480370", "권리락 기준가격 안내")}
     await w.poll_once(kst("2026-10-26 17:01"))
     assert calls == ["무상증자", "권리락", "무상증자"]   # '권리락' 검색은 몇 번에 한 번
+
+
+# ---------------------------------------------------------------- 1주당 배정 기준(min_ratio)
+def test_min_ratio_setting():
+    s = BonusSettings.parse({})
+    assert s.min_ratio == 1.0
+    assert BonusSettings.parse({"min_ratio": 0}).min_ratio == 0
+    with pytest.raises(ValueError):
+        BonusSettings.parse({"min_ratio": 11})
+    bt = BonusTradeManager.__new__(BonusTradeManager)
+    bt.settings = BonusSettings.parse({"min_ratio": 0.5})
+    assert "1주당 배정 0.5주 이상만" in bt.describe()
+
+
+async def test_ratio_below_minimum_skips_as_soon_as_terms_arrive(bonus):
+    """1주당 0.5주 배정 < 기준 1주 → 주문 시각을 기다리지 않고 '매수 안 함', 카드는 수동으로 남는다."""
+    hub, mgr, clock, bt = bonus
+    bt.settings = BonusSettings(enabled=True, order_mode="expected")
+    bt._now = lambda: kst("2026-10-26 10:01")                   # 목표 10:40 — 아직 주문 전
+    job = await bt.raw_on_disclosure(disclosure(kst("2026-10-26 10:00")))
+    assert job.status == "waiting"
+    bt.apply_terms("005930", {"ratio": 0.5, "record_date": "2026-11-10"})
+    assert job.status == "skipped" and "0.5주 < 기준 1주" in job.message
+    item = hub.manual_trades.items["005930"]
+    assert item.origin == "bonus" and not item.stop.enabled and not item.take_profit.enabled
+    await asyncio.sleep(0.05)
+    assert hub.broker.position("005930").quantity == 0
+
+
+async def test_order_waits_for_ratio_then_buys(bonus):
+    """시장가(감지 즉시) 방식이어도 배정 비율을 확인할 때까지 주문하지 않는다."""
+    hub, mgr, clock, bt = bonus
+    bt.settings = BonusSettings(enabled=True, order_mode="market")
+    bt._now = lambda: kst("2026-10-26 10:01")
+    job = await bt.raw_on_disclosure(disclosure(kst("2026-10-26 10:00")))
+    await asyncio.sleep(0.05)
+    assert job.status == "waiting" and "1주당 배정 확인 대기" in job.message
+    assert hub.broker.position("005930").quantity == 0
+    bt.apply_terms("005930", {"ratio": 1.0})
+    await wait_status(job, "sent")
+    assert hub.broker.position("005930").quantity > 0
+
+
+async def test_unreadable_terms_skip(bonus):
+    hub, mgr, clock, bt = bonus
+    bt.settings = BonusSettings(enabled=True, order_mode="market")
+    bt._now = lambda: kst("2026-10-26 10:01")
+    job = await bt.raw_on_disclosure(disclosure(kst("2026-10-26 10:00")))
+    bt.terms_failed("005930")
+    assert job.status == "skipped" and "확인하지 못함" in job.message
+
+    # 본문은 찾았지만 배정 비율을 못 읽은 경우도 같다
+    hub.manual_trades.items.pop("005930")
+    bt.jobs.pop("005930")
+    job = await bt.raw_on_disclosure(disclosure(kst("2026-10-26 10:00")))
+    bt.apply_terms("005930", {"record_date": "2026-11-10"})
+    assert job.status == "skipped"
+
+
+async def test_min_ratio_zero_does_not_wait_for_terms(bonus):
+    hub, mgr, clock, bt = bonus
+    bt.settings = BonusSettings(enabled=True, order_mode="market", min_ratio=0)
+    bt._now = lambda: kst("2026-10-26 10:01")
+    job = await bt.raw_on_disclosure(disclosure(kst("2026-10-26 10:00")))
+    await wait_status(job, "sent")
+
+
+async def test_ratio_above_minimum_buys(bonus):
+    hub, mgr, clock, bt = bonus
+    bt.settings = BonusSettings(enabled=True, order_mode="market", min_ratio=2)
+    bt._now = lambda: kst("2026-10-26 10:01")
+    job = await bt.raw_on_disclosure(disclosure(kst("2026-10-26 10:00")))
+    bt.apply_terms("005930", {"ratio": 3.0})
+    await wait_status(job, "sent")
+
+
+async def test_simulated_disclosure_uses_given_ratio(bonus, tmp_path):
+    hub, mgr, clock, bt = bonus
+    bt.settings = BonusSettings(enabled=True, order_mode="market")
+    bt._now = lambda: datetime.now(KST)
+    bt._demo = lambda: True
+    w = BonusWatcher(_Mgr({hub.account: hub}), fetch=lambda start, end, keyword="무상증자": [],
+                     path=tmp_path / "w.json")
+    await w.simulate("005930", "삼성전자", ratio=0.5)
+    job = bt.jobs["005930"]
+    assert job.ratio == 0.5 and job.status == "skipped"
+
+
+async def test_cancel_endpoint_runs_on_event_loop(bonus, monkeypatch):
+    """[취소] API: 매수 작업(asyncio.Task)을 취소하므로 async 엔드포인트여야 한다(스레드풀이면 500)."""
+    import inspect
+
+    from app import main
+
+    hub, mgr, clock, bt = bonus
+    assert inspect.iscoroutinefunction(main.bonus_cancel)
+    bt.settings = BonusSettings(enabled=True, order_mode="expected")
+    bt._now = lambda: kst("2026-10-26 10:01")
+    job = await bt.on_disclosure(disclosure(kst("2026-10-26 10:00")))
+    monkeypatch.setattr(main, "_hub", lambda account: hub)
+    out = await main.bonus_cancel("mock", "005930")
+    assert job.status == "cancelled" and out["jobs"][0]["status"] == "cancelled"

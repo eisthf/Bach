@@ -261,7 +261,8 @@ async def bonus_simulate(payload: dict):
     try:
         d = await manager.bonus_watcher.simulate(
             code, (payload.get("name") or "").strip(), (payload.get("title") or "").strip(),
-            bool(payload.get("paid_too")), float(payload.get("minutes_ago") or 0))
+            bool(payload.get("paid_too")), float(payload.get("minutes_ago") or 0),
+            float(payload.get("ratio") if payload.get("ratio") is not None else 1.0))
     except ValueError as e:
         raise HTTPException(400, str(e))
     return {"ok": True, "acptno": d.acptno}
@@ -281,7 +282,8 @@ def bonus_settings(account: str, payload: dict):
 
 
 @app.post("/api/{account}/bonus/jobs/{code}/cancel")
-def bonus_cancel(account: str, code: str):
+async def bonus_cancel(account: str, code: str):
+    # async 여야 한다 — 매수 작업(asyncio.Task)을 이벤트 루프에서 취소한다(스레드풀에선 current_task 가 실패).
     try:
         return _hub(account).bonus_trades.cancel(code)
     except KeyError:

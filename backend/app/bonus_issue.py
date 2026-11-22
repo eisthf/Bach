@@ -22,6 +22,9 @@
   기준가 대비 ``open_max_pct``(기본 10%)를 넘지 않을 때만 산다 — 주문 방식이 시장가·상한가여도 시가
   예상가를 확인한 뒤 낸다. 휴장일은 모른다 — 그날 못 사면 기한(목표일 15:30)에 끝난다.
   감지했을 때 목표 시각이 이미 지났으면(서버가 꺼져 있던 동안 재개됨) 사지 않고 '건너뜀'으로 남긴다.
+  1주당 배정(DART 본문)이 ``min_ratio``(기본 1주, 0이면 보지 않음) 이상일 때만 산다. 본문은 감지 뒤
+  백그라운드로 읽으므로 그 전엔 주문을 기다리고, 읽은 즉시 기준 미달이면(또는 끝내 못 읽으면) 주문 시각을
+  기다리지 않고 '건너뜀' — 카드는 손절·익절을 끈 수동으로 남는다.
 
   카드 상태: 매수 대기 → 산 뒤 '자동'(손절·익절 감시) / '수동'(둘 다 끔, 사람이 매매) / '갭상승'.
   [수동으로]는 언제든(매수 대기 취소 포함). 수동에서 켜는 **갭상승 모드**(``GapPlan``)는 켠 날(D) 다음
@@ -293,6 +296,7 @@ class BonusWatcher:
         self.fetch_terms = terms
         self._polls = 0
         self._terms_tasks: Dict[str, asyncio.Task] = {}
+        self._sim_ratio = 1.0  # (데모) 가짜 공시의 1주당 배정
         # 첫 계좌 상태 파일 옆(state.json → state.bonus_watch.json). 데모·미리보기 서버가 실서버의
         # '본 공시' 기록을 건드려 실서버가 공시를 놓치지 않게 인스턴스마다 따로 둔다.
         if path is None:
@@ -394,7 +398,10 @@ class BonusWatcher:
                     hub.bonus_trades.apply_terms(code, terms)
                 return
             await asyncio.sleep(self.TERMS_RETRY_SEC)
-        self.manager._log(f"[{code}] ⚠️ 무상증자 조건(신주배정기준일)을 DART에서 못 읽음 — 권리락 안내 공시로만 확정")
+        self.manager._log(f"[{code}] ⚠️ 무상증자 조건(배정 비율·신주배정기준일)을 DART에서 못 읽음 — "
+                          "권리락일은 안내 공시로만 확정")
+        for hub in self.manager.hubs.values():
+            hub.bonus_trades.terms_failed(code)
 
     def _apply_ex(self, rows: List[dict]) -> None:
         for n in (ex_notice_of(r) for r in rows):
@@ -467,8 +474,11 @@ class BonusWatcher:
             added = False
             for hub in self.manager.hubs.values():
                 try:
-                    await hub.bonus_trades.on_disclosure(d)
+                    job = await hub.bonus_trades.on_disclosure(d)
                     added = added or d.code in hub.bonus_trades.jobs
+                    if job is not None and d.acptno.startswith("SIM"):
+                        # 데모: DART 대신 가짜 배정 비율(매수 작업이 돌기 전에)
+                        hub.bonus_trades.apply_terms(d.code, {"ratio": self._sim_ratio})
                 except Exception:  # noqa: BLE001
                     logger.exception("[%s] 무상증자 매수 처리 오류(%s)", d.code, hub.account)
             if added and not d.acptno.startswith("SIM"):
@@ -478,8 +488,8 @@ class BonusWatcher:
         return dispatched
 
     async def simulate(self, code: str, name: str, title: str = "", paid_too: bool = False,
-                       minutes_ago: float = 0.0) -> Disclosure:
-        """(데모) 가짜 공시를 감지한 것처럼 처리한다."""
+                       minutes_ago: float = 0.0, ratio: float = 1.0) -> Disclosure:
+        """(데모) 가짜 공시를 감지한 것처럼 처리한다. ``ratio``: DART 본문 대신 쓸 1주당 배정."""
         at = (now_kst() - timedelta(minutes=minutes_ago)).replace(second=0, microsecond=0)
         title = title or ("유무상증자결정" if paid_too else "무상증자결정")
         row = {"time": at.strftime("%Y-%m-%d %H:%M"), "corp": name or code, "title": title,
@@ -492,6 +502,7 @@ class BonusWatcher:
         orig, self.fetch = self.fetch, (lambda _start, _end, keyword="무상증자":
                                         [row] if keyword == "무상증자" else [])
         try:
+            self._sim_ratio = ratio
             await self.poll_once()
         finally:
             self.fetch = orig
@@ -514,6 +525,7 @@ class BonusSettings:
     skip_above_pct: float = 0.0      # >0: (장중 공시) 체결 기준가가 기준가 대비 이 % 이상이면 안 산다
     open_max_pct: float = 10.0       # 장전·장후 공시: 시가 단일가 예상가가 기준가 대비 이 %를 넘으면 안 산다
     include_paid: bool = False       # 유무상증자도 산다
+    min_ratio: float = 1.0           # 1주당 배정이 이 주 이상일 때만 산다(DART 본문). 0이면 보지 않음
     lead_sec: int = 20               # expected: 단일가 마감 몇 초 전에 낼까
     resume_min: int = 40             # 장중 공시 → 첫 체결까지(정지 30분 + 재개 단일가 10분)
 
@@ -536,7 +548,8 @@ class BonusSettings:
                     trail_pct=float(cur["trail_pct"]),
                     stop_pct=float(cur["stop_pct"]), skip_above_pct=float(cur["skip_above_pct"] or 0),
                     open_max_pct=float(cur["open_max_pct"] or 0),
-                    include_paid=bool(cur["include_paid"]), lead_sec=int(float(cur["lead_sec"])),
+                    include_paid=bool(cur["include_paid"]), min_ratio=float(cur["min_ratio"] or 0),
+                    lead_sec=int(float(cur["lead_sec"])),
                     resume_min=int(float(cur["resume_min"])))
         except (TypeError, ValueError):
             raise ValueError("설정 값은 숫자여야 합니다.") from None
@@ -554,6 +567,8 @@ class BonusSettings:
             raise ValueError("건너뛰기 기준은 0(끔)~30% 여야 합니다.")
         if not 0 <= s.open_max_pct <= 30:
             raise ValueError("장전 공시 시가 상한은 0(제한 없음)~30% 여야 합니다.")
+        if not 0 <= s.min_ratio <= 10:
+            raise ValueError("1주당 배정 기준은 0(보지 않음)~10주여야 합니다.")
         if not 3 <= s.lead_sec <= 120:
             raise ValueError("마감 전 주문 시각은 3~120초여야 합니다.")
         if not 1 <= s.resume_min <= 120:
@@ -632,6 +647,7 @@ class BuyJob:
     kind: str = "intraday"           # intraday: 장중 재개 단일가 / open: 장 시작(09:00) 단일가
     # 권리락 일정(DART 본문 + KIND 안내). ex_date 는 기준일 직전 평일(예정) → 안내 공시로 확정.
     ratio: float = 0.0
+    terms: str = ""                  # DART 본문 조건: "" 조회 중 / ok 읽음 / failed 못 읽음
     record_date: str = ""
     listing_date: str = ""
     ex_date: str = ""
@@ -763,8 +779,9 @@ class BonusTradeManager:
         skip = f", 재개가 기준가 +{s.skip_above_pct:g}% 이상 건너뜀" if s.skip_above_pct > 0 else ""
         opening = f", 시가 매수는 +{s.open_max_pct:g}% 이하만" if s.open_max_pct > 0 else ""
         part = f"(절반, 나머지 고점 −{s.trail_pct:g}%)" if s.take_profit_partial else ""
+        ratio = f", 1주당 배정 {s.min_ratio:g}주 이상만" if s.min_ratio > 0 else ""
         return (f"{s.budget:,}원 {mode}, 익절 +{s.take_profit_pct:g}%{part}, 손절 −{s.stop_pct:g}%"
-                f"{skip}{opening}" + (", 유무상 포함" if s.include_paid else ""))
+                f"{skip}{opening}{ratio}" + (", 유무상 포함" if s.include_paid else ""))
 
     # -- 공시 → 매수 작업 -----------------------------------------------------
     async def on_disclosure(self, d: Disclosure) -> Optional[BuyJob]:
@@ -960,13 +977,47 @@ class BonusTradeManager:
             return
         record = terms.get("record_date") or ""
         values = {"ratio": float(terms.get("ratio") or 0), "record_date": record,
-                  "listing_date": terms.get("listing_date") or ""}
+                  "listing_date": terms.get("listing_date") or "", "terms": "ok"}
         if record and not job.ex_confirmed:
             values["ex_date"] = prev_weekday(date.fromisoformat(record)).isoformat()
         self._update(job, **values)
         self._log(job, f"무상증자 조건 — 1주당 {values['ratio']:g}주, 신주배정기준일 {record}"
                   + (f", 권리락일 {job.ex_date}{'' if job.ex_confirmed else '(예정)'}" if job.ex_date else "")
                   + (f", 상장예정 {values['listing_date']}" if values["listing_date"] else ""))
+        self._check_ratio_now(job)
+
+    def terms_failed(self, code: str) -> None:
+        """DART 본문을 끝내 못 읽음 — 배정 기준이 켜져 있으면 대기 중인 매수를 그만둔다."""
+        job = self.jobs.get(code)
+        if job is None or job.terms:
+            return
+        self._update(job, terms="failed")
+        self._check_ratio_now(job)
+
+    def _ratio_ok(self, job: BuyJob) -> bool:
+        """주문해도 되는가. 배정 비율을 아직 모르면 False(기다림), 기준 미달·확인 불가면 _Skip."""
+        need = self.settings.min_ratio
+        if need <= 0 or job.ratio >= need:
+            return True
+        if job.ratio > 0:
+            raise _Skip(f"1주당 배정 {job.ratio:g}주 < 기준 {need:g}주")
+        if job.terms:
+            raise _Skip(f"1주당 배정을 DART 본문에서 확인하지 못함(기준 {need:g}주)")
+        return False
+
+    def _check_ratio_now(self, job: BuyJob) -> None:
+        """조건을 읽은 즉시: 대기 중인 매수가 기준에 못 미치면 주문 시각을 기다리지 않고 그만둔다."""
+        if job.status not in ACTIVE_JOB or job.status == "ordering":
+            return
+        try:
+            self._ratio_ok(job)
+        except _Skip as e:
+            if job.task is not None and job.task is not asyncio.current_task():
+                job.task.cancel()
+            job.task = None
+            self._update(job, "skipped", str(e))
+            self._log(job, f"매수 안 함 — {e} · 수동 카드로")
+            self._manual_exits(job.code, "매수 안 함")
 
     def apply_ex_notice(self, n: dict) -> None:
         """KIND 권리락 안내 → 권리락일 확정(안내 다음 평일; 장 시작 전 안내면 그날)."""
@@ -1233,6 +1284,11 @@ class BonusTradeManager:
     async def _place(self, job: BuyJob, quote: Optional[dict] = None, basis_price: float = 0.0,
                      basis: str = "") -> bool:
         """주문 1회. 성공이면 True. 결과를 모르는 실패면 다음 시도 전에 계좌를 확인한다."""
+        if not self._ratio_ok(job):
+            if not job.message.startswith("1주당 배정 확인 대기"):
+                self._log(job, "1주당 배정 확인 대기(DART 본문) — 확인되면 주문")
+            self._update(job, "waiting", "1주당 배정 확인 대기(DART 본문)")
+            return False
         await self._yield_to_ulc(job)
         if job.attempts > 0 and await self._already_ordered(job):
             return True

@@ -160,11 +160,12 @@ function SimulateForm() {
   const { actions } = useStore()
   const [code, setCode] = useState('')
   const [paid, setPaid] = useState(false)
+  const [ratio, setRatio] = useState('1')
   const [msg, setMsg] = useState('')
   const submit = async (e) => {
     e.preventDefault()
     try {
-      await actions.simulateBonus({ code: code.trim(), paid_too: paid })
+      await actions.simulateBonus({ code: code.trim(), paid_too: paid, ratio: Number(ratio) || 0 })
       setMsg('가짜 공시를 넣었습니다')
       setCode('')
     } catch (e2) {
@@ -176,6 +177,9 @@ function SimulateForm() {
       <span className="muted">데모: 가짜 공시</span>
       <input placeholder="종목코드" value={code} onChange={(e) => setCode(e.target.value)} aria-label="가짜 공시 종목코드" />
       <label className="checkfield"><input type="checkbox" checked={paid} onChange={(e) => setPaid(e.target.checked)} />유무상</label>
+      <label className="checkfield">1주당
+        <input type="number" min="0" step="0.1" value={ratio} onChange={(e) => setRatio(e.target.value)}
+          aria-label="가짜 공시 1주당 배정" style={{ width: '4.5em' }} />주</label>
       <button type="submit" className="add-btn" disabled={!code.trim()}>공시 발생</button>
       {msg && <span className="muted">{msg}</span>}
     </form>
@@ -264,6 +268,11 @@ function BonusSettingsForm({ account, state }) {
           장중 재개가 건너뛰기 +%
           <input type="number" min="0" max="30" step="1" value={draft.skip_above_pct}
             onChange={(e) => set({ skip_above_pct: e.target.value })} />
+        </label>
+        <label title="DART 공시 본문의 '1주당 신주배정 주식수'가 이 값 이상일 때만 삽니다. 못 미치거나 본문을 읽지 못하면 사지 않고 목록에 수동 카드로만 남깁니다. 확인될 때까지 주문은 기다립니다. 0이면 보지 않음.">
+          1주당 배정 이상(주)
+          <input type="number" min="0" max="10" step="0.1" value={draft.min_ratio ?? 1}
+            onChange={(e) => set({ min_ratio: e.target.value })} />
         </label>
         <label className="checkfield">
           <input type="checkbox" checked={!!draft.include_paid} onChange={(e) => set({ include_paid: e.target.checked })} />
