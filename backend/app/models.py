@@ -92,6 +92,10 @@ class AutoConfig(BaseModel):
     # 실행 모드
     ulc_first_buy_only: bool = Field(False, description="1차 매수만 실행")
     ulc_first_buy_ask3: bool = Field(True, description="1차 매수를 매도 3호가 지정가(IOC)로 주문")
+    ulc_first_buy_auction: bool = Field(
+        True, description="1차 매수를 장 시작 단일가에 낸다(예상체결가로 수량, 상한가 지정가). "
+                          "못 내면 개장 뒤 ulc_first_buy_ask3 방식")
+    ulc_auction_lead_sec: int = Field(20, ge=3, le=120, description="시가 단일가 1차: 09:00 몇 초 전에 낼까")
     use_3min_bar_timing: bool = Field(
         False, description="완성된 3분봉 종가가 확정될 때만 매매 조건 평가")
 

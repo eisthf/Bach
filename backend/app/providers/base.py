@@ -139,6 +139,11 @@ class Broker(ABC):
         return OrderResult(ok=False, code=code, side="buy", filled_qty=0,
                            price=0, message="매도 3호가 주문 미지원")
 
+    def cancel_order(self, code: str, order_no: str) -> OrderResult:
+        """주문의 미체결 잔량 전부 취소. 잔량이 없거나(전량 체결) 미지원이면 ok=False."""
+        return OrderResult(ok=False, code=code, side="buy", filled_qty=0, price=0,
+                           order_no=order_no, message="취소 주문 미지원")
+
     @abstractmethod
     def sell(self, code: str, qty: int) -> OrderResult:
         """수량 기준 매도."""

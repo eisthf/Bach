@@ -117,7 +117,7 @@ def _post(url: str, headers: dict, body: dict, timeout: float,
     """성공 응답 반환, 실패 시 예외. 주문 호출은 retries=1로 재전송을 금지한다."""
     resp: Optional[requests.Response] = None
     for attempt in range(retries):
-        is_order = headers.get("api-id") in ("kt10000", "kt10001")
+        is_order = headers.get("api-id") in ("kt10000", "kt10001", "kt10003")
         if is_order:
             mark("gate_start")
         _reserve_slot(priority=is_order)
@@ -853,6 +853,24 @@ def place_order(
     order_no = data.get("ord_no")
     logger.info("✅ [%s] %s 주문 성공: 주문번호 %s, 수량 %s", code, side, order_no, quantity)
     return order_no
+
+
+def cancel_order(token: str, code: str, orig_order_no: str, mock: bool = False) -> Optional[str]:
+    """취소 주문(kt10003) — 원주문의 미체결 잔량 전부(cncl_qty "0"). 새 주문번호, 실패 시 None.
+
+    이미 전량 체결됐거나 잔량이 없으면 키움이 거부한다(return_code ≠ 0 → KiwoomRequestError).
+    """
+    url = f"{rest_host(mock)}/api/dostk/ordr"
+    headers = {
+        "Content-Type": "application/json;charset=UTF-8",
+        "authorization": f"Bearer {token}",
+        "api-id": "kt10003",
+    }
+    body = {"dmst_stex_tp": "KRX", "orig_ord_no": orig_order_no, "stk_cd": code, "cncl_qty": "0"}
+    resp = _post(url, headers, body, timeout=10, retries=1)
+    data = resp.json()
+    logger.info("✅ [%s] 취소 주문 성공: 원주문 %s → %s", code, orig_order_no, data.get("ord_no"))
+    return data.get("ord_no") or None
 
 
 # ---------------------------------------------------------------------------

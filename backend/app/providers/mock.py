@@ -359,6 +359,11 @@ class MockBroker(Broker):
         # 모의 데이터에는 호가장이 없으므로 현재가 체결로 주문 경로만 시연한다.
         return self.buy(code, amount_krw)
 
+    def cancel_order(self, code: str, order_no: str) -> OrderResult:
+        # 모의 주문은 즉시 체결되거나 거부돼 남는 잔량이 없다.
+        return OrderResult(ok=False, code=code, side="buy", filled_qty=0, price=0, order_no=order_no,
+                           message="잔량 없음(모의 주문은 즉시 체결)")
+
     def sell(self, code: str, qty: int) -> OrderResult:
         pos = self.position(code)
         if qty > pos.quantity:

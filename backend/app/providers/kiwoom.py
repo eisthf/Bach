@@ -790,6 +790,16 @@ class KiwoomBroker(Broker):
                            message=(f"{qty}주 매도 3호가 지정가{'(IOC)' if ioc else ''} {price:,.0f}원 매수 전송"
                                     if ok else "주문 실패"))
 
+    def cancel_order(self, code: str, order_no: str) -> OrderResult:
+        try:
+            new_no = self._data._call(kw.cancel_order, code, order_no, mock=self._mock, retry_auth=False)
+        except (kw.KiwoomRequestError, kw.KiwoomAuthError) as e:
+            return OrderResult(ok=False, code=code, side="buy", filled_qty=0, price=0, order_no=order_no,
+                               message=f"취소 실패(잔량 없음·전량 체결 포함): {e}")
+        self._pos_ts = 0.0
+        return OrderResult(ok=new_no is not None, code=code, side="buy", filled_qty=0, price=0,
+                           order_no=new_no or order_no, message=f"주문 {order_no} 잔량 취소")
+
     def sell(self, code: str, qty: int) -> OrderResult:
         try:
             order_no = self._data._call(kw.place_order, code, qty, "sell",

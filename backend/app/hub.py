@@ -18,6 +18,7 @@ import os
 import time
 from contextlib import aclosing
 from dataclasses import dataclass, field
+from datetime import timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
@@ -57,6 +58,10 @@ class Stock:
     startup_tick_ns: int = 0
     # 전 거래일에서 이월된 엔진이 장 시작 후 계좌 대조를 마칠 때까지 주문을 막는다.
     resume_pending: bool = False
+    # 장 시작 단일가 1차 주문(Hub._auction_order). 엔진이 생기기 전 체결을 여기 모았다가 엔진 1차로 넘긴다.
+    # {"day", "status"(sending/sent/skipped/failed/cancelled), "order_no", "amount", "qty",
+    #  "expected", "upper", "scenario", "bought", "spent"}
+    auction: Optional[dict] = None
 
 
 def _engine_signature(eng) -> tuple:
@@ -87,6 +92,7 @@ class Hub:
         self._orders_task: Optional[asyncio.Task] = None
         self._resync_task: Optional[asyncio.Task] = None
         self._connection_task: Optional[asyncio.Task] = None
+        self._auction_task: Optional[asyncio.Task] = None
         self._account_sync_task: Optional[asyncio.Task] = None
         self._sync_state = "pending"
         # 계좌별 영속화 파일. mock 계좌는 하위호환을 위해 기존 state.json 사용.
@@ -534,6 +540,16 @@ class Hub:
             f"{fill.get('price', 0):,.0f} (미체결 {fill.get('unfilled')})"
         )
         stock = self.stocks.get(code)
+        rec = stock.auction if stock is not None else None
+        if (fill.get("side") == "buy" and rec and rec.get("order_no")
+                and str(fill.get("order_no") or "") == rec["order_no"]
+                and stock.engine is None and stock.machine.state != TradeState.IDLE):
+            # 장 시작 단일가 1차 체결 — 엔진이 생기면(시가 확인 뒤) 1차로 넘긴다.
+            qty = int(fill.get("qty") or 0)
+            rec["bought"] += qty
+            rec["spent"] += qty * float(fill.get("price") or 0)
+            asyncio.create_task(self._refresh_status(code))
+            return
         if fill.get("side") == "buy" and stock is not None and self._unmanaged(stock):
             # 관리하는 자동매매가 없는데 매수가 체결됐다(늦게 체결된 주문, HTS 주문 등).
             # 그대로 두면 손절·익절 없이 남는다(2026-11-06 엠에스바이오) — 수동 매매로 옮긴다.
@@ -852,6 +868,9 @@ class Hub:
         if new_state == TradeState.IDLE:
             self._cancel_setup(stock)
             stock.engine = None
+            # PUSH = 오늘 안 산다: 이미 낸 장 시작 단일가 1차는 취소한다. 취소 전에 체결됐거나 취소가
+            # 실패해 나중에 체결되면 '엔진 없는 대기 종목의 매수 체결' 안전망이 수동 매매로 넘긴다.
+            await self._cancel_auction_rest(stock, "PUSH")
         if new_state == TradeState.MONITOR:
             stock.recovery_notice = ""
         self._persist()
@@ -930,11 +949,28 @@ class Hub:
                           missing=list(stock.setup_missing), open_diag=diag)
                 self.broadcast_status(stock.code)
                 self._persist()
+                rec = stock.auction
+                if rec and rec.get("order_no"):
+                    await self._cancel_auction_rest(stock, "AUTO_SETUP_TIMEOUT")
+                    if rec["bought"] > 0:
+                        if stock.setup_task is asyncio.current_task():
+                            stock.setup_task = None  # 옮기기가 이 작업 자신을 취소하지 않게
+                        await self.transfer_to_manual(
+                            stock.code, "AUTO_SETUP_TIMEOUT",
+                            f"시가 단일가 1차 {rec['bought']}주를 샀지만 자동매매를 시작하지 못함(기준가 확인 "
+                            "시간 초과) — 손절·익절을 설정하세요")
         finally:
             if stock.setup_task is asyncio.current_task():
                 stock.setup_task = None
 
     async def apply_market_open(self) -> None:
+        if not self.live:
+            # 데모(수동 장 시계)에는 동시호가가 없다 — [장 시작] 순간 시가 단일가 1차를 낸 것으로 흉내 낸다.
+            today = now_kst().date().isoformat()
+            for stock in list(self.stocks.values()):
+                if self._auction_wanted(stock, today):
+                    stock.auction = {"day": today, "status": "sending"}
+                    await self._auction_order(stock)
         for stock in self.stocks.values():
             prev = stock.machine.state
             new = stock.machine.on_market_open()
@@ -1059,6 +1095,100 @@ class Hub:
             if stock.setup_task is asyncio.current_task():
                 stock.setup_task = None
 
+    # -- 장 시작 단일가 1차 --------------------------------------------------
+    def _auction_wanted(self, stock: Stock, today: str) -> bool:
+        return (stock.machine.state == TradeState.MONITOR and stock.config.ulc_first_buy_auction
+                and (stock.auction is None or stock.auction.get("day") != today))
+
+    async def _auction_loop(self) -> None:
+        """(live) 09:00 ``ulc_auction_lead_sec``초 전에 MONITOR 종목의 시가 단일가 1차를 낸다."""
+        while True:
+            try:
+                now = now_kst()
+                open_at = now.replace(hour=9, minute=0, second=0, microsecond=0)
+                near = now.weekday() < 5 and open_at - timedelta(minutes=3) <= now < open_at
+                if near and self.clock.phase == MarketPhase.PRE_OPEN:
+                    today = now.date().isoformat()
+                    for stock in list(self.stocks.values()):
+                        lead = timedelta(seconds=stock.config.ulc_auction_lead_sec)
+                        if (self._auction_wanted(stock, today)
+                                and open_at - lead <= now < open_at - timedelta(seconds=1)):
+                            stock.auction = {"day": today, "status": "sending"}
+                            asyncio.create_task(self._auction_order(stock))
+                await asyncio.sleep(0.5 if near else 20)
+            except asyncio.CancelledError:
+                break
+            except Exception:  # noqa: BLE001
+                logger.exception("시가 단일가 1차 루프 오류")
+                await asyncio.sleep(5)
+
+    async def _auction_order(self, stock: Stock) -> None:
+        """예상체결가를 시가로 보고 진입·시나리오를 판단해 1차 금액 ÷ 예상가 수량을 상한가 지정가로 낸다.
+
+        단일가는 한 가격에 모두 체결되므로 상한가 지정가는 '시가가 얼마로 정해지든 체결'되게 하는 장치다
+        (실제 체결가 = 시가). 단일가에는 IOC 를 쓸 수 없어 일반 지정가다 — 못 산 잔량은 시가 확인 뒤
+        취소한다. 예상가가 없거나 진입 안 함 조건이면 내지 않고, 개장 뒤 기존 1차 방식으로 산다.
+        """
+        code, rec = stock.code, stock.auction
+
+        def give_up(status: str, why: str) -> None:
+            rec["status"] = status
+            self._log(f"[{code}] 시가 단일가 1차 안 냄 — {why}. 개장 뒤 1차 방식으로",
+                      event="auction_skip", code=code, reason=why)
+
+        try:
+            x = await asyncio.to_thread(self.data.prev_close, code)
+            quote = await asyncio.to_thread(self.data.auction_quote, code)
+        except Exception as exc:  # noqa: BLE001
+            return give_up("failed", f"예상체결가 조회 실패({type(exc).__name__})")
+        exp = float((quote or {}).get("expected") or 0)
+        upper = float((quote or {}).get("upper") or 0)
+        if not x or exp <= 0 or upper <= 0:
+            return give_up("skipped", f"예상체결가·상한가 없음(X={x}, 예상가={exp:g}, 상한가={upper:g})")
+        probe = UlcEngine(code=code, config=stock.config, x=float(x), z=exp, log=lambda _m: None)
+        probe.setup()
+        if probe.phase != Phase.ACCUMULATING:
+            return give_up("skipped", f"예상가 {exp:,.0f}(X {float(x):,.0f} 대비 {(exp / float(x) - 1) * 100:+.1f}%)"
+                           " 기준 진입 안 함 조건 — 개장 뒤 실제 시가로 다시 판단")
+        amount = probe.legs[0].amount
+        qty = int(amount // exp)
+        if qty <= 0:
+            return give_up("skipped", f"1차 금액 {amount:,}원으로 예상가 {exp:,.0f}원 1주도 못 삼")
+        if stock.machine.state != TradeState.MONITOR or self.stocks.get(code) is not stock:
+            rec["status"] = "cancelled"
+            return
+        result = await asyncio.to_thread(self.broker.buy_limit, code, qty, upper)
+        self.tag_order(result, "ulc", "1차(시가 단일가)",
+                       {"scenario": probe.scenario, "x": float(x), "z_expected": exp,
+                        "exit": exit_settings(stock.config)})
+        if not result.ok:
+            return give_up("failed", f"주문 실패: {result.message}")
+        rec.update(status="sent", order_no=result.order_no or "", amount=amount, qty=qty,
+                   expected=exp, upper=upper, scenario=probe.scenario, bought=0, spent=0.0)
+        if not hasattr(self.data, "on_order_fill") and result.filled_qty > 0:
+            # 체결 통지가 없는 브로커(mock)는 주문 응답이 곧 체결 결과다.
+            rec["bought"], rec["spent"] = result.filled_qty, result.filled_qty * result.price
+        self._log(f"[{code}] 1차 시가 단일가 주문: {qty}주 상한가 {upper:,.0f} 지정가 — 예상체결가 "
+                  f"{exp:,.0f} 기준 SC{probe.scenario}, {amount:,}원(체결가 = 시가)",
+                  event="auction_order", code=code, order_no=rec["order_no"], qty=qty,
+                  expected=exp, upper=upper, scenario=probe.scenario, amount=amount)
+        if stock.machine.state != TradeState.MONITOR:
+            await self._cancel_auction_rest(stock, "PUSH")  # 주문하는 사이 PUSH 됐다
+        self.broadcast_status(code)
+
+    async def _cancel_auction_rest(self, stock: Stock, why: str) -> None:
+        """시가 단일가 1차의 못 산 잔량을 취소한다(kt10003, 잔량 전부)."""
+        rec = stock.auction
+        if not rec or not rec.get("order_no") or rec.get("status") != "sent" or rec["bought"] >= rec["qty"]:
+            return
+        res = await asyncio.to_thread(self.broker.cancel_order, stock.code, rec["order_no"])
+        if why == "PUSH":
+            rec["status"] = "cancelled"
+        text = (f"[{stock.code}] 시가 단일가 1차 잔량 취소({why}): {rec['bought']}/{rec['qty']}주 체결 — "
+                + ("취소 접수" if res.ok else f"취소 안 됨: {res.message}"))
+        self._log(text, event="auction_cancel", code=stock.code, reason=why, ok=res.ok,
+                  order_no=rec["order_no"], bought=rec["bought"], qty=rec["qty"])
+
     async def _price_limits(self, stock: Stock) -> Optional[dict]:
         """당일 기준가·상한가. 미지원·실패는 None(엔진이 X*1.295로 근사)."""
         fetch = getattr(self.data, "price_limits", None)
@@ -1121,8 +1251,16 @@ class Hub:
                       f"{limits['upper']:,.0f}", event="auto_setup_after_hours_x",
                       code=stock.code, x=x, base=limits["base"], upper=limits["upper"])
         eng.setup()
+        rec = stock.auction
+        auction = bool(rec and rec.get("order_no") and rec.get("day") == now_kst().date().isoformat())
+        if auction:
+            # 시가가 정해졌다 — 단일가에서 못 산 잔량은 남기지 않는다(늦게 체결돼 관리 밖에 남는 것 방지).
+            await self._cancel_auction_rest(stock, "OPEN")
         if not self._setup_allowed(stock):
             return False
+        if auction:
+            # 여기서 엔진을 붙일 때까지 await 가 없다 — 그 사이 체결은 rec 에 모두 들어와 있다.
+            eng.adopt_auction(rec["order_no"], rec["amount"], rec["qty"], rec["bought"], rec["spent"])
         stock.setup_ready_ns = time.perf_counter_ns()
         source_clock = getattr(self.data, "open_received_ns", None)
         try:
@@ -1152,6 +1290,7 @@ class Hub:
         if self.live and self._orders_task is None:
             self.data.start()
             self._orders_task = asyncio.create_task(self._orders_loop())
+            self._auction_task = asyncio.create_task(self._auction_loop())
             self._connection_task = asyncio.create_task(self._connection_loop())
             self._start_account_sync()
 
@@ -1208,7 +1347,8 @@ class Hub:
         self._account_sync_task = asyncio.create_task(self.sync_account_orders(days))
 
     async def close(self) -> None:
-        tasks = [self._orders_task, self._resync_task, self._connection_task, self._account_sync_task]
+        tasks = [self._orders_task, self._resync_task, self._connection_task, self._account_sync_task,
+                 self._auction_task]
         for stock in self.stocks.values():
             tasks.extend([stock.task, stock.setup_task])
         tasks = [t for t in tasks if t is not None]

@@ -63,7 +63,21 @@ export default function AutoConfigForm({ account, stock }) {
             시가 갭이 {pct('ulc_w')}% 이상이면 진입 안 함
           </label>
           {check('ulc_allow_lower_open', '시가가 전일 종가 아래여도 진입(SC1)')}
-          <label className="cfg-row">1차 매수 주문
+          <label className="cfg-row" title="시가 단일가: 09:00 직전 예상체결가를 시가로 보고 진입·시나리오를 판단해, 1차 금액 ÷ 예상가 수량을 상한가 지정가로 냅니다. 단일가는 한 가격에 체결되므로 체결가 = 시가입니다. 못 산 잔량은 시가 확인 뒤 취소하고, 예상가가 없거나 진입 안 함 조건이면 개장 뒤 아래 방식으로 삽니다.">
+            1차 매수 주문
+            <select value={cfg.ulc_first_buy_auction ? 'auction' : 'open'} disabled={locked}
+              onChange={(e) => setField('ulc_first_buy_auction', e.target.value === 'auction')}>
+              <option value="auction">시가 단일가 (예상가 수량·상한가 지정가)</option>
+              <option value="open">개장 뒤</option>
+            </select>
+          </label>
+          {cfg.ulc_first_buy_auction && (
+            <label className="cfg-row cfg-sub">09:00
+              <input type="number" min="3" max="120" step="1" value={cfg.ulc_auction_lead_sec ?? 20} disabled={locked}
+                onChange={(e) => setField('ulc_auction_lead_sec', e.target.value === '' ? '' : Number(e.target.value))} />초 전에 주문
+            </label>
+          )}
+          <label className="cfg-row cfg-sub">{cfg.ulc_first_buy_auction ? '못 내면 개장 뒤' : '개장 뒤 주문'}
             <select value={cfg.ulc_first_buy_ask3 ? 'ask3' : 'market'} disabled={locked}
               onChange={(e) => setField('ulc_first_buy_ask3', e.target.value === 'ask3')}>
               <option value="ask3">매도 3호가 지정가(IOC)</option>

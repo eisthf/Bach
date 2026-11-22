@@ -110,6 +110,7 @@ async def test_market_open_setup_nonblocking(mock_hub):
     hub.AUTO_SETUP_TIMEOUT = 10.0
     for code in codes:
         _to_auto(hub, clock, code)
+        hub.stocks[code].config.ulc_first_buy_auction = False  # 셋업만 본다(데모 시가 단일가 1차도 prev_close 를 부른다)
 
     await hub.apply_market_open()
     tasks = [s.setup_task for s in hub.stocks.values() if s.setup_task]

@@ -156,6 +156,8 @@ class UlcEngine:
     # 받은 뒤 다시 처리한다.
     _awaiting_order: bool = False
     _early_fills: list = field(default_factory=list)
+    # 장 시작 단일가에 낸 1차 주문번호(adopt_auction). 1차를 끝낸 뒤 늦게 온 체결도 1차로 센다.
+    auction_order_no: str = ""
 
     # ------------------------------------------------------------------
     def _emit(self, msg: str) -> None:
@@ -228,7 +230,48 @@ class UlcEngine:
     def _leg_of(self, order_no: str) -> Optional[BuyLeg]:
         if not order_no:
             return None
+        if order_no == self.auction_order_no and self.legs:
+            return self.legs[0]
         return next((leg for leg in self.legs if leg.order_no == order_no), None)
+
+    def adopt_auction(self, order_no: str, amount: int, ordered: int, bought: int, spent: float) -> None:
+        """장 시작 단일가에 낸 1차(예상체결가로 수량, 상한가 지정가)를 이 엔진의 1차로 삼는다.
+
+        ``setup()`` 뒤에 부른다. 1차 금액은 예상가 시나리오로 이미 정해 썼으니, 남은 금액을 실제 시가
+        시나리오의 2차 이후에 고르게 나눈다. 실제 시가로는 진입하지 않을 조건(갭 초과 등)이어도 이미 산
+        물량은 1차로 들고 손절·익절로 관리한다(추가 매수 없음). 아직 체결 통지가 덜 왔으면 1차를 주문
+        대기로 두고 ``IOC_SETTLE_SEC`` 뒤 정리한다 — 한 주도 못 샀으면 개장 뒤 1차 방식으로 이어 산다.
+        """
+        self.auction_order_no = order_no
+        if self.phase != Phase.ACCUMULATING or not self.legs:
+            if bought <= 0:
+                return  # 진입 안 함이고 산 것도 없다 — 늦은 체결은 Hub 안전망이 수동 매매로 넘긴다
+            self._emit(f"실제 시가로는 진입하지 않는 조건이지만 시가 단일가 1차 {bought}주를 이미 샀다 "
+                       f"— 추가 매수 없이 손절·익절로 관리")
+            self.legs = [BuyLeg(target=self.z, amount=amount)]
+            self.phase = Phase.ACCUMULATING
+        rest = self.legs[1:]
+        left = max(0, self.config.max_buy_amount - amount)
+        for i, leg in enumerate(rest):
+            leg.amount = left // len(rest) if i < len(rest) - 1 else left - (left // len(rest)) * (len(rest) - 1)
+        leg = self.legs[0]
+        leg.amount, leg.ordered, leg.tries = amount, ordered, 1
+        leg.bought, leg.spent = bought, spent
+        if bought >= ordered:
+            leg.filled = True
+        else:
+            leg.order_no, leg.sent_at = order_no, self.clock()
+        if bought > 0:
+            self.shares = bought
+            self.fill_qty, self.fill_avg = bought, spent / bought
+            self.avg_cost = self.fill_avg
+            self._avg_synced = True
+        plan = ", ".join(f"{i}차 {lg.amount:,}원 ≤ {lg.target:,.0f}" for i, lg in enumerate(rest, 2))
+        self._emit(f"1차 = 시가 단일가 {bought}/{ordered}주"
+                   + (f" (평균 {spent / bought:,.0f})" if bought else " (체결 확인 대기)")
+                   + (f"; 남은 금액: {plan}" if plan else ""))
+        if self.all_filled:
+            self.phase = Phase.HOLDING
 
     def _leg_no(self, leg: BuyLeg) -> int:
         return self.legs.index(leg) + 1
