@@ -109,6 +109,7 @@ class Hub:
         self.bonus_trades = BonusTradeManager(self)
         self.data.trade_history = self.trade_history
         self.recovery_notice = ""
+        self._adopting: set[str] = set()  # 관리 밖 매수 체결로 수동 매매에 옮기는 중인 종목
         # 주문체결(00) 이벤트 → 포지션 즉시 갱신(폴링 대신 이벤트 기반).
         if hasattr(self.data, "on_order_fill"):
             self.data.on_order_fill = self._on_order_fill
@@ -532,9 +533,16 @@ class Hub:
             f"[{code}] 체결: {side} {fill.get('qty')}주 @ "
             f"{fill.get('price', 0):,.0f} (미체결 {fill.get('unfilled')})"
         )
+        stock = self.stocks.get(code)
+        if fill.get("side") == "buy" and stock is not None and self._unmanaged(stock):
+            # 관리하는 자동매매가 없는데 매수가 체결됐다(늦게 체결된 주문, HTS 주문 등).
+            # 그대로 두면 손절·익절 없이 남는다(2026-11-06 엠에스바이오) — 수동 매매로 옮긴다.
+            if code not in self._adopting:
+                self._adopting.add(code)
+                asyncio.create_task(self._adopt_unmanaged_buy(code, fill))
+            return
         # 자동매매 중이면 엔진 평단을 실체결가로 즉시 확정한다. 계좌 폴링을
         # 기다리면 그 사이 익절·손절이 낡은 추정 평단으로 판단된다.
-        stock = self.stocks.get(code)
         if stock is not None and stock.engine is not None:
             try:
                 stock.engine.on_fill(
@@ -547,6 +555,27 @@ class Hub:
                 logger.exception("[%s] 엔진 체결 반영 실패", code)
         asyncio.create_task(self._refresh_status(code))
         asyncio.create_task(self.refresh_orders())
+
+    @staticmethod
+    def _unmanaged(stock: Stock) -> bool:
+        """매수 체결을 받아 줄 엔진이 없는가: 대기(엔진 없음) 또는 진입 안 함(SKIP)으로 끝난 엔진."""
+        eng = stock.engine
+        if eng is None:
+            return stock.machine.state == TradeState.IDLE
+        return eng.phase == Phase.SKIPPED
+
+    async def _adopt_unmanaged_buy(self, code: str, fill: dict) -> None:
+        try:
+            notice = (f"[상한가 매매] 자동매매가 관리하지 않는 매수 체결 {fill.get('qty')}주 @ "
+                      f"{float(fill.get('price') or 0):,.0f} — 수동 매매로 옮김. 손절·익절을 설정하세요")
+            self._log(f"[{code}] ⚠️ {notice}")
+            await self.transfer_to_manual(code, "UNMANAGED_FILL", notice)
+        except KeyError:
+            pass  # 그 사이 지워졌거나 이미 옮겨짐
+        except Exception:  # noqa: BLE001
+            logger.exception("[%s] 관리 밖 체결 수동 인계 실패", code)
+        finally:
+            self._adopting.discard(code)
 
     async def _refresh_status(self, code: str) -> None:
         st = await asyncio.to_thread(self.status_of, code)
@@ -652,7 +681,7 @@ class Hub:
             eng = stock.engine
             if (not self._setup_allowed(stock) or eng is None
                     or eng.phase != Phase.ACCUMULATING
-                    or any(leg.filled for leg in eng.legs)
+                    or eng.order_sent
                     or eng.config.use_3min_bar_timing):
                 return
             tick = self.data.last_tick(stock.code)
@@ -685,7 +714,7 @@ class Hub:
             return
         # 첫 주문 전에만 계획 재검증. 보유 이후에는 분할 계획을 변경하지 않는다.
         if (self.live and eng.phase == Phase.ACCUMULATING
-                and eng.shares == 0 and not any(leg.filled for leg in eng.legs)):
+                and eng.shares == 0 and not eng.order_sent):
             if not tick.open_verified:
                 return
             if eng.z != tick.open:
@@ -713,19 +742,21 @@ class Hub:
             error_type = None
             try:
                 limit = eng.order_limit
+                ask3 = (limit <= 0 and eng.config.ulc_first_buy_ask3
+                        and not any(leg.filled for leg in eng.legs))
                 if limit > 0:
                     # 2차 이후: 목표가 IOC 지정가 — 되튄 가격에 사지 않는다.
                     result = await asyncio.to_thread(
                         self.broker.buy_limit, stock.code, int(amount // limit), limit, True)
+                elif ask3:
+                    # 1차: 매도 3호가 IOC — 미체결로 남아 엔진 종료 뒤 체결되지 않게.
+                    result = await asyncio.to_thread(self.broker.buy_ask3, stock.code, amount, True)
                 else:
-                    first_leg = not any(leg.filled for leg in eng.legs)
-                    buy = (self.broker.buy_ask3 if first_leg and eng.config.ulc_first_buy_ask3
-                           else self.broker.buy)
-                    result = await asyncio.to_thread(buy, stock.code, amount)
+                    result = await asyncio.to_thread(self.broker.buy, stock.code, amount)
                 self.tag_order(result, "ulc", eng.order_reason, ulc_ctx())
                 if not result.ok:
                     self._log(f"[{stock.code}] 자동매수 실패: {result.message}")
-                elif limit > 0:
+                elif limit > 0 or ask3:
                     eng.last_order_no = result.order_no or ""
                     if not hasattr(self.data, "on_order_fill"):
                         # 체결 통지가 없는 브로커(mock)는 주문 응답이 곧 체결 결과다.

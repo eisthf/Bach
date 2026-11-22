@@ -11,7 +11,8 @@ AUTO_TRADING 상태의 종목에 대해 틱마다 ``on_tick``이 호출된다. �
   - 진입필터: Z >= X*(1+w) → SKIP, X < 1000 → SKIP, 하락시가 & !allow_lower_open → SKIP
   - 시나리오: SC1 [X,X*(1+p)) / SC2 [X*(1+p),X*(1+p1)) / SC3 [X*(1+p1),∞)
   - 분할매수: SC1/2 = 2분할, SC3 = 3분할. 2차 이후는 목표가 IOC 지정가 — 목표가보다
-    비싸게 사지 않고, 실제로 다 체결돼야 그 차수가 끝난다(못 사면 다시 내려올 때 재주문)
+    비싸게 사지 않고, 실제로 다 체결돼야 그 차수가 끝난다(못 사면 다시 내려올 때 재주문).
+    1차 매도 3호가도 IOC — 못 사면 그때 매도 3호가로 최대 3번, 그래도 못 사면 SKIP
   - 청산: 평단*(1+tp) 익절(1차 매수 직후부터), 평단*(1-sl) 손절(분할 완료
     후 활성), 트레일링(옵션)
 """
@@ -66,6 +67,8 @@ def describe_exit(s: dict) -> str:
 # 체결 통지(00)는 '체결'만 오므로, 이 시간이 지나도 다 못 샀으면 그만큼은 못 산 것으로 본다.
 # 재주문 간격이기도 하다 — 09:00 직후 다른 종목의 1차 주문과 REST 게이트를 다투지 않게 넉넉히.
 IOC_SETTLE_SEC = 5.0
+# 1차 매도 3호가 IOC 를 한 주도 못 사고 재주문하는 최대 횟수(첫 주문 포함). 넘기면 그날 SKIP.
+FIRST_IOC_TRIES = 3
 
 
 @dataclass
@@ -81,6 +84,7 @@ class BuyLeg:
     order_no: str = ""       # 결과를 기다리는 IOC 주문번호(빈 문자열이면 없음)
     ordered: int = 0         # 그 주문 수량
     sent_at: float = 0.0     # 그 주문 시각(UlcEngine.clock)
+    tries: int = 0           # 낸 주문 수
 
 
 @dataclass
@@ -216,6 +220,11 @@ class UlcEngine:
     def all_filled(self) -> bool:
         return all(leg.filled for leg in self.legs)
 
+    @property
+    def order_sent(self) -> bool:
+        """매수 주문을 낸 적이 있는가(그 뒤로는 분할 계획을 다시 세우지 않는다)."""
+        return any(leg.filled or leg.tries for leg in self.legs)
+
     def _leg_of(self, order_no: str) -> Optional[BuyLeg]:
         if not order_no:
             return None
@@ -233,7 +242,18 @@ class UlcEngine:
             leg.order_no = ""
             left = leg.amount - leg.spent
             no = self._leg_no(leg)
-            if left < leg.target:
+            if no == 1:
+                # 1차는 산 만큼으로 진행한다. 한 주도 못 샀으면 그때 매도 3호가로 재주문.
+                if leg.bought:
+                    leg.filled = True
+                    self._emit(f"1차 일부만 체결 {leg.bought}주 — 산 만큼으로 진행")
+                elif leg.tries >= FIRST_IOC_TRIES:
+                    self.phase = Phase.SKIPPED
+                    self._emit(f"SKIP: 1차 매도 3호가 IOC {leg.tries}번 모두 미체결")
+                else:
+                    self._emit(f"1차 미체결({leg.tries}/{FIRST_IOC_TRIES}) — "
+                               f"그때 매도 3호가로 재주문")
+            elif left < leg.target:
                 leg.filled = True
                 self._emit(f"{no}차 매수 끝 {leg.bought}주 (남은 금액 {left:,.0f}원 < 1주)")
             elif leg.bought:
@@ -243,12 +263,14 @@ class UlcEngine:
                 self._emit(f"{no}차 미체결({leg.target:,.0f} 이하 매도 물량 없음) — "
                            f"다시 {leg.target:,.0f} 이하로 오면 재주문")
 
-    async def _buy_limit_leg(self, i: int, leg: BuyLeg,
-                             buy_fn: Callable[[int], Awaitable[float]]) -> None:
-        """2차 이후: 목표가 IOC 지정가. 체결은 on_fill 이 주문번호로 이 차수에 모은다."""
+    async def _buy_tracked(self, i: int, leg: BuyLeg,
+                           buy_fn: Callable[[int], Awaitable[float]]) -> None:
+        """IOC 매수 — 1차는 매도 3호가, 2차 이후는 목표가. 체결은 on_fill 이 주문번호로
+        이 차수에 모은다. 잔량은 거래소가 바로 취소해 엔진이 끝난 뒤 늦게 체결될 주문이 없다
+        (2026-11-06 엠에스바이오: 미체결로 남은 1차 지정가가 엔진 종료 26분 뒤 체결돼 보호 없이 남음)."""
         amount = int(leg.amount - leg.spent)
         self.order_reason = f"{i+1}차"
-        self.order_limit = leg.target
+        self.order_limit = leg.target if i else 0.0
         self.last_order_no = ""
         self._awaiting_order = True
         try:
@@ -258,8 +280,13 @@ class UlcEngine:
             self._awaiting_order = False
         early, self._early_fills = self._early_fills, []
         order_no, self.last_order_no = self.last_order_no, ""
-        qty = int(amount // leg.target)
-        if fill <= 0 or qty <= 0:
+        # 1차 지정가(매도 3호가)는 호출측이 정해 체결가 자리로 돌려준다.
+        qty = int(amount // (leg.target if i else fill)) if fill > 0 else 0
+        leg.tries += 1
+        if (fill <= 0 or qty <= 0) and i == 0:
+            self.phase = Phase.SKIPPED
+            self._emit("SKIP: 매도 3호가 지정가 1차 매수 실패 — 추가 매수 중단")
+        elif fill <= 0 or qty <= 0:
             leg.filled = True  # 주문 거부·전송 실패 — 무한 재주문 방지
             self._emit(f"⚠️ {i+1}차 지정가 주문 실패 — 이 차수는 건너뜀")
         elif not order_no:
@@ -278,8 +305,12 @@ class UlcEngine:
             leg.order_no = order_no
             leg.ordered = leg.bought + qty
             leg.sent_at = self.clock()
-            self._emit(f"{i+1}차 지정가(IOC) {qty}주 @ {leg.target:,.0f} 주문 — "
-                       f"이 가격 이하로만 체결, 나머지는 취소")
+            if i:
+                self._emit(f"{i+1}차 지정가(IOC) {qty}주 @ {leg.target:,.0f} 주문 — "
+                           f"이 가격 이하로만 체결, 나머지는 취소")
+            else:
+                self._emit(f"1차 매도 3호가 지정가(IOC) {qty}주 @ {fill:,.0f} 주문 "
+                           f"({leg.tries}/{FIRST_IOC_TRIES})")
         for f in early:
             self.on_fill(*f)
 
@@ -440,7 +471,8 @@ class UlcEngine:
             # 가격에 그대로 진입한다 — 필터가 걸렀어야 할 자리다. 아직 한 주도
             # 사기 전이라면 실가격으로 같은 필터를 다시 건다.
             # (2차 이후는 price <= target 조건이 있어 이 가드가 필요 없다.)
-            if self.shares <= 0 and price >= self.x * (1 + c.ulc_w):
+            if (self.shares <= 0 and not any(leg.order_no for leg in self.legs[:1])
+                    and price >= self.x * (1 + c.ulc_w)):
                 self.phase = Phase.SKIPPED
                 self._emit(
                     f"SKIP: 진입 지연 중 갭 초과 현재가={price:,.0f} >= "
@@ -448,15 +480,27 @@ class UlcEngine:
                 )
                 return
             self._settle_ioc()
+            if self.phase != Phase.ACCUMULATING:
+                return
             for i, leg in enumerate(self.legs):
-                if leg.filled or leg.order_no:
+                if leg.filled:
+                    continue
+                if leg.order_no:
+                    if i == 0:
+                        break  # 1차 결과 전에는 2차도 내지 않는다
                     continue
                 if i > 0:
                     if price <= leg.target:
-                        await self._buy_limit_leg(i, leg, buy_fn)
+                        await self._buy_tracked(i, leg, buy_fn)
                         break  # 한 틱에 한 단계만
                     continue
-                # 1차: 첫 판단 시 시장가 또는 매도 3호가 지정가
+                if c.ulc_first_buy_ask3:
+                    # 1차: 매도 3호가 IOC. 다 체결되거나 정리될 때까지 2차는 기다린다.
+                    await self._buy_tracked(0, leg, buy_fn)
+                    if self.phase != Phase.ACCUMULATING:
+                        return
+                    break
+                # 1차: 첫 판단 시 시장가
                 self.order_reason = f"{i+1}차"
                 fill = await buy_fn(leg.amount)
                 if fill > 0:
@@ -472,10 +516,6 @@ class UlcEngine:
                         self._avg_synced = False
                         await self._sync_from_account()
                 else:
-                    if i == 0 and c.ulc_first_buy_ask3:
-                        self.phase = Phase.SKIPPED
-                        self._emit("SKIP: 매도 3호가 지정가 1차 매수 실패 — 추가 매수 중단")
-                        return
                     leg.filled = True  # 체결 실패해도 무한루프 방지
                 break  # 한 틱에 한 단계만
             if self.all_filled:

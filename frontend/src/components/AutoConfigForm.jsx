@@ -66,7 +66,7 @@ export default function AutoConfigForm({ account, stock }) {
           <label className="cfg-row">1차 매수 주문
             <select value={cfg.ulc_first_buy_ask3 ? 'ask3' : 'market'} disabled={locked}
               onChange={(e) => setField('ulc_first_buy_ask3', e.target.value === 'ask3')}>
-              <option value="ask3">매도 3호가 지정가</option>
+              <option value="ask3">매도 3호가 지정가(IOC)</option>
               <option value="market">시장가</option>
             </select>
           </label>

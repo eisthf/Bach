@@ -134,8 +134,8 @@ class Broker(ABC):
         return OrderResult(ok=False, code=code, side="buy", filled_qty=0,
                            price=price, message="지정가 주문 미지원")
 
-    def buy_ask3(self, code: str, amount_krw: int) -> OrderResult:
-        """매도 3호가 지정가 매수. 미지원 브로커는 주문하지 않는다."""
+    def buy_ask3(self, code: str, amount_krw: int, ioc: bool = False) -> OrderResult:
+        """매도 3호가 지정가 매수(``ioc``: 잔량 즉시 취소). 미지원 브로커는 주문하지 않는다."""
         return OrderResult(ok=False, code=code, side="buy", filled_qty=0,
                            price=0, message="매도 3호가 주문 미지원")
 
