@@ -292,23 +292,30 @@ def fetch_auction_quote(token: str, code: str, mock: bool = False) -> Optional[d
 
     예상체결가(``exp_cntr_pric``)는 단일가 접수 중(장 시작 전·매매정지 후 재개 단일가)에만
     의미가 있고 그 밖에는 0이거나 직전 값이다 — 쓰는 쪽이 시점을 가린다. 캐시하지 않는다.
+    ``raw`` 에 응답 원문(JSON)을 함께 돌려준다 — 예상가가 0으로 오는 경우(2026-11-23 18064K 08:59:40)를
+    되짚을 근거다. ``return_code`` 가 0이 아니어도 값을 0으로 채워 원문과 함께 돌려준다.
     """
     url = f"{rest_host(mock)}/api/dostk/stkinfo"
     headers = {"Content-Type": "application/json;charset=UTF-8",
                "authorization": f"Bearer {token}", "api-id": "ka10001"}
     resp = _post(url, headers, {"stk_cd": code}, timeout=10, retries=1)
-    if resp is None or resp.status_code != 200:
+    if resp is None:
         return None
     try:
         data = resp.json()
     except Exception:  # noqa: BLE001
-        return None
-    if data.get("return_code") != 0:
-        return None
+        return {"base": 0.0, "upper": 0.0, "price": 0.0, "expected": 0.0, "expected_qty": 0,
+                "raw": {"http_status": resp.status_code, "text": resp.text[:2000]}}
+    if not isinstance(data, dict):
+        data = {"body": data}
+    if resp.status_code != 200 or data.get("return_code") != 0:
+        return {"base": 0.0, "upper": 0.0, "price": 0.0, "expected": 0.0, "expected_qty": 0,
+                "raw": {"http_status": resp.status_code, **data}}
     return {"base": parse_price(data.get("base_pric")), "upper": parse_price(data.get("upl_pric")),
             "price": parse_price(data.get("cur_prc")),
             "expected": parse_price(data.get("exp_cntr_pric")),
-            "expected_qty": parse_int(data.get("exp_cntr_qty"))}
+            "expected_qty": parse_int(data.get("exp_cntr_qty")),
+            "raw": data}
 
 
 def fetch_ask3(token: str, code: str, mock: bool = False) -> float:

@@ -64,6 +64,9 @@ const volumePoint = (bar) => ({
 
 // anchorDate: 일봉일 때 이 날짜(YYYY-MM-DD) 앞 20거래일부터 60거래일을 보여준다(스크리너 조회일).
 // priceLines: [{price, color, title, dashed}] 수평 가격선(예: 대금 양봉 매매 구간·익절선).
+// priceSteps: [{key, color, title, dashed, points: [{t, price}]}] 시점별로 바뀌는 가격선(계단, 예: [상한가 매매]
+//   익절·손절선). 점의 price 는 그 시각 t(차트 epoch)부터 다음 점까지의 값이고 null 이면 그 구간엔 선이 없다.
+//   봉마다 그 봉이 끝날 때의 값을 쓴다. 그릴 봉이 하나뿐이면(일봉의 오늘) 지금 값을 가로선으로 대신한다.
 // onPriceClick: 지정하면 차트를 누른 위치의 가격으로 호출된다(구간 매매의 수평선 지정). 커서가 십자로 바뀐다.
 // draggableLines: [{id, price}] 마우스·터치로 위아래로 끌 수 있는 선. 같은 선을 priceLines에
 //   dragId: id 로 넘기면, 끄는 동안엔 차트 안에서만 그 선을 옮긴다(부모 재렌더·레이아웃 이동 없음).
@@ -74,7 +77,7 @@ const volumePoint = (bar) => ({
 // eventMarks: [{at, text, color, position, shape}] 일정 표시(무상증자 공시·권리락 등, tradeMarkers.eventMarkers).
 // prefKey: 차트 자리 이름(예: 'manual:mock:005930'). 엔벨로프 켜고 끔을 이 이름별로 기억한다.
 //   없으면 '계좌:종목'.
-export default function Chart({ prefKey = null, account, code, interval, tick, height = 360, sessionOnly = false, includeToday = false, extended = false, anchorDate = null, priceLines = null, onPriceClick = null, draggableLines = null, onLineDrag = null, onSessionDate, eventMarks = null }) {
+export default function Chart({ prefKey = null, account, code, interval, tick, height = 360, sessionOnly = false, includeToday = false, extended = false, anchorDate = null, priceLines = null, priceSteps = null, onPriceClick = null, draggableLines = null, onLineDrag = null, onSessionDate, eventMarks = null }) {
   const anchor = interval === 1440 ? anchorDate : null
   const anchorRef = useRef(anchor)
   anchorRef.current = anchor
@@ -109,6 +112,51 @@ export default function Chart({ prefKey = null, account, code, interval, tick, h
     candleRef.current?.setMarkers(markers.sort((a, b) => a.time - b.time))
     crossRef.current?.setPoints(tradePoints(bars, tradesRef.current, interval))
   }
+  // 시점별 가격선(계단). 봉이 바뀌거나(로드·재조회) 값이 바뀔 때 통째로 다시 그린다.
+  const stepsRef = useRef(priceSteps)
+  stepsRef.current = priceSteps
+  const stepObjsRef = useRef({ series: [], lines: [] })
+  const drawSteps = (bars) => {
+    const chart = chartRef.current
+    const candle = candleRef.current
+    if (!chart || !candle) return
+    stepObjsRef.current.series.forEach((x) => { try { chart.removeSeries(x) } catch { /* 이미 지움 */ } })
+    stepObjsRef.current.lines.forEach((x) => { try { candle.removePriceLine(x) } catch { /* 이미 지움 */ } })
+    stepObjsRef.current = { series: [], lines: [] }
+    const span = interval === 1440 ? 86400 : interval * 60
+    for (const st of stepsRef.current || []) {
+      const pts = [...(st.points || [])].sort((a, b) => a.t - b.t)
+      if (!pts.length || !bars.length) continue
+      const data = []
+      let j = -1
+      for (const bar of bars) {
+        while (j + 1 < pts.length && pts[j + 1].t < bar.time + span) j++
+        if (j < 0) continue
+        const price = pts[j].price
+        data.push(price > 0 ? { time: bar.time, value: price } : { time: bar.time })
+      }
+      const valued = data.filter((d) => d.value != null).length
+      const current = pts[pts.length - 1].price
+      const style = { color: st.color || '#888', lineWidth: 1, lineStyle: st.dashed ? 2 : 0 }
+      if (valued < 2) {
+        if (current > 0) {
+          stepObjsRef.current.lines.push(candle.createPriceLine({
+            ...style, price: current, axisLabelVisible: true, title: st.title || '',
+          }))
+        }
+        continue
+      }
+      const series = chart.addLineSeries({
+        ...style, lineType: 1, priceLineVisible: false, lastValueVisible: current > 0,
+        title: st.title || '', crosshairMarkerVisible: false, autoscaleInfoProvider: () => null,
+      })
+      series.setData(data)
+      stepObjsRef.current.series.push(series)
+    }
+  }
+  const stepsKey = JSON.stringify(priceSteps || [])
+  useEffect(() => { drawSteps(barsRef.current) }, [stepsKey]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // 거래대금은 일봉에만 있다(분봉 원천엔 없음).
   const drawStripes = (bars) => {
     stripeRef.current?.setTimes(interval === 1440 ? amountStripeTimes(bars) : [])
@@ -237,6 +285,7 @@ export default function Chart({ prefKey = null, account, code, interval, tick, h
     return () => {
       chart.unsubscribeCrosshairMove(showVolumeAtCrosshair)
       chart.remove()
+      stepObjsRef.current = { series: [], lines: [] }
       chartRef.current = null
       candleRef.current = null
       crossRef.current = null
@@ -474,6 +523,7 @@ export default function Chart({ prefKey = null, account, code, interval, tick, h
     stripeRef.current?.setTimes([])
     setDisplayVolume(null)
     candleRef.current?.setData([])
+    drawSteps([])
     volumeRef.current?.setData([])
     maRefs.current.forEach((series) => series.setData([]))
     envRefs.current.forEach((series) => series.setData([]))
@@ -491,6 +541,7 @@ export default function Chart({ prefKey = null, account, code, interval, tick, h
       dayStartRef.current = data.day_start_index
       candleRef.current.setData(bars)
       drawTrades(bars)
+      drawSteps(bars)
       drawStripes(bars)
       volumeRef.current?.setData(bars.map(volumePoint))
       MA_LINES.forEach((m, i) => {
@@ -551,6 +602,7 @@ export default function Chart({ prefKey = null, account, code, interval, tick, h
       dayStartRef.current = data.day_start_index
       candleRef.current.setData(data.bars)
       drawTrades(data.bars)
+      drawSteps(data.bars)
       drawStripes(data.bars)
       volumeRef.current?.setData(data.bars.map(volumePoint))
       MA_LINES.forEach((m, i) => maRefs.current[i].setData(sma(data.bars, m.period)))

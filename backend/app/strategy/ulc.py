@@ -24,6 +24,7 @@ from decimal import Decimal
 from enum import Enum
 from typing import Awaitable, Callable, List, Optional
 
+from ..market_clock import chart_epoch
 from ..models import AutoConfig, Tick
 from ..pricing import buy_trigger
 
@@ -158,6 +159,11 @@ class UlcEngine:
     _early_fills: list = field(default_factory=list)
     # 장 시작 단일가에 낸 1차 주문번호(adopt_auction). 1차를 끝낸 뒤 늦게 온 체결도 1차로 센다.
     auction_order_no: str = ""
+    # 익절·손절선의 시점별 기록(차트 계단선). 값이 바뀔 때마다 {t(차트 epoch), tp, stop, stop_active,
+    # guarantee} 를 남긴다 — 평단이 바뀌면 익절선도 바뀌어, 지금 값 하나로 그리면 지난 봉을 지금
+    # 기준과 비교하는 것처럼 보인다(2026-11-23 18064K: 1차만 보유 때 익절 111,090, 2차 뒤 107,415).
+    exit_marks: list = field(default_factory=list)
+    wall: Callable[[], int] = field(default=chart_epoch)
 
     # ------------------------------------------------------------------
     def _emit(self, msg: str) -> None:
@@ -272,6 +278,31 @@ class UlcEngine:
                    + (f"; 남은 금액: {plan}" if plan else ""))
         if self.all_filled:
             self.phase = Phase.HOLDING
+        self._note_exits()
+
+    def _exit_levels(self) -> dict:
+        c = self.config
+        held = self.shares > 0 and self.avg_cost > 0
+        return {
+            "tp": self.avg_cost * (1 + c.ulc_tp) if held and self.phase != Phase.TRAILING else None,
+            "stop": self.avg_cost * (1 - c.ulc_sl) if held else None,
+            "stop_active": held and self.all_filled,
+            "guarantee": self.avg_cost * (1 + c.ulc_g) if held and self.phase == Phase.TRAILING else None,
+        }
+
+    def _note_exits(self) -> None:
+        """익절·손절 기준이 바뀌었으면 그 시각과 함께 남긴다(차트 계단선)."""
+        lv = self._exit_levels()
+        last = self.exit_marks[-1] if self.exit_marks else None
+        if last is None and not any(lv.values()):
+            return
+        if last is not None and all(last.get(k) == v for k, v in lv.items()):
+            return
+        now = self.wall()
+        if last is not None and last["t"] == now:
+            self.exit_marks.pop()  # 같은 초 안의 중간값(체결 통지 전 추정 평단 등)은 덮는다
+        self.exit_marks.append({"t": now, **lv})
+        del self.exit_marks[:-200]
 
     def _leg_no(self, leg: BuyLeg) -> int:
         return self.legs.index(leg) + 1
@@ -403,6 +434,7 @@ class UlcEngine:
                 self._emit(f"평단 확정(실체결): {self.avg_cost:,.0f} → {self.fill_avg:,.0f}")
             self.avg_cost = self.fill_avg
             self._avg_synced = True
+        self._note_exits()
 
     async def _sync_from_account(self) -> None:
         """보유수량·평단을 계좌(실보유) 기준으로 보정한다.
@@ -469,7 +501,10 @@ class UlcEngine:
             # 모드를 바꾸더라도 오래된 봉이 뒤늦게 실행되지 않게 비운다.
             self._bar_bucket = None
             self._bar_close = None
-            await self._on_strategy_tick(tick, buy_fn, sell_fn)
+            try:
+                await self._on_strategy_tick(tick, buy_fn, sell_fn)
+            finally:
+                self._note_exits()
             return
 
         if tick.time <= 0:
@@ -491,7 +526,10 @@ class UlcEngine:
         self._bar_bucket = bucket
         self._bar_close = tick
         if completed is not None:
-            await self._on_strategy_tick(completed, buy_fn, sell_fn)
+            try:
+                await self._on_strategy_tick(completed, buy_fn, sell_fn)
+            finally:
+                self._note_exits()
 
     async def _on_strategy_tick(
         self,
@@ -654,6 +692,8 @@ class UlcEngine:
         트레일링 고점은 틱마다 바뀌어 넣지 않는다(손절·보장 익절 가격만)."""
         c = self.config
         held = self.shares > 0 and self.avg_cost > 0
+        self._note_exits()
+        lv = self._exit_levels()
         return {
             "scenario": self.scenario, "x": self.x, "z": self.z, "phase": self.phase.value,
             "legs": [{"no": i, "target": leg.target, "amount": leg.amount, "filled": leg.filled,
@@ -661,13 +701,14 @@ class UlcEngine:
                       "pending": bool(leg.order_no) and self.phase == Phase.ACCUMULATING}
                      for i, leg in enumerate(self.legs, 1)],
             "shares": self.shares, "avg_cost": self.avg_cost if held else 0.0,
-            "take_profit": self.avg_cost * (1 + c.ulc_tp) if held and self.phase != Phase.TRAILING else None,
+            "take_profit": lv["tp"],
             "take_profit_half": bool(c.ulc_trailing),
-            "stop": self.avg_cost * (1 - c.ulc_sl) if held else None,
-            "stop_active": held and self.all_filled,
-            "guarantee": self.avg_cost * (1 + c.ulc_g) if held and self.phase == Phase.TRAILING else None,
+            "stop": lv["stop"],
+            "stop_active": lv["stop_active"],
+            "guarantee": lv["guarantee"],
             "trailing_pct": c.ulc_t,
             "limit_up": self.limit_up or None,
+            "exit_marks": list(self.exit_marks),
         }
 
     def to_dict(self) -> dict:
@@ -678,6 +719,7 @@ class UlcEngine:
             "fill_qty": self.fill_qty, "fill_avg": self.fill_avg,
             "trail_max": self.trail_max, "stop_deferred": self._stop_deferred,
             "unconfirmed": self._unconfirmed,
+            "exit_marks": self.exit_marks,
         }
 
     @classmethod
@@ -699,6 +741,7 @@ class UlcEngine:
         eng.trail_max = float(data.get("trail_max") or 0.0)
         eng._stop_deferred = bool(data.get("stop_deferred"))
         eng._unconfirmed = int(data.get("unconfirmed") or 0)
+        eng.exit_marks = list(data.get("exit_marks") or [])
         # 평단은 저장값(실체결 평단)을 그대로 믿는다. 수량은 begin_session 이 계좌로 대조한다.
         eng._avg_synced = True
         return eng

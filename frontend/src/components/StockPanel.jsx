@@ -7,7 +7,7 @@ import { useChartInterval } from '../chartPrefs'
 import StateButton from './StateButton'
 import ManualTradePanel from './ManualTradePanel'
 import AutoConfigForm from './AutoConfigForm'
-import UlcPlan, { ulcLines } from './UlcPlan'
+import UlcPlan, { ulcLines, ulcSteps } from './UlcPlan'
 
 // [상한가 매매] 종목 1개 카드: 차트 + 시세 + 상태버튼·수동 전환 + 계좌 보유(읽기 전용) + 자동매매 설정.
 // 수동 매수·매도는 없다 — [수동 전환]하면 종목이 수동 매매 화면으로 옮겨간다.
@@ -20,6 +20,7 @@ export default function StockPanel({ account, stock }) {
   const isCompact = (compact[account] || new Set()).has(stock.code)
   // 자동매매 중이면 시나리오·분할 계획·청산 기준을 카드와 차트(가격선)에 보인다.
   const lines = ulcLines(stock.engine)
+  const steps = ulcSteps(stock.engine)
 
   const toolbar = (
     <div className="chart-toolbar">
@@ -62,7 +63,7 @@ export default function StockPanel({ account, stock }) {
         <div className="compact-body">
           <div className="compact-chart">
             {toolbar}
-            <Chart prefKey={prefKey} account={account} code={stock.code} interval={interval} tick={tick} height={260} priceLines={lines} />
+            <Chart prefKey={prefKey} account={account} code={stock.code} interval={interval} tick={tick} height={260} priceLines={lines} priceSteps={steps} />
           </div>
           <ManualTradePanel account={account} code={stock.code} position={stock.position}
             verified={stock.position_verified !== false} tick={tick} readOnly />
@@ -70,7 +71,7 @@ export default function StockPanel({ account, stock }) {
       ) : (
         <>
           {toolbar}
-          <Chart prefKey={prefKey} account={account} code={stock.code} interval={interval} tick={tick} priceLines={lines} />
+          <Chart prefKey={prefKey} account={account} code={stock.code} interval={interval} tick={tick} priceLines={lines} priceSteps={steps} />
           <div className="panels">
             <ManualTradePanel account={account} code={stock.code} position={stock.position}
               verified={stock.position_verified !== false} tick={tick} readOnly />

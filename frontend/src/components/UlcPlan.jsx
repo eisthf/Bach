@@ -20,10 +20,29 @@ export function ulcLines(engine) {
   engine.legs.filter((l) => !l.filled && l.no > 1).forEach((l) =>
     lines.push({ price: l.target, color: '#6a1b9a', title: `${l.no}차 ≤`, dashed: true }))
   if (engine.avg_cost > 0) lines.push({ price: engine.avg_cost, color: '#455a64', title: '평단' })
-  if (engine.take_profit) lines.push({ price: engine.take_profit, color: '#d32f2f', title: engine.take_profit_half ? '익절(절반)' : '익절', dashed: true })
-  if (engine.guarantee) lines.push({ price: engine.guarantee, color: '#d32f2f', title: '보장 익절', dashed: true })
-  if (engine.stop) lines.push({ price: engine.stop, color: '#1565c0', title: engine.stop_active ? '손절' : '손절(분할 후)', dashed: true })
+  // 익절·보장 익절·켜진 손절은 시점별 계단선(ulcSteps)으로 그린다. 기록이 없는 옛 서버면 지금 값 가로선.
+  const stepped = (engine.exit_marks || []).length > 0
+  if (!stepped && engine.take_profit) lines.push({ price: engine.take_profit, color: '#d32f2f', title: engine.take_profit_half ? '익절(절반)' : '익절', dashed: true })
+  if (!stepped && engine.guarantee) lines.push({ price: engine.guarantee, color: '#d32f2f', title: '보장 익절', dashed: true })
+  if (engine.stop && !(stepped && engine.stop_active)) {
+    // 분할 매수 전의 손절선은 아직 안 쓰는 예정값이라 지금 값 하나만 보인다.
+    lines.push({ price: engine.stop, color: '#1565c0', title: engine.stop_active ? '손절' : '손절(분할 후)', dashed: true })
+  }
   return lines
+}
+
+// 시점별 익절·손절선(계단). 서버가 기준이 바뀔 때마다 남긴 exit_marks [{t, tp, stop, stop_active, guarantee}]
+// 에서 만든다 — 평단이 바뀌기 전 봉을 지금 기준과 비교하는 것처럼 보이지 않게(2026-11-23 18064K).
+// 손절은 실제로 켜진(분할 매수 완료) 구간만 그린다.
+export function ulcSteps(engine) {
+  const marks = engine?.exit_marks || []
+  if (!marks.length) return null
+  const step = (key, pick) => ({ key, points: marks.map((m) => ({ t: m.t, price: pick(m) || null })) })
+  return [
+    { ...step('tp', (m) => m.tp), color: '#d32f2f', title: engine.take_profit_half ? '익절(절반)' : '익절', dashed: true },
+    { ...step('guarantee', (m) => m.guarantee), color: '#d32f2f', title: '보장 익절', dashed: true },
+    { ...step('stop', (m) => (m.stop_active ? m.stop : null)), color: '#1565c0', title: '손절', dashed: true },
+  ].filter((s) => s.points.some((p) => p.price))
 }
 
 export default function UlcPlan({ engine, config }) {

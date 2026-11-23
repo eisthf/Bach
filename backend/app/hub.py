@@ -1131,18 +1131,23 @@ class Hub:
         """
         code, rec = stock.code, stock.auction
 
+        quote: Optional[dict] = None
+
         def give_up(status: str, why: str) -> None:
             rec["status"] = status
+            # ka10001 응답 원문(raw)을 함께 남긴다 — 예상가가 0으로 온 까닭을 되짚는 근거.
             self._log(f"[{code}] 시가 단일가 1차 안 냄 — {why}. 개장 뒤 1차 방식으로",
-                      event="auction_skip", code=code, reason=why)
+                      event="auction_skip", code=code, reason=why, quote_raw=(quote or {}).get("raw"))
 
         try:
             x = await asyncio.to_thread(self.data.prev_close, code)
             quote = await asyncio.to_thread(self.data.auction_quote, code)
         except Exception as exc:  # noqa: BLE001
             return give_up("failed", f"예상체결가 조회 실패({type(exc).__name__})")
-        exp = float((quote or {}).get("expected") or 0)
-        upper = float((quote or {}).get("upper") or 0)
+        if quote is None:
+            return give_up("failed", "예상체결가 조회 응답 없음")
+        exp = float(quote.get("expected") or 0)
+        upper = float(quote.get("upper") or 0)
         if not x or exp <= 0 or upper <= 0:
             return give_up("skipped", f"예상체결가·상한가 없음(X={x}, 예상가={exp:g}, 상한가={upper:g})")
         probe = UlcEngine(code=code, config=stock.config, x=float(x), z=exp, log=lambda _m: None)
@@ -1171,7 +1176,8 @@ class Hub:
         self._log(f"[{code}] 1차 시가 단일가 주문: {qty}주 상한가 {upper:,.0f} 지정가 — 예상체결가 "
                   f"{exp:,.0f} 기준 SC{probe.scenario}, {amount:,}원(체결가 = 시가)",
                   event="auction_order", code=code, order_no=rec["order_no"], qty=qty,
-                  expected=exp, upper=upper, scenario=probe.scenario, amount=amount)
+                  expected=exp, upper=upper, scenario=probe.scenario, amount=amount,
+                  quote_raw=quote.get("raw"))
         if stock.machine.state != TradeState.MONITOR:
             await self._cancel_auction_rest(stock, "PUSH")  # 주문하는 사이 PUSH 됐다
         self.broadcast_status(code)

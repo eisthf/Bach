@@ -1186,6 +1186,7 @@ class BonusTradeManager:
         target = datetime.fromisoformat(job.target_at)
         order_at = target - timedelta(seconds=self.settings.lead_sec)
         watch = _ResumeWatch(self, job, target)
+        zero_logged = False
         while self._now() < order_at:
             self._check_deadline(job)
             if watch.resumed():
@@ -1205,6 +1206,10 @@ class BonusTradeManager:
                     return
                 await asyncio.sleep(self.RETRY_SEC)
             else:
+                if not zero_logged:
+                    zero_logged = True
+                    self._log(job, "예상체결가·상한가를 아직 못 받음 — 다시 조회(응답 원문 기록)",
+                              quote_raw=(quote or {}).get("raw"))
                 await asyncio.sleep(max(self.STEP_SEC, 2 * self.STEP_SEC))
 
     async def _run_after_resume(self, job: BuyJob) -> None:
@@ -1324,7 +1329,8 @@ class BonusTradeManager:
         self._update(job, "sent", result.message, order_no=result.order_no or "",
                      qty=result.filled_qty, price=price, basis=why)
         self._log(job, f"매수 주문 전송 — {result.message} (수량 기준 {why} {price:,.0f}원)",
-                  order_no=result.order_no, qty=result.filled_qty, price=price)
+                  order_no=result.order_no, qty=result.filled_qty, price=price,
+                  quote_raw=(quote or {}).get("raw"))  # ka10001 응답 원문(예상가 근거)
         self.hub.broker.invalidate()
         await self.hub.manual_trades.broadcast_async(job.code)
         await self.hub.refresh_orders()
